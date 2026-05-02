@@ -28,6 +28,7 @@ from app.models import (
 )
 from app.services import game_lengths as game_length_services
 from events.models import Event
+from integrations.models import CollectionSourceState
 
 User = get_user_model()
 
@@ -823,6 +824,60 @@ class MetadataBackfillTaskTests(TestCase):
             MediaTypes.BOOK.value,
             never_fetched.media_id,
             never_fetched.source,
+        )
+
+    @patch("app.tasks.services.get_media_metadata")
+    def test_backfill_skips_sonarr_seeded_season_and_episode_rows(self, mock_get_media_metadata):
+        user = User.objects.create_user(username="sonarr-user", password="pw")
+        season_item = Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Severance Season 1",
+            image="https://example.com/season1.jpg",
+        )
+        episode_item = Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Good News About Hell",
+            image="https://example.com/episode1.jpg",
+        )
+        CollectionSourceState.objects.create(
+            user=user,
+            item=episode_item,
+            source="sonarr",
+        )
+        book_item = Item.objects.create(
+            media_id="100",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Never Fetched",
+            image="https://example.com/book.jpg",
+        )
+
+        mock_get_media_metadata.return_value = {
+            "details": {"publish_date": "2020-01-01"},
+        }
+
+        result = tasks.backfill_item_metadata_task(batch_size=10)
+
+        season_item.refresh_from_db()
+        episode_item.refresh_from_db()
+        book_item.refresh_from_db()
+
+        self.assertIsNone(season_item.metadata_fetched_at)
+        self.assertIsNone(episode_item.metadata_fetched_at)
+        self.assertIsNotNone(book_item.metadata_fetched_at)
+        self.assertEqual(result["success_count"], 1)
+        self.assertEqual(result["remaining_metadata"], 0)
+        mock_get_media_metadata.assert_called_once_with(
+            MediaTypes.BOOK.value,
+            book_item.media_id,
+            book_item.source,
         )
 
     def test_genre_backfill_queryset_includes_reading_media_types(self):

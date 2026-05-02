@@ -271,12 +271,14 @@ class SonarrImporter:
                 if season_number == 0
                 else f"{show_item.title} Season {season_number}"
             )
+            seeded_at = timezone.now()
 
             def _get_or_create_season_item(
                 season_number=season_number,
                 season_title=season_title,
+                seeded_at=seeded_at,
             ):
-                return Item.objects.get_or_create(
+                season_item, _created = Item.objects.get_or_create(
                     media_id=show_item.media_id,
                     source=show_item.source,
                     media_type=MediaTypes.SEASON.value,
@@ -288,8 +290,29 @@ class SonarrImporter:
                         "image": show_item.image or settings.IMG_NONE,
                         "release_datetime": show_item.release_datetime,
                         "genres": show_item.genres or [],
+                        "metadata_fetched_at": seeded_at,
                     },
                 )
+                update_fields = []
+                if season_item.metadata_fetched_at is None:
+                    season_item.metadata_fetched_at = seeded_at
+                    update_fields.append("metadata_fetched_at")
+                if (
+                    (not season_item.image or season_item.image == settings.IMG_NONE)
+                    and show_item.image
+                    and show_item.image != settings.IMG_NONE
+                ):
+                    season_item.image = show_item.image
+                    update_fields.append("image")
+                if not season_item.release_datetime and show_item.release_datetime:
+                    season_item.release_datetime = show_item.release_datetime
+                    update_fields.append("release_datetime")
+                if not season_item.genres and show_item.genres:
+                    season_item.genres = show_item.genres
+                    update_fields.append("genres")
+                if update_fields:
+                    season_item.save(update_fields=update_fields)
+                return season_item
 
             retry_on_lock(
                 _get_or_create_season_item,
@@ -301,24 +324,58 @@ class SonarrImporter:
         episode_number = row.get("episodeNumber")
         if season_number is None or episode_number is None:
             return None
+        episode_title = row.get("title") or f"Episode {episode_number}"
+        release_datetime = self._parse_episode_release_datetime(row)
+        seeded_at = timezone.now()
 
-        episode_item, _created = retry_on_lock(
-            lambda: Item.objects.get_or_create(
+        def _get_or_create_episode_item():
+            episode_item, _created = Item.objects.get_or_create(
                 media_id=show_item.media_id,
                 source=show_item.source,
                 media_type=MediaTypes.EPISODE.value,
                 season_number=season_number,
                 episode_number=episode_number,
                 defaults={
-                    "title": row.get("title") or f"Episode {episode_number}",
-                    "original_title": row.get("title") or f"Episode {episode_number}",
-                    "localized_title": row.get("title") or f"Episode {episode_number}",
+                    "title": episode_title,
+                    "original_title": episode_title,
+                    "localized_title": episode_title,
                     "image": show_item.image or settings.IMG_NONE,
-                    "release_datetime": self._parse_episode_release_datetime(row),
+                    "release_datetime": release_datetime,
                     "genres": show_item.genres or [],
+                    "metadata_fetched_at": seeded_at,
                 },
-            ),
-        )
+            )
+            update_fields = []
+            if episode_item.metadata_fetched_at is None:
+                episode_item.metadata_fetched_at = seeded_at
+                update_fields.append("metadata_fetched_at")
+            if not episode_item.title and episode_title:
+                episode_item.title = episode_title
+                update_fields.append("title")
+            if not episode_item.original_title and episode_title:
+                episode_item.original_title = episode_title
+                update_fields.append("original_title")
+            if not episode_item.localized_title and episode_title:
+                episode_item.localized_title = episode_title
+                update_fields.append("localized_title")
+            if (
+                (not episode_item.image or episode_item.image == settings.IMG_NONE)
+                and show_item.image
+                and show_item.image != settings.IMG_NONE
+            ):
+                episode_item.image = show_item.image
+                update_fields.append("image")
+            if not episode_item.release_datetime and release_datetime:
+                episode_item.release_datetime = release_datetime
+                update_fields.append("release_datetime")
+            if not episode_item.genres and show_item.genres:
+                episode_item.genres = show_item.genres
+                update_fields.append("genres")
+            if update_fields:
+                episode_item.save(update_fields=update_fields)
+            return episode_item
+
+        episode_item = retry_on_lock(_get_or_create_episode_item)
         return episode_item
 
     def _episode_has_file(self, row):

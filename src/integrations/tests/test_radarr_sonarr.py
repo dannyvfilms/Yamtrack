@@ -280,6 +280,7 @@ class ArrImporterTests(TestCase):
             season_number=1,
         )
         self.assertEqual(season_item.title, "Severance Season 1")
+        self.assertIsNotNone(season_item.metadata_fetched_at)
 
         collected_episode = Item.objects.get(
             media_id="95396",
@@ -295,6 +296,8 @@ class ArrImporterTests(TestCase):
             season_number=1,
             episode_number=2,
         )
+        self.assertIsNotNone(collected_episode.metadata_fetched_at)
+        self.assertIsNotNone(uncollected_episode.metadata_fetched_at)
         self.assertTrue(
             CollectionEntry.objects.filter(
                 user=self.user,
@@ -321,6 +324,73 @@ class ArrImporterTests(TestCase):
                 "total_episodes": 2,
             },
         )
+
+    @patch("integrations.imports.sonarr.services.get_media_metadata")
+    @patch("integrations.imports.sonarr.SonarrClient.episodes")
+    @patch("integrations.imports.sonarr.SonarrClient.series")
+    def test_sonarr_import_marks_existing_seeded_rows_as_fetched(
+        self,
+        mock_series,
+        mock_episodes,
+        mock_get_media_metadata,
+    ):
+        """Sonarr imports should stamp pre-existing season/episode rows as seeded."""
+        Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Severance",
+            image="https://example.com/severance.jpg",
+        )
+        season_item = Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Severance Season 1",
+            image="https://example.com/season1.jpg",
+        )
+        episode_item = Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Good News About Hell",
+            image="https://example.com/episode1.jpg",
+        )
+
+        mock_series.return_value = [
+            {
+                "id": 77,
+                "title": "Severance",
+                "statistics": {"episodeFileCount": 1},
+                "tmdbId": 95396,
+                "seasons": [{"seasonNumber": 1}],
+            },
+        ]
+        mock_episodes.return_value = [
+            {
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "title": "Good News About Hell",
+                "airDateUtc": "2022-02-18T00:00:00Z",
+                "episodeFileId": 11,
+            },
+        ]
+        mock_get_media_metadata.return_value = {
+            "title": "Severance",
+            "image": "https://example.com/severance.jpg",
+            "genres": [],
+        }
+
+        sonarr.importer(None, self.user, "new")
+
+        season_item.refresh_from_db()
+        episode_item.refresh_from_db()
+
+        self.assertIsNotNone(season_item.metadata_fetched_at)
+        self.assertIsNotNone(episode_item.metadata_fetched_at)
 
     @patch("integrations.imports.sonarr.SonarrClient.series")
     def test_sonarr_import_removes_episode_collection_when_series_has_no_files(

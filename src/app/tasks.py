@@ -500,6 +500,33 @@ def count_game_length_backfill_items() -> int:
     return _game_length_items_queryset().count()
 
 
+def _initial_metadata_items_queryset():
+    """Return initial metadata candidates, skipping Sonarr-seeded TV library rows.
+
+    Sonarr imports can create large batches of season/episode rows using local
+    library data. Treating those rows as generic "never fetched" metadata work
+    causes avoidable provider storms and can monopolize SQLite during imports.
+    """
+    from django.db.models import Exists, OuterRef  # noqa: PLC0415
+
+    from integrations.models import CollectionSourceState  # noqa: PLC0415
+
+    sonarr_episode_collection_state = CollectionSourceState.objects.filter(
+        source="sonarr",
+        item__media_type=MediaTypes.EPISODE.value,
+        item__media_id=OuterRef("media_id"),
+        item__source=OuterRef("source"),
+    )
+    return (
+        Item.objects.filter(metadata_fetched_at__isnull=True)
+        .annotate(has_sonarr_episode_collection=Exists(sonarr_episode_collection_state))
+        .exclude(
+            media_type__in=[MediaTypes.SEASON.value, MediaTypes.EPISODE.value],
+            has_sonarr_episode_collection=True,
+        )
+    )
+
+
 def _schedule_discover_refresh_for_movie_items(items: list[Item]) -> None:
     movie_item_ids = [
         item.id
@@ -3237,9 +3264,7 @@ def backfill_item_metadata_task(batch_size: int = 10, game_length_batch_size: in
     else:
         game_length_batch_size = max(int(game_length_batch_size), 0)
 
-    initial_items = list(
-        Item.objects.filter(metadata_fetched_at__isnull=True).order_by("id")[:batch_size],
-    )
+    initial_items = list(_initial_metadata_items_queryset().order_by("id")[:batch_size])
     initial_item_ids = [item.id for item in initial_items]
     remaining_slots = max(batch_size - len(initial_items), 0)
     game_length_backfill_items = []
@@ -3418,7 +3443,7 @@ def backfill_item_metadata_task(batch_size: int = 10, game_length_batch_size: in
                 exception_summary(e),
             )
 
-    remaining_metadata = Item.objects.filter(metadata_fetched_at__isnull=True).count()
+    remaining_metadata = _initial_metadata_items_queryset().count()
     remaining_release = count_release_backfill_items()
     remaining_discover_movie_metadata = count_discover_movie_metadata_backfill_items()
     remaining_game_lengths = count_game_length_backfill_items()
