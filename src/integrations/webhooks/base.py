@@ -979,6 +979,8 @@ class BaseWebhookProcessor:
         user,
         *,
         source=None,
+        identity_media_type=None,
+        library_media_type=None,
     ):
         """Handle TV episode playback event.
 
@@ -989,30 +991,57 @@ class BaseWebhookProcessor:
             payload: Webhook payload.
             user: User instance.
             source: Identity provider source (default: ``Sources.TMDB.value``).
+            identity_media_type: The conceptual media type (e.g., TV for grouped anime).
+            library_media_type: The UI bucket for the item (e.g., ANIME for grouped anime).
         """
         logger.info(
-            "_handle_tv_episode: media_id=%s, season=%s, episode=%s, user=%s, source=%s",
+            "_handle_tv_episode: media_id=%s, season=%s, episode=%s, user=%s, source=%s, "
+            "identity_media_type=%s, library_media_type=%s",
             media_id,
             season_number,
             episode_number,
             user,
             source,
+            identity_media_type,
+            library_media_type,
         )
         from app.services import metadata_resolution  # noqa: PLC0415
+        from app.services.tracking_hydration import ensure_item_metadata  # noqa: PLC0415
 
         if source is None:
             source = Sources.TMDB.value
 
-        tv_metadata = self._get_tv_metadata(media_id, [season_number], source)
-        tv_item, _ = app.models.Item.objects.get_or_create(
-            media_id=media_id,
-            source=source,
-            media_type=MediaTypes.TV.value,
-            defaults={
-                "title": tv_metadata["title"],
-                "image": tv_metadata["image"],
-            },
+        # Determine if this is grouped anime (TMDB/TVDB anime tracked with TV structure)
+        is_grouped_anime = (
+            library_media_type == MediaTypes.ANIME.value
+            and identity_media_type == MediaTypes.TV.value
         )
+
+        tv_metadata = self._get_tv_metadata(media_id, [season_number], source)
+
+        if is_grouped_anime:
+            # Use ensure_item_metadata for grouped anime to properly set
+            # identity_media_type and library_media_type
+            hydration = ensure_item_metadata(
+                user,
+                media_type=MediaTypes.ANIME.value,  # Route media type
+                media_id=media_id,
+                source=source,
+                identity_media_type=MediaTypes.TV.value,  # Data structure
+                library_media_type=MediaTypes.ANIME.value,  # UI bucket
+            )
+            tv_item = hydration.item
+        else:
+            # Standard TV item creation
+            tv_item, _ = app.models.Item.objects.get_or_create(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.TV.value,
+                defaults={
+                    "title": tv_metadata["title"],
+                    "image": tv_metadata["image"],
+                },
+            )
         external_ids = self._extract_external_ids(payload)
         logger.info(
             "_handle_tv_episode: building source_external_id for source=%s, media_id=%s",

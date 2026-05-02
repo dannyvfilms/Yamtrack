@@ -30,6 +30,7 @@ JELLYFIN_EVENT_MAP = {
 
 ANIME_GENRES = ["Animation", "Anime"]
 
+
 def _ticks_to_seconds(ticks) -> int | None:
     """Convert Jellyfin 100-nanosecond ticks to whole seconds."""
     if ticks is None:
@@ -137,7 +138,9 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             episode_number: Episode number (for TV shows)
             is_movie: True for movies, False for TV shows
         
-        Returns MAL ID if found, None otherwise.
+        Returns:
+            tuple: (mal_id, content_type) where content_type is 'tv' or 'movie',
+                   or (None, None) if not an anime.
         """
         tmdb_id = ids.get("tmdb_id")
         logger.info(
@@ -150,7 +153,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         
         if not tmdb_id:
             logger.info("_resolve_mal_id_from_tmdb_via_genre_check: no TMDB ID in ids dict")
-            return None
+            return None, None
         
         try:
             # Fetch TMDB metadata to check genres
@@ -160,7 +163,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 tmdb_metadata = app.providers.tmdb.tv_with_seasons(str(tmdb_id), [season_number])
             if not tmdb_metadata:
                 logger.info("_resolve_mal_id_from_tmdb_via_genre_check: no TMDB metadata found")
-                return None
+                return None, None
             
             # Check if the show has anime genres
             genres = tmdb_metadata.get("genres") or []
@@ -171,7 +174,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                     "_resolve_mal_id_from_tmdb_via_genre_check: not an anime, genres=%s",
                     genres,
                 )
-                return None
+                return None, None
             
             logger.info(
                 "_resolve_mal_id_from_tmdb_via_genre_check: detected anime, genres=%s",
@@ -217,14 +220,15 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 logger.info(
                     "_resolve_mal_id_from_tmdb_via_genre_check: no MAL mapping found",
                 )
-                return None
+                return None, None
             
             logger.info(
                 "_resolve_mal_id_from_tmdb_via_genre_check: found MAL ID %s",
                 mal_id,
             )
             
-            return str(mal_id)
+            content_type = 'movie' if is_movie else 'tv'
+            return str(mal_id), content_type
             
         except Exception as exc:
             logger.warning(
@@ -232,7 +236,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 tmdb_id,
                 exc,
             )
-            return None
+            return None, None
 
     def process_payload(self, payload, user):
         """Process the incoming Jellyfin webhook payload."""
@@ -275,13 +279,14 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             season_number is not None and
             episode_number is not None
         ):
-            mal_id = self._resolve_mal_id_from_tmdb_via_genre_check(
+            mal_id, content_type = self._resolve_mal_id_from_tmdb_via_genre_check(
                 ids=ids,
                 season_number=season_number,
                 episode_number=episode_number,
             )
             if mal_id:
                 ids["mal_id"] = mal_id
+                ids["anime_content_type"] = content_type
         
         # For movies (including anime movies)
         elif (
@@ -289,12 +294,13 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             media_type == MediaTypes.MOVIE.value and
             ids.get("tmdb_id")
         ):
-            mal_id = self._resolve_mal_id_from_tmdb_via_genre_check(
+            mal_id, content_type = self._resolve_mal_id_from_tmdb_via_genre_check(
                 ids=ids,
                 is_movie=True,
             )
             if mal_id:
                 ids["mal_id"] = mal_id
+                ids["anime_content_type"] = content_type
 
         # Update payload ProviderIds with resolved IDs
         payload["Item"]["ProviderIds"] = {
@@ -811,11 +817,11 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             self._update_existing_item(existing_item, payload, user)
             return
 
-
-
         # Feature #1: Try to resolve media ID using user's preferred provider
         # Determine correct media type for provider resolution (ANIME vs TV)
         resolution_media_type = MediaTypes.TV.value
+        anime_content_type = ids.get("anime_content_type", "tv")
+        
         if ids.get("mal_id"):
             resolution_media_type = MediaTypes.ANIME.value
             logger.info(
@@ -847,7 +853,6 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             resolved_season = season_number
             resolved_episode = episode_number
 
-
         if resolved_media_id is not None and resolved_season is not None and resolved_episode is not None:
             logger.info(
                 "Tracking TV episode under source=%s (ID=%s, S%s E%s)",
@@ -857,15 +862,31 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 resolved_episode,
             )
             
-            # If we have a MAL ID from anime detection, handle as anime using resolved_source
+            # If we have a MAL ID from anime detection, handle based on user preference
             if ids.get("mal_id"):
                 logger.info(
                     "Detected anime via mapping, handling under %s: ID=%s",
                     resolved_source, resolved_media_id,
                 )
-                if self._handle_anime(resolved_media_id, resolved_episode, payload, user, source=resolved_source):
+                
+                # If user prefers MAL, track as flat anime
+                if resolved_source == Sources.MAL.value:
+                    if self._handle_anime(resolved_media_id, resolved_episode, payload, user, source=Sources.MAL.value):
+                        return
+                else:
+                    # User prefers TMDB/TVDB - track as grouped anime
+                    # Use _handle_tv_episode with grouped anime parameters
+                    self._handle_tv_episode(
+                        resolved_media_id,
+                        resolved_season,
+                        resolved_episode,
+                        payload,
+                        user,
+                        source=resolved_source,
+                        identity_media_type=MediaTypes.TV.value,
+                        library_media_type=MediaTypes.ANIME.value,
+                    )
                     return
-
             
             # Use _handle_tv_episode with the resolved source;
             # _get_tv_metadata override ensures metadata comes from the right provider.
@@ -891,6 +912,10 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         For anime movies, check for existing anime items first since they
         are tracked under MediaTypes.ANIME.value. Also handles creating
         new anime movies under MAL.
+        
+        IMPORTANT: Anime movies from TMDB/TVDB should be tracked as regular
+        movies (not in anime section) unless the user prefers MAL and a MAL
+        mapping exists.
         """
         # For anime movies (tracked under MAL), check anime items first
         if ids.get("mal_id"):
@@ -919,14 +944,27 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             self._update_existing_item(existing_item, payload, user)
             return
 
-        # For new anime movies: create under MAL if mal_id was resolved
+        # For new anime movies with MAL ID: only track as anime if user prefers MAL
+        # Otherwise, track as regular movie
         if ids.get("mal_id"):
-            logger.info(
-                "Creating new anime movie under MAL: ID=%s",
-                ids["mal_id"],
-            )
-            if self._handle_anime(ids["mal_id"], 1, payload, user):
-                return
+            # Check user's anime metadata source preference
+            preferred = self._get_jellyfin_preferred_source(user, MediaTypes.ANIME.value)
+            
+            if preferred == Sources.MAL.value:
+                # User prefers MAL - track as flat anime
+                logger.info(
+                    "Creating new anime movie under MAL (user preference): ID=%s",
+                    ids["mal_id"],
+                )
+                if self._handle_anime(ids["mal_id"], 1, payload, user, source=Sources.MAL.value):
+                    return
+            else:
+                # User prefers TMDB/TVDB or no preference - track as regular movie
+                # Anime movies cannot be tracked as grouped anime (TMDB/TVDB don't support it)
+                logger.info(
+                    "Anime movie detected but user prefers %s - tracking as regular movie",
+                    preferred or "TMDB",
+                )
 
         # Fall through to base class for regular movies
         super()._process_movie(payload, user, ids)
