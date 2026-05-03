@@ -2141,6 +2141,148 @@ class PocketCastsImporter:
                 podcast.progress = old_progress + delta_minutes
                 podcast.save()
 
+    def _sync_episodes_from_rss(self, show, rss_feed_url):
+        """Sync episodes from RSS feed and merge with existing episodes.
+        
+        Fetches all episodes from RSS feed and creates/updates PodcastEpisode
+        records. This ensures we have the complete episode list, not just
+        what's in Pocket Casts history.
+        
+        Args:
+            show: PodcastShow instance
+            rss_feed_url: RSS feed URL to fetch from
+        """
+        from app.models import PodcastEpisode
+        from integrations import podcast_rss
+
+        # Fetch episodes from RSS
+        rss_episodes = podcast_rss.fetch_episodes_from_rss(rss_feed_url)
+
+        if not rss_episodes:
+            logger.debug("No episodes found in RSS feed for show %s", show.title)
+            return
+
+        # Get existing episodes for this show
+        existing_episodes = {
+            episode.episode_uuid: episode
+            for episode in PodcastEpisode.objects.filter(show=show)
+        }
+
+        # Also create a lookup by title + published date for fuzzy matching
+        existing_by_title_date = {}
+        for episode in existing_episodes.values():
+            if episode.title and episode.published:
+                key = (episode.title.lower().strip(), episode.published.date())
+                existing_by_title_date[key] = episode
+
+        created_count = 0
+        updated_count = 0
+
+        for rss_ep in rss_episodes:
+            # Try to find matching episode
+            matched_episode = None
+
+            # First try by GUID if available
+            if rss_ep.get("guid"):
+                # Check if GUID matches any episode_uuid
+                for ep_uuid, episode in existing_episodes.items():
+                    if ep_uuid == rss_ep["guid"]:
+                        matched_episode = episode
+                        break
+
+            # If no GUID match, try by title + published date
+            if not matched_episode and rss_ep.get("title") and rss_ep.get("published"):
+                title_key = (rss_ep["title"].lower().strip(), rss_ep["published"].date())
+                matched_episode = existing_by_title_date.get(title_key)
+
+            if matched_episode:
+                # Update existing episode
+                updated = False
+                update_fields = []
+
+                # If UUID differs and we have RSS GUID, update to RSS GUID
+                # This ensures consistency when Pocket Casts UUID and RSS GUID differ
+                # But prefer keeping Pocket Casts UUID format if it looks like one (has hyphens in UUID format)
+                if rss_ep.get("guid") and matched_episode.episode_uuid != rss_ep["guid"]:
+                    # Only update if the matched episode doesn't look like a Pocket Casts UUID
+                    # Pocket Casts UUIDs typically have hyphens in specific positions
+                    is_pocketcasts_uuid = len(matched_episode.episode_uuid) == 36 and matched_episode.episode_uuid.count("-") == 4
+                    if not is_pocketcasts_uuid:
+                        logger.info(
+                            "Updating episode UUID from %s to %s for episode %s (RSS GUID)",
+                            matched_episode.episode_uuid,
+                            rss_ep["guid"],
+                            matched_episode.title,
+                        )
+                        matched_episode.episode_uuid = rss_ep["guid"]
+                        updated = True
+                        update_fields.append("episode_uuid")
+
+                if rss_ep.get("title") and matched_episode.title != rss_ep["title"]:
+                    matched_episode.title = rss_ep["title"]
+                    updated = True
+                    update_fields.append("title")
+                if rss_ep.get("published") and matched_episode.published != rss_ep["published"]:
+                    matched_episode.published = rss_ep["published"]
+                    updated = True
+                    update_fields.append("published")
+                if rss_ep.get("duration") and matched_episode.duration != rss_ep["duration"]:
+                    matched_episode.duration = rss_ep["duration"]
+                    updated = True
+                    update_fields.append("duration")
+                if rss_ep.get("audio_url") and matched_episode.audio_url != rss_ep["audio_url"]:
+                    matched_episode.audio_url = rss_ep["audio_url"]
+                    updated = True
+                    update_fields.append("audio_url")
+                if rss_ep.get("episode_number") is not None and matched_episode.episode_number != rss_ep["episode_number"]:
+                    matched_episode.episode_number = rss_ep["episode_number"]
+                    updated = True
+                    update_fields.append("episode_number")
+                if rss_ep.get("season_number") is not None and matched_episode.season_number != rss_ep["season_number"]:
+                    matched_episode.season_number = rss_ep["season_number"]
+                    updated = True
+                    update_fields.append("season_number")
+
+                if updated:
+                    matched_episode.save(update_fields=update_fields)
+                    updated_count += 1
+            else:
+                # Create new episode
+                # Generate a UUID for the episode if RSS doesn't have one
+                episode_uuid = rss_ep.get("guid")
+                if not episode_uuid:
+                    # Use a hash of title + published date as fallback UUID
+                    import hashlib
+                    uuid_str = f"{rss_ep.get('title', '')}{rss_ep.get('published', '')}"
+                    episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
+
+                # Check if this UUID already exists (shouldn't happen, but be safe)
+                if episode_uuid in existing_episodes:
+                    continue
+
+                try:
+                    new_episode = PodcastEpisode.objects.create(
+                        show=show,
+                        episode_uuid=episode_uuid,
+                        title=rss_ep.get("title", "Unknown Episode"),
+                        published=rss_ep.get("published"),
+                        duration=rss_ep.get("duration"),
+                        audio_url=rss_ep.get("audio_url", ""),
+                        episode_number=rss_ep.get("episode_number"),
+                        season_number=rss_ep.get("season_number"),
+                    )
+                    created_count += 1
+                    logger.debug("Created new episode from RSS: %s", new_episode.title)
+                except Exception:
+                    logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
+
+        logger.info(
+            "Synced episodes from RSS for show %s: %d created, %d updated",
+            show.title,
+            created_count,
+            updated_count,
+        )
+
     def _cleanup_duplicate_episodes(self):
         """Clean up duplicate podcast episodes.
         
