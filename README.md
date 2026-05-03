@@ -343,6 +343,13 @@ environment:
 
 Multiple origins can be specified with commas, for example `https://yamtrack.mydomain.com,https://yamtrack-alt.mydomain.com`.
 
+If Yamtrack does not generate the correct callback URLs for authenticating with Anilist and other imports, add this to your environment variables:
+
+```yaml
+environment:
+  - USE_X_FORWARDED=True
+```
+
 ### Docker Image Tags
 
 The Docker image is available at `ghcr.io/dannyvfilms/yamtrack` with these tags:
