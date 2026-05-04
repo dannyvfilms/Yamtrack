@@ -176,9 +176,6 @@ document.addEventListener("alpine:init", () => {
         );
       }
 
-      // Get the current time in correct format based on input type
-      const now = this.getCurrentDateTime(endDateField);
-
       // Initial load handling - only auto-fill for new forms
       // For existing records, respect the saved values (even if empty)
       if (
@@ -188,7 +185,7 @@ document.addEventListener("alpine:init", () => {
         endDateField &&
         !endDateField.value
       ) {
-        endDateField.value = now;
+        endDateField.value = this.getCurrentDateTime(endDateField);
         this.autoFilled.end_date = true;
       } else if (
         isNewForm &&
@@ -197,7 +194,7 @@ document.addEventListener("alpine:init", () => {
         startDateField &&
         !startDateField.value
       ) {
-        startDateField.value = now;
+        startDateField.value = this.getCurrentDateTime(startDateField);
         this.autoFilled.start_date = true;
       }
 
@@ -235,7 +232,7 @@ document.addEventListener("alpine:init", () => {
             !endDateField.value &&
             !isReturningToOriginalCompleted
           ) {
-            endDateField.value = now;
+            endDateField.value = this.getCurrentDateTime(endDateField);
             this.autoFilled.end_date = true;
           } else if (
             status === "In progress" &&
@@ -243,7 +240,7 @@ document.addEventListener("alpine:init", () => {
             !startDateField.value &&
             !isReturningToOriginalInProgress
           ) {
-            startDateField.value = now;
+            startDateField.value = this.getCurrentDateTime(startDateField);
             this.autoFilled.start_date = true;
           }
         });
