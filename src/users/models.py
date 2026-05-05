@@ -58,7 +58,7 @@ class MediaSortChoices(models.TextChoices):
     DATE_ADDED = "date_added", "Date Added"
     START_DATE = "start_date", "Start Date"
     END_DATE = "end_date", "Last Watched"
-    NEXT_EPISODE_AIR_DATE = "next_episode_air_date", "Next Episode Air Date"
+    NEXT_EPISODE_AIR_DATE = "next_episode_air_date", "Episode Air Date"
     TIME_LEFT = "time_left", "Time Left"
 
 

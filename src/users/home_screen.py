@@ -31,15 +31,14 @@ SQUARE_HOME_MEDIA_TYPES = {
     MediaTypes.MUSIC.value,
     MediaTypes.PODCAST.value,
 }
-HOME_SCREEN_FILTER_KEYS = tuple(
-    key
-    for key in smart_rules.SMART_FILTER_KEYS
-    if key != "search"
-)
 AUTHOR_MEDIA_TYPES = {
     MediaTypes.BOOK.value,
     MediaTypes.MANGA.value,
     MediaTypes.COMIC.value,
+}
+HOME_PROGRESS_MEDIA_TYPES = {
+    MediaTypes.TV.value,
+    MediaTypes.ANIME.value,
 }
 CRITIC_RATING_MEDIA_TYPES = {
     MediaTypes.TV.value,
@@ -73,6 +72,13 @@ HOME_ONLY_SORTS = {
     HomeSortChoices.COMPLETION,
     HomeSortChoices.EPISODES_LEFT,
 }
+HOME_SCREEN_FILTER_KEYS = tuple(
+    dict.fromkeys(
+        key
+        for key in (*smart_rules.SMART_FILTER_KEYS, "progress")
+        if key != "search"
+    ),
+)
 STATUS_FILTER_VALUES = {"all", *Status.values}
 STATUS_FILTER_ALIASES = {"all": "all"}
 for _status_choice in Status:
@@ -81,6 +87,7 @@ for _status_choice in Status:
 
 HOME_QUERY_DEFAULT_FILTERS = {
     "status": Status.IN_PROGRESS.value,
+    "progress": "all",
     "rating": "all",
     "collection": "all",
     "genre": "",
@@ -99,6 +106,7 @@ HOME_QUERY_DEFAULT_FILTERS = {
 SUPPORTED_FILTERS_BY_MEDIA_TYPE = {
     MediaTypes.TV.value: {
         "status",
+        "progress",
         "rating",
         "collection",
         "genre",
@@ -136,6 +144,7 @@ SUPPORTED_FILTERS_BY_MEDIA_TYPE = {
     },
     MediaTypes.ANIME.value: {
         "status",
+        "progress",
         "rating",
         "collection",
         "genre",
@@ -266,6 +275,8 @@ def resolve_home_row_direction(sort_by: str, direction: str | None = None) -> st
         return DirectionChoices.DESC
     if sort_by == HomeSortChoices.EPISODES_LEFT:
         return DirectionChoices.ASC
+    if sort_by == MediaSortChoices.NEXT_EPISODE_AIR_DATE:
+        return DirectionChoices.DESC
     return BasicMedia.objects.resolve_direction(sort_by, None)
 
 
@@ -281,6 +292,7 @@ def get_allowed_sort_choices(media_type: str, row_type: str) -> list[dict]:
         (MediaSortChoices.TITLE, "Title"),
         (MediaSortChoices.PROGRESS, "Progress"),
         (MediaSortChoices.RELEASE_DATE, "Release Date"),
+        (MediaSortChoices.NEXT_EPISODE_AIR_DATE, "Episode Air Date"),
         (MediaSortChoices.DATE_ADDED, "Date Added"),
         (MediaSortChoices.START_DATE, "Start Date"),
         (MediaSortChoices.END_DATE, "Last Watched"),
@@ -301,6 +313,8 @@ def get_allowed_sort_choices(media_type: str, row_type: str) -> list[dict]:
         sort_choices.append((MediaSortChoices.TIME_TO_BEAT, "Time to Beat"))
     if media_type == MediaTypes.TV.value:
         sort_choices.append((MediaSortChoices.TIME_LEFT, "Time Left"))
+    if media_type not in HOME_PROGRESS_MEDIA_TYPES and media_type != MediaTypes.SEASON.value:
+        sort_choices = [choice for choice in sort_choices if choice[0] != MediaSortChoices.NEXT_EPISODE_AIR_DATE]
 
     if row_type == HomeScreenRowTypeChoices.LIBRARY_QUERY:
         sort_choices.extend(
@@ -336,11 +350,7 @@ def _default_library_sort(user, media_type: str) -> str:
 
 def _seeded_home_media_types(user) -> list[str]:
     """Return the enabled media types that should receive default Home rows."""
-    return [
-        media_type
-        for media_type in get_enabled_home_media_types(user)
-        if media_type != MediaTypes.TV.value
-    ]
+    return list(get_enabled_home_media_types(user))
 
 
 def _preferred_default_library_sort(user, media_type: str) -> str:
@@ -353,15 +363,22 @@ def _preferred_default_library_sort(user, media_type: str) -> str:
     return HomeSortChoices.RECENT
 
 
+def _home_default_library_sort(media_type: str, user) -> str:
+    """Return the desired default sort for a Home library row."""
+    if media_type in HOME_PROGRESS_MEDIA_TYPES:
+        return MediaSortChoices.NEXT_EPISODE_AIR_DATE
+    return _preferred_default_library_sort(user, media_type)
+
+
 def _default_recent_row_direction() -> str:
     return DirectionChoices.DESC
 
 
 def _build_default_rows_for_media_type(user, media_type: str) -> list[HomeScreenRow]:
-    if media_type == MediaTypes.TV.value:
-        return []
-
-    sort_by = _preferred_default_library_sort(user, media_type)
+    sort_by = _home_default_library_sort(media_type, user)
+    default_filters = dict(HOME_QUERY_DEFAULT_FILTERS)
+    if media_type in HOME_PROGRESS_MEDIA_TYPES:
+        default_filters["progress"] = "not_caught_up"
     defaults = [
         HomeScreenRow(
             user=user,
@@ -371,7 +388,7 @@ def _build_default_rows_for_media_type(user, media_type: str) -> list[HomeScreen
             row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
             sort_by=sort_by,
             direction=resolve_home_row_direction(sort_by),
-            filters=dict(HOME_QUERY_DEFAULT_FILTERS),
+            filters=default_filters,
         ),
     ]
     if getattr(user, "show_planned_on_home", "disabled") != "disabled":
@@ -559,6 +576,16 @@ def build_filter_field_data(user, media_type: str) -> list[dict]:
             ],
         },
         {
+            "key": "progress",
+            "label": "Progress",
+            "options": [
+                {"value": "all", "label": "All"},
+                {"value": "caught_up", "label": "Caught Up"},
+                {"value": "not_caught_up", "label": "Not Caught Up"},
+            ],
+            "visible": media_type in HOME_PROGRESS_MEDIA_TYPES,
+        },
+        {
             "key": "rating",
             "label": "Rating",
             "options": [
@@ -668,6 +695,10 @@ def build_filter_field_data(user, media_type: str) -> list[dict]:
 
 
 _SUMMARY_STATIC_FILTER_LABELS = {
+    "progress": {
+        "caught_up": "Caught Up",
+        "not_caught_up": "Not Caught Up",
+    },
     "rating": {
         "rated": "Rated",
         "not_rated": "Not Rated",
@@ -707,6 +738,21 @@ def _canonical_status_filter(value, default="all") -> str | None:
     return STATUS_FILTER_ALIASES.get(raw_value.casefold(), default)
 
 
+def _canonical_progress_filter(value, default="all") -> str:
+    """Normalize progress aliases to the stored choice value."""
+    raw_value = str(value or "").strip().casefold()
+    if not raw_value:
+        return default
+    aliases = {
+        "all": "all",
+        "caught up": "caught_up",
+        "caught_up": "caught_up",
+        "not caught up": "not_caught_up",
+        "not_caught_up": "not_caught_up",
+    }
+    return aliases.get(raw_value, default)
+
+
 def describe_library_query(filters: dict, user, media_type: str) -> str:
     """Return a compact query-row summary for settings and home."""
     normalized = _normalized_filter_payload(filters, media_type)
@@ -726,6 +772,7 @@ def describe_library_query(filters: dict, user, media_type: str) -> str:
         parts = ["Library"]
 
     for key in (
+        "progress",
         "rating",
         "collection",
         "genre",
@@ -897,6 +944,10 @@ def _normalized_filter_payload(filters: dict | None, media_type: str) -> dict:
         raw_filters.get("status", normalized.get("status")),
         HOME_QUERY_DEFAULT_FILTERS["status"],
     )
+    normalized["progress"] = _canonical_progress_filter(
+        raw_filters.get("progress", normalized.get("progress")),
+        HOME_QUERY_DEFAULT_FILTERS["progress"],
+    )
     return {
         key: normalized.get(key, HOME_QUERY_DEFAULT_FILTERS.get(key, ""))
         for key in HOME_SCREEN_FILTER_KEYS
@@ -968,6 +1019,8 @@ def validate_library_row_filters(raw_filters: dict | None, media_type: str) -> d
         if key not in HOME_SCREEN_FILTER_KEYS:
             raise HomeScreenValidationError(f"Unsupported filter '{key}' for {media_type}.")
         if key not in supported and str(value or "").strip():
+            if key == "progress" and _canonical_progress_filter(value, "all") == "all":
+                continue
             raise HomeScreenValidationError(f"Filter '{key}' is not available for {media_type}.")
 
     normalized = _normalized_filter_payload(raw_filters, media_type)
@@ -980,6 +1033,18 @@ def validate_library_row_filters(raw_filters: dict | None, media_type: str) -> d
     raw_rating = str(raw_filters.get("rating", normalized["rating"]) or "").strip().lower()
     if raw_rating and raw_rating not in {"all", "rated", "not_rated"}:
         raise HomeScreenValidationError(f"Unsupported rating filter for {media_type}.")
+    raw_progress_value = str(raw_filters.get("progress", normalized["progress"]) or "").strip().casefold()
+    if raw_progress_value and raw_progress_value not in {
+        "all",
+        "caught up",
+        "caught_up",
+        "not caught up",
+        "not_caught_up",
+    }:
+        raise HomeScreenValidationError(f"Unsupported progress filter for {media_type}.")
+    raw_progress = _canonical_progress_filter(raw_progress_value, None)
+    if raw_progress and raw_progress not in {"all"} and media_type not in HOME_PROGRESS_MEDIA_TYPES:
+        raise HomeScreenValidationError(f"Filter 'progress' is not available for {media_type}.")
     raw_collection = str(raw_filters.get("collection", normalized["collection"]) or "").strip().lower()
     if raw_collection and raw_collection not in {"all", "collected", "not_collected"}:
         raise HomeScreenValidationError(f"Unsupported collection filter for {media_type}.")
@@ -1299,6 +1364,58 @@ def _entry_next_event_timestamp(entry: HomeRowEntry):
     return dt_value.timestamp() if dt_value else None
 
 
+def _entry_next_episode_air_date_timestamp(entry: HomeRowEntry):
+    media = _entry_media(entry)
+    if not media:
+        return None
+
+    next_episode_air_date = getattr(media, "next_episode_air_date", None)
+    if next_episode_air_date is None:
+        next_episode_air_date = BasicMedia.objects._next_episode_air_date_value(media)
+        if next_episode_air_date is not None:
+            media.next_episode_air_date = next_episode_air_date
+
+    dt_value = _coerce_datetime(next_episode_air_date)
+    return dt_value.timestamp() if dt_value else None
+
+
+def _is_caught_up_media(media) -> bool:
+    max_progress = getattr(media, "max_progress", None)
+    if max_progress is None:
+        return False
+
+    try:
+        max_progress_value = int(max_progress)
+    except (TypeError, ValueError):
+        return False
+
+    if max_progress_value <= 0:
+        return False
+
+    try:
+        progress_value = int(getattr(media, "progress", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+
+    return progress_value >= max_progress_value
+
+
+def _apply_progress_filter(entries: list[HomeRowEntry], media_type: str, progress_filter: str) -> list[HomeRowEntry]:
+    normalized_progress = _canonical_progress_filter(progress_filter, "all")
+    if normalized_progress == "all" or media_type not in HOME_PROGRESS_MEDIA_TYPES:
+        return entries
+
+    media_objects = [entry.media for entry in entries if entry.media]
+    if media_objects and any(getattr(media, "max_progress", None) is None for media in media_objects):
+        BasicMedia.objects.annotate_max_progress(media_objects, media_type)
+
+    if normalized_progress == "caught_up":
+        return [entry for entry in entries if entry.media and _is_caught_up_media(entry.media)]
+    if normalized_progress == "not_caught_up":
+        return [entry for entry in entries if not entry.media or not _is_caught_up_media(entry.media)]
+    return entries
+
+
 def _sort_numeric(entries: list[HomeRowEntry], value_fn, direction: str) -> list[HomeRowEntry]:
     descending = direction == DirectionChoices.DESC
     return sorted(
@@ -1366,6 +1483,8 @@ def sort_home_entries(entries: list[HomeRowEntry], sort_by: str, direction: str)
             ),
         )
         return with_events + without_events
+    if sort_by == MediaSortChoices.NEXT_EPISODE_AIR_DATE:
+        return _sort_numeric(entries, _entry_next_episode_air_date_timestamp, direction)
     if sort_by == HomeSortChoices.RECENT:
         return _sort_numeric(entries, _entry_recent_timestamp, direction)
     if sort_by == HomeSortChoices.COMPLETION:
@@ -1469,6 +1588,7 @@ def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
         for item in items
         if _item_matches_home_media_type(item, row.media_type)
     ]
+    entries = _apply_progress_filter(entries, row.media_type, normalized_filters.get("progress", "all"))
     return sort_home_entries(entries, row.sort_by, row.direction)
 
 

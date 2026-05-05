@@ -10,6 +10,7 @@ from app.models import MediaTypes, Status
 from lists.models import CustomList
 from users import home_screen
 from users.models import DirectionChoices, HomeScreenRow, HomeScreenRowTypeChoices, HomeSortChoices
+from users.models import MediaSortChoices
 
 
 class HomeScreenViewTests(TestCase):
@@ -55,11 +56,12 @@ class HomeScreenViewTests(TestCase):
         self.assertNotContains(response, "Add Recently Played Row")
         self.assertNotContains(response, "Enabled")
 
-    def test_home_screen_get_seeds_old_home_style_defaults(self):
+    def test_home_screen_get_seeds_default_rows_for_show_libraries(self):
         self._set_enabled_media_types(
             MediaTypes.TV.value,
             MediaTypes.SEASON.value,
             MediaTypes.MOVIE.value,
+            MediaTypes.ANIME.value,
         )
 
         response = self.client.get(reverse("home_screen"))
@@ -68,11 +70,55 @@ class HomeScreenViewTests(TestCase):
             section["media_type"]: section
             for section in json.loads(response.context["home_screen_sections_json"])
         }
-        self.assertEqual(sections[MediaTypes.TV.value]["rows"], [])
+        self.assertEqual(len(sections[MediaTypes.TV.value]["rows"]), 1)
+        self.assertEqual(len(sections[MediaTypes.ANIME.value]["rows"]), 1)
         self.assertEqual(len(sections[MediaTypes.SEASON.value]["rows"]), 1)
         self.assertEqual(sections[MediaTypes.SEASON.value]["rows"][0]["sort_by"], HomeSortChoices.UPCOMING)
         self.assertEqual(len(sections[MediaTypes.MOVIE.value]["rows"]), 1)
         self.assertEqual(sections[MediaTypes.MOVIE.value]["rows"][0]["sort_by"], HomeSortChoices.RECENT)
+        self.assertEqual(
+            sections[MediaTypes.TV.value]["rows"][0]["sort_by"],
+            MediaSortChoices.NEXT_EPISODE_AIR_DATE,
+        )
+        self.assertEqual(
+            sections[MediaTypes.TV.value]["rows"][0]["direction"],
+            DirectionChoices.DESC,
+        )
+        self.assertEqual(
+            sections[MediaTypes.TV.value]["rows"][0]["filters"]["status"],
+            Status.IN_PROGRESS.value,
+        )
+        self.assertEqual(
+            sections[MediaTypes.TV.value]["rows"][0]["filters"]["progress"],
+            "not_caught_up",
+        )
+        self.assertEqual(
+            sections[MediaTypes.TV.value]["rows"][0]["title"],
+            "In Progress • Not Caught Up",
+        )
+        self.assertEqual(
+            sections[MediaTypes.TV.value]["rows"][0]["summary"],
+            "Sorted by Episode Air Date • Descending",
+        )
+        self.assertEqual(
+            sections[MediaTypes.ANIME.value]["rows"][0]["sort_by"],
+            MediaSortChoices.NEXT_EPISODE_AIR_DATE,
+        )
+        self.assertEqual(
+            sections[MediaTypes.ANIME.value]["rows"][0]["direction"],
+            DirectionChoices.DESC,
+        )
+        self.assertEqual(
+            sections[MediaTypes.ANIME.value]["rows"][0]["filters"]["progress"],
+            "not_caught_up",
+        )
+        self.assertIn(
+            {
+                "value": MediaSortChoices.NEXT_EPISODE_AIR_DATE,
+                "label": "Episode Air Date",
+            },
+            sections[MediaTypes.TV.value]["sort_choices"][HomeScreenRowTypeChoices.LIBRARY_QUERY],
+        )
         self.assertFalse(
             HomeScreenRow.objects.filter(
                 user=self.user,
@@ -82,7 +128,6 @@ class HomeScreenViewTests(TestCase):
 
     def test_home_screen_get_upgrades_legacy_seeded_defaults(self):
         self._set_enabled_media_types(
-            MediaTypes.TV.value,
             MediaTypes.SEASON.value,
             MediaTypes.MOVIE.value,
         )
@@ -109,16 +154,6 @@ class HomeScreenViewTests(TestCase):
                 HomeScreenRowTypeChoices.RECENTLY_UNRATED,
             ],
         ):
-            HomeScreenRow.objects.create(
-                user=self.user,
-                media_type=MediaTypes.TV.value,
-                position=position,
-                enabled=True,
-                row_type=row_type,
-                sort_by=HomeSortChoices.UPCOMING if row_type == HomeScreenRowTypeChoices.LIBRARY_QUERY else HomeSortChoices.RECENT,
-                direction="asc" if row_type == HomeScreenRowTypeChoices.LIBRARY_QUERY else "desc",
-                filters=default_filters if row_type == HomeScreenRowTypeChoices.LIBRARY_QUERY else {},
-            )
             HomeScreenRow.objects.create(
                 user=self.user,
                 media_type=MediaTypes.SEASON.value,

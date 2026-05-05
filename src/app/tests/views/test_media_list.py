@@ -1514,7 +1514,7 @@ class MediaListViewTests(TestCase):
             "next_episode_air_date",
             [column.key for column in season_response.context["resolved_columns"]],
         )
-        self.assertContains(season_response, "Next Episode Air Date")
+        self.assertContains(season_response, "Episode Air Date")
         self.assertContains(
             season_response,
             timezone.localtime(backlog_release).date().isoformat(),

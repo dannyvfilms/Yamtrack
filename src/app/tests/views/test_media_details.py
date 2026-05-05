@@ -3178,15 +3178,15 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Open grouped series")
 
     @patch("app.providers.services.get_media_metadata")
-    def test_game_media_details_renders_cached_hltb_tables(self, mock_get_metadata):
+    def test_game_media_details_renders_cached_iron_meat_hltb_tables(self, mock_get_metadata):
         Item.objects.create(
-            media_id="325609",
+            media_id="129742",
             source=Sources.IGDB.value,
             media_type=MediaTypes.GAME.value,
-            title="Dispatch",
-            image="https://example.com/dispatch.jpg",
+            title="Iron Meat",
+            image="https://example.com/iron_meat.jpg",
             provider_external_ids={
-                "hltb_game_id": 160618,
+                "hltb_game_id": 129742,
                 "steam_app_id": 2592160,
                 "itch_id": 0,
                 "ign_uuid": "84fb8aca-cd19-4ff6-8919-c1b8ef5fa88a",
@@ -3194,8 +3194,8 @@ class MediaDetailsViewTests(TestCase):
             provider_game_lengths={
                 "active_source": "hltb",
                 "hltb": {
-                    "game_id": 160618,
-                    "url": "https://howlongtobeat.com/game/160618",
+                    "game_id": 129742,
+                    "url": "https://howlongtobeat.com/game/129742",
                     "summary": {
                         "main_minutes": 512,
                         "main_plus_minutes": 614,
@@ -3251,22 +3251,22 @@ class MediaDetailsViewTests(TestCase):
             provider_game_lengths_match="steam_verified",
         )
         mock_get_metadata.return_value = {
-            "media_id": "325609",
-            "title": "Dispatch",
+            "media_id": "129742",
+            "title": "Iron Meat",
             "media_type": MediaTypes.GAME.value,
             "source": Sources.IGDB.value,
-            "source_url": "https://www.igdb.com/games/dispatch",
-            "image": "https://example.com/dispatch.jpg",
+            "source_url": "https://www.igdb.com/games/iron-meat",
+            "image": "https://example.com/iron_meat.jpg",
             "synopsis": "Test synopsis",
             "details": {
                 "format": "Main game",
-                "release_date": "2025-10-22",
+                "release_date": "2024-09-26",
                 "platforms": ["PC", "PlayStation 5"],
             },
             "genres": ["Action"],
             "related": {},
             "external_links": {
-                "HowLongToBeat": "https://howlongtobeat.com/?q=Dispatch",
+                "HowLongToBeat": "https://howlongtobeat.com/?q=Iron+Meat",
             },
         }
 
@@ -3276,8 +3276,8 @@ class MediaDetailsViewTests(TestCase):
                 kwargs={
                     "source": Sources.IGDB.value,
                     "media_type": MediaTypes.GAME.value,
-                    "media_id": "325609",
-                    "title": "dispatch",
+                    "media_id": "129742",
+                    "title": "iron-meat",
                 },
             ),
         )
@@ -3286,13 +3286,13 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Time to Beat")
         self.assertContains(response, "How Long to Beat")
         self.assertContains(response, "Main Story")
-        self.assertContains(response, 'href="https://howlongtobeat.com/game/160618"', html=False)
+        self.assertContains(response, 'href="https://howlongtobeat.com/game/129742"', html=False)
         self.assertNotContains(response, "Based on 1,733 submissions.")
         self.assertNotContains(response, "SINGLE-PLAYER")
         self.assertNotContains(response, "Playstyle")
         self.assertEqual(
             response.context["media"]["external_links"]["HowLongToBeat"],
-            "https://howlongtobeat.com/game/160618",
+            "https://howlongtobeat.com/game/129742",
         )
 
     @patch("app.providers.services.get_media_metadata")

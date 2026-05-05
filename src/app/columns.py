@@ -251,7 +251,7 @@ MEDIA_COLUMNS: list[ColumnDef] = [
     ),
     ColumnDef(
         key="next_episode_air_date",
-        label="Next Episode Air Date",
+        label="Episode Air Date",
         th_classes="p-2 text-center",
         td_classes="p-2 text-center",
         cell_template="app/components/cells/next_episode_air_date_cell.html",
