@@ -1,6 +1,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+from django.core.cache import cache
 from django.test import TestCase
 
 from app.models import MediaTypes, Sources
@@ -19,6 +20,10 @@ mock_path = Path(__file__).resolve().parent.parent / "mock_data"
 
 class Search(TestCase):
     """Test the external API calls for media search."""
+
+    def setUp(self):
+        """Clear the cache so search tests do not share IGDB responses."""
+        cache.clear()
 
     def test_anime(self):
         """Test the search method for anime.
@@ -76,6 +81,81 @@ class Search(TestCase):
 
         for game in response["results"]:
             self.assertTrue(all(key in game for key in required_keys))
+
+    @patch("app.providers.igdb.get_access_token", return_value="token")
+    @patch("app.providers.igdb.services.api_request")
+    def test_games_retry_with_tokenized_fallback(
+        self,
+        mock_api_request,
+        mock_get_access_token,
+    ):
+        """Punctuation-free queries should fall back to tokenized IGDB matching."""
+        mock_api_request.side_effect = [
+            [
+                {"name": "SearchResults", "result": []},
+                {"name": "TotalCount", "count": 0},
+            ],
+            [
+                {
+                    "name": "SearchResults",
+                    "result": [
+                        {
+                            "id": 123456,
+                            "name": "Shakedown: Hawaii",
+                        },
+                    ],
+                },
+                {"name": "TotalCount", "count": 1},
+            ],
+        ]
+
+        response = igdb.search("Shakedown Hawaii", 1)
+
+        self.assertEqual(response["total_results"], 1)
+        self.assertEqual(len(response["results"]), 1)
+        self.assertEqual(response["results"][0]["title"], "Shakedown: Hawaii")
+        self.assertEqual(mock_api_request.call_count, 2)
+
+        first_request = mock_api_request.call_args_list[0].kwargs["data"]
+        second_request = mock_api_request.call_args_list[1].kwargs["data"]
+
+        self.assertIn('name ~ *"Shakedown Hawaii"*', first_request)
+        self.assertIn('name ~ *"Shakedown"*', second_request)
+        self.assertIn('name ~ *"Hawaii"*', second_request)
+        mock_get_access_token.assert_called_once()
+
+    @patch("app.providers.igdb.get_access_token", return_value="token")
+    @patch("app.providers.igdb.services.api_request")
+    def test_games_exact_punctuated_query_stays_on_primary_path(
+        self,
+        mock_api_request,
+        mock_get_access_token,
+    ):
+        """Exact IGDB titles should still resolve without needing the fallback."""
+        mock_api_request.return_value = [
+            {
+                "name": "SearchResults",
+                "result": [
+                    {
+                        "id": 123456,
+                        "name": "Shakedown: Hawaii",
+                    },
+                ],
+            },
+            {"name": "TotalCount", "count": 1},
+        ]
+
+        response = igdb.search("Shakedown: Hawaii", 1)
+
+        self.assertEqual(response["total_results"], 1)
+        self.assertEqual(len(response["results"]), 1)
+        self.assertEqual(response["results"][0]["title"], "Shakedown: Hawaii")
+        self.assertEqual(mock_api_request.call_count, 1)
+        self.assertIn(
+            'name ~ *"Shakedown: Hawaii"*',
+            mock_api_request.call_args.kwargs["data"],
+        )
+        mock_get_access_token.assert_called_once()
 
     def test_books(self):
         """Test the search method for books.

@@ -15,6 +15,8 @@ from app.providers import services
 
 logger = logging.getLogger(__name__)
 base_url = "https://api.igdb.com/v4"
+IGDB_SEARCH_CACHE_VERSION = "v2"
+TOKENIZED_SEARCH_MIN_TERMS = 2
 
 
 class ExternalGameSource(IntEnum):
@@ -64,20 +66,7 @@ def handle_error(error):
 
     # Invalid keys
     if status_code in (requests.codes.bad_request, requests.codes.forbidden):
-        details = None
-
-        if isinstance(error_json, dict):
-            raw_message = error_json.get("message")
-            if isinstance(raw_message, str) and raw_message:
-                details = raw_message.capitalize()
-        elif isinstance(error_json, list):
-            first_error = error_json[0] if error_json else None
-            if isinstance(first_error, dict):
-                for key in ("message", "cause", "title"):
-                    raw_message = first_error.get(key)
-                    if isinstance(raw_message, str) and raw_message:
-                        details = raw_message.capitalize()
-                        break
+        details = _extract_igdb_error_details(error_json)
 
         if details:
             raise services.ProviderAPIError(
@@ -192,7 +181,14 @@ def external_game(external_id, source=ExternalGameSource.STEAM):
 
 def search(query, page):
     """Search for games on IGDB using MultiQuery."""
-    cache_key = f"search_{Sources.IGDB.value}_{MediaTypes.GAME.value}_{query}_{page}"
+    normalized_query = _normalize_search_query(query)
+    if not normalized_query:
+        return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
+
+    cache_key = (
+        f"search_{IGDB_SEARCH_CACHE_VERSION}_{Sources.IGDB.value}_"
+        f"{MediaTypes.GAME.value}_{normalized_query}_{page}"
+    )
     data = cache.get(cache_key)
 
     if data is None:
@@ -203,31 +199,126 @@ def search(query, page):
             "Authorization": f"Bearer {access_token}",
         }
 
-        base_conditions = (
-            f'where name ~ *"{query}"* & game_type = (0,1,2,3,4,5,6,7,8,9,10)'
+        data = None
+        for tokenized in (False, True):
+            multiquery = _build_search_multiquery(
+                query,
+                page,
+                tokenized=tokenized,
+            )
+            if multiquery is None:
+                continue
+
+            response = _perform_search_request(url, headers, multiquery)
+            search_results, total_results = _extract_search_results(response)
+
+            results = [
+                {
+                    "media_id": media["id"],
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "title": media["name"],
+                    "image": get_image_url(media),
+                    "year": get_release_year(media),
+                }
+                for media in search_results
+            ]
+
+            data = helpers.format_search_response(
+                page,
+                settings.PER_PAGE,
+                total_results,
+                results,
+            )
+
+            if search_results:
+                break
+
+            if not tokenized:
+                logger.debug(
+                    "IGDB literal search returned no results for %r; "
+                    "retrying with tokenized fallback",
+                    query,
+                )
+
+        cache.set(cache_key, data)
+
+    return data
+
+
+def _normalize_search_query(query):
+    """Return a canonical cache/search key for IGDB text queries."""
+    if not isinstance(query, str):
+        return ""
+
+    normalized = re.sub(r"[\W_]+", " ", query).strip().casefold()
+    return " ".join(normalized.split())
+
+
+def _tokenize_search_query(query):
+    """Split an IGDB title query into punctuation-insensitive search terms."""
+    if not isinstance(query, str):
+        return []
+
+    return [term for term in re.split(r"[\W_]+", query.strip()) if term]
+
+
+def _build_search_query_condition(query, *, tokenized=False):
+    """Return the APICalypse search condition for the given query mode."""
+    if tokenized:
+        terms = _tokenize_search_query(query)
+        if len(terms) < TOKENIZED_SEARCH_MIN_TERMS:
+            return None
+        return " & ".join(f'name ~ *"{term}"*' for term in terms)
+
+    escaped_query = str(query or "").strip().replace("\\", "\\\\").replace('"', '\\"')
+    if not escaped_query:
+        return None
+    return f'name ~ *"{escaped_query}"*'
+
+
+def _build_search_multiquery(query, page, *, tokenized=False):
+    """Build the IGDB multiquery payload for a game search attempt."""
+    search_condition = _build_search_query_condition(query, tokenized=tokenized)
+    if not search_condition:
+        return None
+
+    conditions = [search_condition, "game_type = (0,1,2,3,4,5,6,7,8,9,10)"]
+    if not settings.IGDB_NSFW:
+        conditions.append("themes != (42)")
+
+    base_conditions = " & ".join(conditions)
+    offset = (page - 1) * settings.PER_PAGE
+
+    return (
+        'query games "SearchResults" {'
+        "fields name,cover.image_id;"
+        "sort total_rating_count desc;"
+        f"limit {settings.PER_PAGE};"
+        f"offset {offset};"
+        f"where {base_conditions};"
+        "};"
+        'query games/count "TotalCount" {'
+        f"where {base_conditions};"
+        "};"
+    )
+
+
+def _perform_search_request(url, headers, multiquery):
+    """Execute an IGDB search multiquery and retry once on token expiration."""
+    try:
+        return services.api_request(
+            Sources.IGDB.value,
+            "POST",
+            url,
+            data=multiquery,
+            headers=headers,
         )
-
-        if not settings.IGDB_NSFW:
-            base_conditions += " & themes != (42)"
-
-        offset = (page - 1) * settings.PER_PAGE
-
-        # Create the multiquery with both search and count
-        multiquery = (
-            'query games "SearchResults" {'
-            "fields name,cover.image_id;"
-            "sort total_rating_count desc;"
-            f"limit {settings.PER_PAGE};"
-            f"offset {offset};"
-            f"{base_conditions};"
-            "};"
-            'query games/count "TotalCount" {'
-            f"{base_conditions};"
-            "};"
-        )
-
-        try:
-            response = services.api_request(
+    except requests.exceptions.HTTPError as error:
+        error_resp = handle_error(error)
+        if error_resp and error_resp.get("retry"):
+            headers["Authorization"] = f"Bearer {get_access_token()}"
+            return services.api_request(
                 Sources.IGDB.value,
                 "POST",
                 url,
@@ -235,59 +326,46 @@ def search(query, page):
                 headers=headers,
             )
 
-        except requests.exceptions.HTTPError as error:
-            error_resp = handle_error(error)
-            if error_resp and error_resp.get("retry"):
-                # Retry the request with the new access token
-                headers["Authorization"] = f"Bearer {get_access_token()}"
-                response = services.api_request(
-                    Sources.IGDB.value,
-                    "POST",
-                    url,
-                    data=multiquery,
-                    headers=headers,
-                )
 
-        search_results = next(
-            (item["result"] for item in response if item["name"] == "SearchResults"),
-            [],
-        )
-        total_results = next(
-            (item["count"] for item in response if item["name"] == "TotalCount"),
-            0,
-        )
+def _extract_igdb_error_details(error_json):
+    """Return a user-facing IGDB error string from a decoded response payload."""
+    if isinstance(error_json, dict):
+        raw_message = error_json.get("message")
+        if isinstance(raw_message, str) and raw_message:
+            return raw_message.capitalize()
 
-        results = [
-            {
-                "media_id": media["id"],
-                "source": Sources.IGDB.value,
-                "media_type": MediaTypes.GAME.value,
-                "title": media["name"],
-                "image": get_image_url(media),
-                "year": get_release_year(media),
-            }
-            for media in search_results
-        ]
+    if isinstance(error_json, list):
+        first_error = error_json[0] if error_json else None
+        if isinstance(first_error, dict):
+            for key in ("message", "cause", "title"):
+                raw_message = first_error.get(key)
+                if isinstance(raw_message, str) and raw_message:
+                    return raw_message.capitalize()
 
-        data = helpers.format_search_response(
-            page,
-            settings.PER_PAGE,
-            total_results,
-            results,
-        )
+    return None
 
-        cache.set(cache_key, data)
 
-    return data
+def _extract_search_results(response):
+    """Return the search results and total count from an IGDB multiquery response."""
+    search_results = next(
+        (item["result"] for item in response if item["name"] == "SearchResults"),
+        [],
+    )
+    total_results = next(
+        (item["count"] for item in response if item["name"] == "TotalCount"),
+        0,
+    )
+    return search_results, total_results
 
 
 def game(media_id):
     """Return the metadata for the selected game from IGDB."""
     if not str(media_id).strip().isdigit():
-        raise ValueError(
+        message = (
             f"IGDB game IDs must be numeric integers, got {media_id!r}. "
             "Non-numeric IDs cannot be looked up directly on IGDB."
         )
+        raise ValueError(message)
     cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_{media_id}"
     data = cache.get(cache_key)
     if data is None:
