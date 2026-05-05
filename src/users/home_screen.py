@@ -370,6 +370,13 @@ def _home_default_library_sort(media_type: str, user) -> str:
     return _preferred_default_library_sort(user, media_type)
 
 
+def _legacy_home_default_library_sort(user, media_type: str) -> str:
+    """Return the historical sort used by older seeded Home rows."""
+    if media_type in HOME_PROGRESS_MEDIA_TYPES:
+        return MediaSortChoices.TITLE
+    return _default_library_sort(user, media_type)
+
+
 def _default_recent_row_direction() -> str:
     return DirectionChoices.DESC
 
@@ -409,7 +416,12 @@ def _build_default_rows_for_media_type(user, media_type: str) -> list[HomeScreen
     return defaults
 
 
-def _row_signature(row: HomeScreenRow, media_type: str) -> dict:
+def _row_signature(
+    row: HomeScreenRow,
+    media_type: str,
+    *,
+    ignore_direction: bool = False,
+) -> dict:
     filters = {}
     custom_list_id = None
     if row.row_type == HomeScreenRowTypeChoices.LIBRARY_QUERY:
@@ -421,14 +433,14 @@ def _row_signature(row: HomeScreenRow, media_type: str) -> dict:
         "enabled": row.enabled,
         "row_type": row.row_type,
         "sort_by": row.sort_by,
-        "direction": row.direction,
+        "direction": None if ignore_direction else row.direction,
         "filters": filters,
         "custom_list_id": custom_list_id,
     }
 
 
 def _legacy_default_rows_for_media_type(user, media_type: str) -> list[HomeScreenRow]:
-    sort_by = _default_library_sort(user, media_type)
+    sort_by = _legacy_home_default_library_sort(user, media_type)
     defaults = [
         HomeScreenRow(
             user=user,
@@ -471,11 +483,70 @@ def _legacy_default_rows_for_media_type(user, media_type: str) -> list[HomeScree
     return defaults
 
 
-def _rows_match_signature(existing_rows: list[HomeScreenRow], expected_rows: list[HomeScreenRow], media_type: str) -> bool:
+def _single_query_default_rows_for_media_type(
+    user,
+    media_type: str,
+    sort_by: str,
+) -> list[HomeScreenRow]:
+    defaults = [
+        HomeScreenRow(
+            user=user,
+            media_type=media_type,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=sort_by,
+            direction=resolve_home_row_direction(sort_by),
+            filters=dict(HOME_QUERY_DEFAULT_FILTERS),
+        ),
+    ]
+    if getattr(user, "show_planned_on_home", "disabled") != "disabled":
+        planned_filters = dict(HOME_QUERY_DEFAULT_FILTERS)
+        planned_filters["status"] = Status.PLANNING.value
+        defaults.append(
+            HomeScreenRow(
+                user=user,
+                media_type=media_type,
+                position=len(defaults),
+                enabled=True,
+                row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+                sort_by=sort_by,
+                direction=resolve_home_row_direction(sort_by),
+                filters=planned_filters,
+            ),
+        )
+    return defaults
+
+
+def _legacy_default_row_variants_for_media_type(user, media_type: str) -> list[list[HomeScreenRow]]:
+    """Return historical seeded row layouts that should upgrade in place."""
+    return [
+        _legacy_default_rows_for_media_type(user, media_type),
+        _single_query_default_rows_for_media_type(
+            user,
+            media_type,
+            _legacy_home_default_library_sort(user, media_type),
+        ),
+        _single_query_default_rows_for_media_type(
+            user,
+            media_type,
+            _preferred_default_library_sort(user, media_type),
+        ),
+    ]
+
+
+def _rows_match_signature(
+    existing_rows: list[HomeScreenRow],
+    expected_rows: list[HomeScreenRow],
+    media_type: str,
+    *,
+    ignore_direction: bool = False,
+) -> bool:
     if len(existing_rows) != len(expected_rows):
         return False
     return all(
-        _row_signature(existing, media_type) == _row_signature(expected, media_type)
+        _row_signature(existing, media_type, ignore_direction=ignore_direction)
+        == _row_signature(expected, media_type, ignore_direction=ignore_direction)
         for existing, expected in zip(existing_rows, expected_rows, strict=False)
     )
 
@@ -496,8 +567,16 @@ def ensure_home_screen_rows(user) -> list[HomeScreenRow]:
         media_rows = rows_by_media_type.get(media_type, [])
         if not media_rows:
             continue
-        legacy_defaults = _legacy_default_rows_for_media_type(user, media_type)
-        if not _rows_match_signature(media_rows, legacy_defaults, media_type):
+        ignore_legacy_direction = media_type in HOME_PROGRESS_MEDIA_TYPES
+        if not any(
+            _rows_match_signature(
+                media_rows,
+                legacy_defaults,
+                media_type,
+                ignore_direction=ignore_legacy_direction,
+            )
+            for legacy_defaults in _legacy_default_row_variants_for_media_type(user, media_type)
+        ):
             continue
         desired_defaults = _build_default_rows_for_media_type(user, media_type)
         if _rows_match_signature(media_rows, desired_defaults, media_type):

@@ -189,6 +189,164 @@ class HomeScreenViewTests(TestCase):
             ],
         )
 
+    def test_home_screen_get_upgrades_legacy_tv_and_anime_defaults(self):
+        self._set_enabled_media_types(
+            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
+        )
+        default_filters = {
+            "status": Status.IN_PROGRESS.value,
+            "rating": "all",
+            "collection": "all",
+            "genre": "",
+            "year": "",
+            "release": "all",
+            "source": "",
+            "language": "",
+            "country": "",
+            "platform": "",
+            "origin": "",
+            "format": "",
+            "author": "",
+            "tag": "",
+            "tag_exclude": "",
+        }
+        for media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            HomeScreenRow.objects.create(
+                user=self.user,
+                media_type=media_type,
+                position=0,
+                enabled=True,
+                row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+                sort_by=MediaSortChoices.TITLE,
+                direction="asc",
+                filters=default_filters,
+            )
+            HomeScreenRow.objects.create(
+                user=self.user,
+                media_type=media_type,
+                position=1,
+                enabled=True,
+                row_type=HomeScreenRowTypeChoices.RECENTLY_UNRATED,
+                sort_by=HomeSortChoices.RECENT,
+                direction="desc",
+                filters={},
+            )
+
+        response = self.client.get(reverse("home_screen"))
+
+        self.assertEqual(response.status_code, 200)
+        tv_row = HomeScreenRow.objects.get(
+            user=self.user,
+            media_type=MediaTypes.TV.value,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+        )
+        self.assertEqual(tv_row.sort_by, MediaSortChoices.NEXT_EPISODE_AIR_DATE)
+        self.assertEqual(tv_row.direction, DirectionChoices.DESC)
+        self.assertEqual(tv_row.filters["status"], Status.IN_PROGRESS.value)
+        self.assertEqual(tv_row.filters["progress"], "not_caught_up")
+
+        anime_row = HomeScreenRow.objects.get(
+            user=self.user,
+            media_type=MediaTypes.ANIME.value,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+        )
+        self.assertEqual(anime_row.sort_by, MediaSortChoices.NEXT_EPISODE_AIR_DATE)
+        self.assertEqual(anime_row.direction, DirectionChoices.DESC)
+        self.assertEqual(anime_row.filters["status"], Status.IN_PROGRESS.value)
+        self.assertEqual(anime_row.filters["progress"], "not_caught_up")
+
+    def test_home_screen_get_upgrades_single_row_legacy_tv_and_anime_defaults(self):
+        self._set_enabled_media_types(
+            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
+        )
+        default_filters = {
+            "status": Status.IN_PROGRESS.value,
+            "rating": "all",
+            "collection": "all",
+            "genre": "",
+            "year": "",
+            "release": "all",
+            "source": "",
+            "language": "",
+            "country": "",
+            "platform": "",
+            "origin": "",
+            "format": "",
+            "author": "",
+            "tag": "",
+            "tag_exclude": "",
+        }
+        for media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            HomeScreenRow.objects.create(
+                user=self.user,
+                media_type=media_type,
+                position=0,
+                enabled=True,
+                row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+                sort_by=MediaSortChoices.TITLE,
+                direction=DirectionChoices.DESC,
+                filters=default_filters,
+            )
+
+        response = self.client.get(reverse("home_screen"))
+
+        self.assertEqual(response.status_code, 200)
+        for media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            row = HomeScreenRow.objects.get(
+                user=self.user,
+                media_type=media_type,
+                row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            )
+            self.assertEqual(row.sort_by, MediaSortChoices.NEXT_EPISODE_AIR_DATE)
+            self.assertEqual(row.direction, DirectionChoices.DESC)
+            self.assertEqual(row.filters["status"], Status.IN_PROGRESS.value)
+            self.assertEqual(row.filters["progress"], "not_caught_up")
+
+    def test_home_screen_get_upgrades_original_single_row_seeded_anime_defaults(self):
+        self._set_enabled_media_types(MediaTypes.ANIME.value)
+
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.ANIME.value,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=HomeSortChoices.RECENT,
+            direction=DirectionChoices.DESC,
+            filters={
+                "status": Status.IN_PROGRESS.value,
+                "rating": "all",
+                "collection": "all",
+                "genre": "",
+                "year": "",
+                "release": "all",
+                "source": "",
+                "language": "",
+                "country": "",
+                "platform": "",
+                "origin": "",
+                "format": "",
+                "author": "",
+                "tag": "",
+                "tag_exclude": "",
+            },
+        )
+
+        response = self.client.get(reverse("home_screen"))
+
+        self.assertEqual(response.status_code, 200)
+        anime_row = HomeScreenRow.objects.get(
+            user=self.user,
+            media_type=MediaTypes.ANIME.value,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+        )
+        self.assertEqual(anime_row.sort_by, MediaSortChoices.NEXT_EPISODE_AIR_DATE)
+        self.assertEqual(anime_row.direction, DirectionChoices.DESC)
+        self.assertEqual(anime_row.filters["status"], Status.IN_PROGRESS.value)
+        self.assertEqual(anime_row.filters["progress"], "not_caught_up")
+
     def test_describe_library_query_uses_static_summary_labels(self):
         """Home row summaries should not rebuild full filter-field option data."""
         filters = {
