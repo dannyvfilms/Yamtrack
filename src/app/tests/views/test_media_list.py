@@ -297,6 +297,123 @@ class MediaListViewTests(TestCase):
         )
         return item
 
+    def _create_tv_next_episode_air_date_entry(
+        self,
+        media_id,
+        title,
+        episode_release_datetimes,
+        *,
+        progress=0,
+        library_media_type=None,
+    ):
+        item_kwargs = {
+            "media_id": str(media_id),
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "title": title,
+            "image": "http://example.com/tv-next-episode.jpg",
+        }
+        if library_media_type is not None:
+            item_kwargs["library_media_type"] = library_media_type
+
+        item = Item.objects.create(**item_kwargs)
+        tv = TV.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        season_item_kwargs = {
+            "media_id": str(media_id),
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.SEASON.value,
+            "title": f"{title} Season 1",
+            "image": "http://example.com/tv-next-episode-season.jpg",
+            "season_number": 1,
+        }
+        if library_media_type is not None:
+            season_item_kwargs["library_media_type"] = library_media_type
+
+        season_item = Item.objects.create(**season_item_kwargs)
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        watched_at = timezone.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        for episode_number, release_datetime in enumerate(episode_release_datetimes, start=1):
+            event_datetime = release_datetime
+            if event_datetime is None:
+                event_datetime = timezone.datetime.min.replace(
+                    tzinfo=timezone.get_current_timezone(),
+                )
+
+            Event.objects.create(
+                item=season_item,
+                content_number=episode_number,
+                datetime=event_datetime,
+                notification_sent=False,
+            )
+
+            episode_item_kwargs = {
+                "media_id": str(media_id),
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "title": f"{title} Episode {episode_number}",
+                "image": "http://example.com/tv-next-episode-episode.jpg",
+                "season_number": 1,
+                "episode_number": episode_number,
+            }
+            if library_media_type is not None:
+                episode_item_kwargs["library_media_type"] = library_media_type
+            if release_datetime is not None:
+                episode_item_kwargs["release_datetime"] = release_datetime
+
+            episode_item = Item.objects.create(**episode_item_kwargs)
+            if episode_number <= progress:
+                Episode.objects.create(
+                    item=episode_item,
+                    related_season=season,
+                    end_date=watched_at - timedelta(days=episode_number),
+                )
+
+        return tv, season
+
+    def _create_anime_next_episode_air_date_entry(
+        self,
+        media_id,
+        title,
+        episode_air_dates,
+        *,
+        progress=0,
+        status=Status.IN_PROGRESS.value,
+    ):
+        item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title=title,
+            image="http://example.com/anime-next-episode.jpg",
+        )
+        Anime.objects.create(
+            item=item,
+            user=self.user,
+            status=status,
+            progress=progress,
+        )
+
+        for episode_number, air_datetime in episode_air_dates:
+            Event.objects.create(
+                item=item,
+                content_number=episode_number,
+                datetime=air_datetime,
+                notification_sent=False,
+            )
+
+        return item
+
     def test_media_list_view(self):
         """Test the media list view displays media items."""
         response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
@@ -503,6 +620,29 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "title")
         self.assertNotContains(response, "toggleSort('time_watched')")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.book_sort, "title")
+
+    def test_supported_media_sort_shows_next_episode_air_date_option(self):
+        """TV, Season, and Anime should expose the next episode air date sort option."""
+        tv_response = self.client.get(reverse("medialist", args=[MediaTypes.TV.value]))
+        season_response = self.client.get(reverse("medialist", args=[MediaTypes.SEASON.value]))
+        anime_response = self.client.get(reverse("medialist", args=[MediaTypes.ANIME.value]))
+
+        self.assertContains(tv_response, "toggleSort('next_episode_air_date')")
+        self.assertContains(season_response, "toggleSort('next_episode_air_date')")
+        self.assertContains(anime_response, "toggleSort('next_episode_air_date')")
+
+    def test_non_supported_media_sort_hides_next_episode_air_date_option_and_falls_back(self):
+        """Non show-like media types should hide next-episode air-date sort and fallback."""
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.BOOK.value]) + "?sort=next_episode_air_date",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "title")
+        self.assertNotContains(response, "toggleSort('next_episode_air_date')")
 
         self.user.refresh_from_db()
         self.assertEqual(self.user.book_sort, "title")
@@ -1311,6 +1451,129 @@ class MediaListViewTests(TestCase):
         )
         self.assertContains(response, "4h 48min")
         self.assertContains(response, "10h 24min")
+
+    def test_tv_and_season_sort_by_next_episode_air_date_orders_items(self):
+        self.user.date_format = "iso_8601"
+        self.user.save(update_fields=["date_format"])
+
+        base_now = timezone.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        backlog_release = base_now - timedelta(days=10)
+        future_release = base_now + timedelta(days=10)
+
+        self._create_tv_next_episode_air_date_entry(
+            "tv-next-episode-1",
+            "Zulu Backlog TV",
+            [backlog_release, backlog_release + timedelta(days=7)],
+            progress=0,
+        )
+        self._create_tv_next_episode_air_date_entry(
+            "tv-next-episode-2",
+            "Alpha Future TV",
+            [backlog_release, future_release],
+            progress=1,
+        )
+        self._create_tv_next_episode_air_date_entry(
+            "tv-next-episode-3",
+            "Mike Missing TV",
+            [None, future_release + timedelta(days=7)],
+            progress=0,
+        )
+
+        tv_response = self.client.get(
+            reverse("medialist", args=[MediaTypes.TV.value])
+            + "?layout=grid&sort=next_episode_air_date",
+        )
+
+        self.assertEqual(tv_response.status_code, 200)
+        self.assertEqual(tv_response.context["current_sort"], "next_episode_air_date")
+        self.assertEqual(tv_response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in tv_response.context["media_list"].object_list[:3]],
+            ["Zulu Backlog TV", "Alpha Future TV", "Mike Missing TV"],
+        )
+        self.assertContains(tv_response, timezone.localtime(backlog_release).date().isoformat())
+        self.assertContains(tv_response, timezone.localtime(future_release).date().isoformat())
+
+        season_response = self.client.get(
+            reverse("medialist", args=[MediaTypes.SEASON.value])
+            + "?layout=table&sort=next_episode_air_date",
+        )
+
+        self.assertEqual(season_response.status_code, 200)
+        self.assertEqual(season_response.context["current_sort"], "next_episode_air_date")
+        self.assertEqual(season_response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in season_response.context["media_list"].object_list[:3]],
+            [
+                "Zulu Backlog TV Season 1",
+                "Alpha Future TV Season 1",
+                "Mike Missing TV Season 1",
+            ],
+        )
+        self.assertIn(
+            "next_episode_air_date",
+            [column.key for column in season_response.context["resolved_columns"]],
+        )
+        self.assertContains(season_response, "Next Episode Air Date")
+        self.assertContains(
+            season_response,
+            timezone.localtime(backlog_release).date().isoformat(),
+        )
+        self.assertContains(
+            season_response,
+            timezone.localtime(future_release).date().isoformat(),
+        )
+
+    def test_anime_sort_by_next_episode_air_date_orders_grouped_and_flat_rows(self):
+        self.user.date_format = "iso_8601"
+        self.user.anime_library_mode = MediaTypes.ANIME.value
+        self.user.save(update_fields=["date_format", "anime_library_mode"])
+
+        base_now = timezone.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        past_release = base_now - timedelta(days=14)
+        future_release = base_now + timedelta(days=14)
+
+        self._create_anime_next_episode_air_date_entry(
+            "anime-next-episode-1",
+            "Flat Past Anime",
+            [(1, past_release)],
+            progress=0,
+        )
+        self._create_tv_next_episode_air_date_entry(
+            "anime-next-episode-2",
+            "Grouped Future Anime",
+            [past_release, future_release],
+            progress=1,
+            library_media_type=MediaTypes.ANIME.value,
+        )
+        missing_item = Item.objects.create(
+            media_id="anime-next-episode-3",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Flat Missing Anime",
+            image="http://example.com/anime-missing.jpg",
+        )
+        Anime.objects.create(
+            item=missing_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.ANIME.value])
+            + "?layout=grid&sort=next_episode_air_date",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "next_episode_air_date")
+        self.assertEqual(response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:3]],
+            ["Flat Past Anime", "Grouped Future Anime", "Flat Missing Anime"],
+        )
+        self.assertContains(response, timezone.localtime(past_release).date().isoformat())
+        self.assertContains(response, timezone.localtime(future_release).date().isoformat())
 
     def test_game_sort_by_time_to_beat_orders_by_best_available_value(self):
         self._create_game_entry("910001", "Longest Run", hltb_minutes=555)

@@ -1,0 +1,9 @@
+{% load app_tags %}
+{% load user_tags %}
+{% with next_episode_air_date=media|safe_attr:'next_episode_air_date' %}
+  {% if next_episode_air_date %}
+    {{ next_episode_air_date|user_date_format:user }}
+  {% else %}
+    <span class="text-gray-500">-</span>
+  {% endif %}
+{% endwith %}

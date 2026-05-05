@@ -126,7 +126,7 @@
     {% endfor %}
     },
     defaultDirection(value) {
-      return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat'].includes(value) ? 'asc' : 'desc';
+      return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat', 'next_episode_air_date'].includes(value) ? 'asc' : 'desc';
     },
     toggleSort(value) {
       this.direction = (this.sort === value)
@@ -1215,6 +1215,7 @@
                   {% if value != 'time_to_beat' or media_type == MediaTypes.GAME.value %}
                   {% if value != 'plays' or media_type == MediaTypes.MOVIE.value or media_type == MediaTypes.TV.value or media_type == MediaTypes.ANIME.value %}
                   {% if value != 'time_watched' or media_type == MediaTypes.MOVIE.value or media_type == MediaTypes.TV.value or media_type == MediaTypes.ANIME.value %}
+                  {% if value != 'next_episode_air_date' or media_type == MediaTypes.TV.value or media_type == MediaTypes.SEASON.value or media_type == MediaTypes.ANIME.value %}
                   {% if value != 'critic_rating' or supports_critic_rating_sort %}
                     {% if value != 'author' or filter_data.show_authors %}
                       <button hx-get="{% url 'medialist' media_type %}"
@@ -1232,8 +1233,9 @@
                   {% endif %}
                   {% endif %}
                   {% endif %}
-                {% endif %}
-              {% endif %}
+                  {% endif %}
+                  {% endif %}
+                  {% endif %}
             {% endfor %}
           </div>
         </div>

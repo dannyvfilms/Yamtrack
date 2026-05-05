@@ -2261,6 +2261,11 @@ def media_list(request, media_type):
         MediaTypes.TV.value,
         MediaTypes.ANIME.value,
     }
+    next_episode_air_date_media_types = {
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.ANIME.value,
+    }
     layout = request.user.update_preference(
         f"{media_type}_layout",
         request.GET.get("layout"),
@@ -2302,6 +2307,10 @@ def media_list(request, media_type):
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "next_episode_air_date" and media_type not in next_episode_air_date_media_types:
+        sort_filter = "title"  # Default fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
         direction_param = None
     elif sort_filter == "author" and media_type not in author_media_types:
         sort_filter = "title"  # Default fallback
@@ -3141,6 +3150,9 @@ def media_list(request, media_type):
                 if sort_filter == "end_date":
                     end_dt = getattr(media, "aggregated_end_date", None) or getattr(media, "end_date", None)
                     return (_sortable_dt(end_dt), title.lower())
+                if sort_filter == "next_episode_air_date":
+                    next_episode_air_date = getattr(media, "next_episode_air_date", None)
+                    return (_sortable_dt(next_episode_air_date), title.lower())
                 return title.lower()
 
             reverse = direction == "desc"
@@ -3843,6 +3855,12 @@ def update_table_columns(request, media_type):
     elif current_sort == "time_watched" and media_type not in {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }:
+        current_sort = "title"
+    elif current_sort == "next_episode_air_date" and media_type not in {
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
         MediaTypes.ANIME.value,
     }:
         current_sort = "title"

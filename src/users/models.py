@@ -58,6 +58,7 @@ class MediaSortChoices(models.TextChoices):
     DATE_ADDED = "date_added", "Date Added"
     START_DATE = "start_date", "Start Date"
     END_DATE = "end_date", "Last Watched"
+    NEXT_EPISODE_AIR_DATE = "next_episode_air_date", "Next Episode Air Date"
     TIME_LEFT = "time_left", "Time Left"
 
 
@@ -290,7 +291,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     tv_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -313,7 +314,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     season_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -336,7 +337,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     movie_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -359,7 +360,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     anime_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -382,7 +383,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     manga_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -405,7 +406,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     game_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -428,7 +429,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     boardgame_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices.choices,
     )
@@ -451,7 +452,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     book_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -474,7 +475,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     comic_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -497,7 +498,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     music_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.SCORE,
         choices=MediaSortChoices,
     )
@@ -520,7 +521,7 @@ class User(AbstractUser):
         choices=DirectionChoices.choices,
     )
     podcast_sort = models.CharField(
-        max_length=20,
+        max_length=32,
         default=MediaSortChoices.TITLE,
         choices=MediaSortChoices.choices,
     )

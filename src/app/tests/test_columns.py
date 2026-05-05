@@ -46,6 +46,23 @@ class ResolveColumnsTests(TestCase):
         self.assertIn("time_watched", keys)
         self.assertIn("popularity", keys)
         self.assertNotIn("time_to_beat", keys)
+        self.assertNotIn("next_episode_air_date", keys)
+
+    def test_show_columns_include_next_episode_air_date(self):
+        for media_type in (
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+            MediaTypes.ANIME.value,
+        ):
+            columns = resolve_columns(
+                media_type=media_type,
+                current_sort="next_episode_air_date",
+                user=self.user,
+                table_type="media",
+            )
+            keys = [column.key for column in columns]
+
+            self.assertIn("next_episode_air_date", keys)
 
     def test_list_table_inherits_media_columns_and_adds_media_type(self):
         columns = resolve_columns(

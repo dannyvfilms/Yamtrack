@@ -1127,6 +1127,7 @@ class MediaManager(models.Manager):
             "runtime",
             "start_date",
             "title",
+            "next_episode_air_date",
             "time_left",
             "time_to_beat",
         ):
@@ -1317,7 +1318,7 @@ class MediaManager(models.Manager):
         queryset = self._apply_prefetch_related(queryset, media_type)
 
         requires_presort_aggregation = (
-            sort_filter in ("progress", "plays")
+            sort_filter in ("progress", "plays", "next_episode_air_date")
             and media_type not in (MediaTypes.TV.value, MediaTypes.SEASON.value)
         )
 
@@ -1468,6 +1469,11 @@ class MediaManager(models.Manager):
                     queryset=Season.objects.select_related("item"),
                 ),
                 Prefetch(
+                    "seasons__item__event_set",
+                    queryset=events.models.Event.objects.all(),
+                    to_attr="prefetched_events",
+                ),
+                Prefetch(
                     "seasons__episodes",
                     queryset=Episode.objects.select_related("item"),
                 ),
@@ -1501,6 +1507,148 @@ class MediaManager(models.Manager):
 
         return self._sort_generic_media_list(queryset, sort_filter, direction)
 
+    def _next_episode_air_date_value(self, media):
+        """Return the air datetime for the next episode in watch order."""
+        item = getattr(media, "item", None)
+        if item is None:
+            return None
+
+        def _is_usable_datetime(value):
+            return value is not None and getattr(value, "year", 0) >= 1900
+
+        def _progress_index():
+            progress_value = getattr(media, "aggregated_progress", None)
+            if progress_value is None:
+                progress_value = getattr(media, "progress", 0) or 0
+            try:
+                index = int(progress_value)
+            except (TypeError, ValueError):
+                index = 0
+            return max(index, 0)
+
+        def _as_list(related):
+            if related is None:
+                return []
+            if hasattr(related, "all"):
+                return list(related.all())
+            return list(related)
+
+        def _ordered_events_for_item(source_item):
+            events = [
+                event
+                for event in _as_list(getattr(source_item, "prefetched_events", None))
+                if getattr(event, "content_number", None) is not None
+            ]
+            events.sort(key=lambda event: event.content_number)
+            return events
+
+        def _ordered_episodes_for_related(related):
+            episodes = [
+                episode
+                for episode in _as_list(getattr(related, "episodes", None))
+                if getattr(getattr(episode, "item", None), "episode_number", None) is not None
+            ]
+            episodes.sort(
+                key=lambda episode: getattr(getattr(episode, "item", None), "episode_number", 0) or 0,
+            )
+            return episodes
+
+        media_type = getattr(item, "media_type", None)
+        progress_index = _progress_index()
+
+        if media_type == MediaTypes.TV.value:
+            candidates = []
+            seasons = [
+                season
+                for season in _as_list(getattr(media, "seasons", None))
+                if getattr(getattr(season, "item", None), "season_number", None) not in (None, 0)
+            ]
+            seasons.sort(
+                key=lambda season: getattr(getattr(season, "item", None), "season_number", 0) or 0,
+            )
+
+            for season in seasons:
+                season_item = getattr(season, "item", None)
+                season_events = _ordered_events_for_item(season_item) if season_item else []
+                if season_events:
+                    candidates.extend(season_events)
+                    continue
+
+                candidates.extend(_ordered_episodes_for_related(season))
+
+            if progress_index >= len(candidates):
+                return None
+
+            candidate = candidates[progress_index]
+            air_date = getattr(candidate, "datetime", None)
+            if air_date is None:
+                air_date = getattr(getattr(candidate, "item", None), "release_datetime", None)
+            return air_date if _is_usable_datetime(air_date) else None
+
+        if media_type == MediaTypes.SEASON.value:
+            candidates = _ordered_events_for_item(item)
+            if not candidates:
+                candidates = _ordered_episodes_for_related(media)
+
+            if progress_index >= len(candidates):
+                return None
+
+            candidate = candidates[progress_index]
+            air_date = getattr(candidate, "datetime", None)
+            if air_date is None:
+                air_date = getattr(getattr(candidate, "item", None), "release_datetime", None)
+            return air_date if _is_usable_datetime(air_date) else None
+
+        if media_type == MediaTypes.ANIME.value:
+            candidates = _ordered_events_for_item(item)
+            if not candidates:
+                candidates = _ordered_episodes_for_related(media)
+
+            if progress_index >= len(candidates):
+                return None
+
+            candidate = candidates[progress_index]
+            air_date = getattr(candidate, "datetime", None)
+            if air_date is None:
+                air_date = getattr(getattr(candidate, "item", None), "release_datetime", None)
+            return air_date if _is_usable_datetime(air_date) else None
+
+        return None
+
+    def _sort_media_items_by_next_episode_air_date(self, media_items, direction):
+        """Sort media items by next episode air date with missing dates last."""
+        with_dates = []
+        without_dates = []
+
+        for media in media_items:
+            next_episode_air_date = self._next_episode_air_date_value(media)
+            media.next_episode_air_date = next_episode_air_date
+            if next_episode_air_date is not None:
+                with_dates.append((media, next_episode_air_date))
+            else:
+                without_dates.append(media)
+
+        if direction == "desc":
+            with_dates.sort(
+                key=lambda entry: (
+                    entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+                reverse=True,
+            )
+        else:
+            with_dates.sort(
+                key=lambda entry: (
+                    entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+
+        without_dates.sort(
+            key=lambda media: getattr(getattr(media, "item", None), "title", "").lower(),
+        )
+        return [media for media, _air_date in with_dates] + without_dates
+
     def _sort_tv_media_list(self, queryset, sort_filter, direction):
         """Sort TV media list based on the sort criteria."""
         if sort_filter == "start_date":
@@ -1532,6 +1680,9 @@ class MediaManager(models.Manager):
                 else models.F("calculated_end_date").desc(nulls_last=True)
             )
             return queryset.order_by(order, models.functions.Lower("item__title"))
+
+        if sort_filter == "next_episode_air_date":
+            return self._sort_media_items_by_next_episode_air_date(list(queryset), direction)
 
         if sort_filter == "progress":
             # Annotate with the sum of episodes watched (excluding season 0)
@@ -1583,6 +1734,9 @@ class MediaManager(models.Manager):
             )
             return queryset.order_by(order, models.functions.Lower("item__title"))
 
+        if sort_filter == "next_episode_air_date":
+            return self._sort_media_items_by_next_episode_air_date(list(queryset), direction)
+
         if sort_filter == "progress":
             # Annotate with the maximum episode number
             queryset = queryset.annotate(
@@ -1602,6 +1756,9 @@ class MediaManager(models.Manager):
         """Apply generic sorting logic for all media types."""
         if sort_filter == "author":
             return self._sort_media_list_by_author(list(queryset), direction)
+
+        if sort_filter == "next_episode_air_date":
+            return self._sort_media_items_by_next_episode_air_date(list(queryset), direction)
 
         # Handle progress sorting specially to use aggregated progress
         if sort_filter in ("progress", "plays"):
