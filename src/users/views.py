@@ -41,6 +41,7 @@ from users.home_screen import (
     save_home_screen_configuration,
     search_home_screen_lists,
     serialize_settings_sections,
+    toggle_home_row_direction,
 )
 from users.models import (
     ActivityHistoryViewChoices,
@@ -555,6 +556,21 @@ def home_screen_list_search(request):
             ),
         },
     )
+
+
+@login_required
+@require_POST
+def toggle_home_screen_row_direction(request, row_id: int):
+    """Flip a Home screen row direction and return to Home."""
+    if request.user.is_demo:
+        messages.error(request, "This section is view-only for demo accounts.")
+        return redirect("home")
+
+    try:
+        toggle_home_row_direction(request.user, row_id)
+    except HomeScreenValidationError as exc:
+        messages.error(request, str(exc))
+    return redirect("home")
 
 
 @require_GET

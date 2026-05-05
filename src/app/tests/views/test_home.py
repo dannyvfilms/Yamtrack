@@ -119,17 +119,23 @@ class HomeViewTests(TestCase):
         anime_row = self._get_first_row(response, MediaTypes.ANIME.value)
 
         self.assertEqual(season_row["title"], "In Progress")
+        self.assertEqual(season_row["title_main"], "In Progress")
+        self.assertIsNone(season_row["title_detail"])
         self.assertEqual(len(season_row["items"]), 1)
         self.assertEqual(season_row["items"][0].media.progress, 5)
         self.assertEqual(len(anime_row["items"]), 1)
         self.assertIsNone(self._get_group(response, MediaTypes.TV.value))
         self.assertContains(
             response,
-            'class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2"',
+            'class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden"',
             html=False,
         )
+        self.assertContains(response, 'data-home-row-sort-toggle="true"', html=False)
+        self.assertContains(response, 'aria-label="Toggle sort direction for In Progress"', html=False)
+        self.assertNotContains(response, "Sorted by Title • Ascending", html=False)
         self.assertContains(response, 'class="w-44 shrink-0"', html=False)
         self.assertContains(response, 'data-home-row="true"', html=False)
+        self.assertNotContains(response, '<h2 class="text-2xl font-semibold">', html=False)
         self.assertNotContains(response, "Load All")
 
     def test_home_view_hides_disabled_sidebar_media_types_even_when_rows_exist(self):
@@ -188,7 +194,37 @@ class HomeViewTests(TestCase):
         season_row = self._get_first_row(response, MediaTypes.SEASON.value)
         movie_row = self._get_first_row(response, MediaTypes.MOVIE.value)
         self.assertEqual(season_row["summary"], "Sorted by Upcoming • Ascending")
+        self.assertEqual(season_row["summary_inline"], "Upcoming")
         self.assertEqual(movie_row["summary"], "Sorted by Recent • Descending")
+        self.assertEqual(movie_row["summary_inline"], "Recent")
+        self.assertEqual(season_row["title_main"], "In Progress")
+        self.assertIsNone(season_row["title_detail"])
+        self.assertEqual(movie_row["title_main"], "In Progress")
+        self.assertIsNone(movie_row["title_detail"])
+
+    def test_home_view_shows_filter_suffix_in_inline_title(self):
+        """Filtered rows should keep the filter summary beside the main title."""
+        self.client.get(reverse("home"))
+        row = HomeScreenRow.objects.get(
+            user=self.user,
+            media_type=MediaTypes.SEASON.value,
+            row_type="library_query",
+            position=0,
+        )
+        row.filters = {
+            **row.filters,
+            "release": "not_released",
+        }
+        row.save(update_fields=["filters"])
+
+        response = self.client.get(reverse("home"))
+
+        season_row = self._get_first_row(response, MediaTypes.SEASON.value)
+        self.assertEqual(season_row["title"], "In Progress • Not Released")
+        self.assertEqual(season_row["title_main"], "In Progress")
+        self.assertEqual(season_row["title_detail"], "Not Released")
+        self.assertEqual(len(season_row["items"]), 1)
+        self.assertEqual(season_row["summary_inline"], "Upcoming")
 
     def test_home_view_accepts_legacy_in_progress_status_alias(self):
         """Legacy seeded Home rows using the old status label should still render."""
@@ -488,7 +524,14 @@ class HomeViewTests(TestCase):
         initial_response = self.client.get(reverse("home"))
         season_row = self._get_first_row(initial_response, MediaTypes.SEASON.value)
         self.assertContains(initial_response, 'data-loaded-count="14"', html=False)
+        self.assertContains(initial_response, 'data-home-row-sentinel="true"', html=False)
+        self.assertContains(initial_response, 'data-home-row-prefetch-distance="1152"', html=False)
         self.assertContains(initial_response, 'hx-trigger="home-row-load-more"', html=False)
+        self.assertContains(
+            initial_response,
+            'hx-vals=\'js:{offset: Number(event.target.dataset.loadedCount || 0)}\'',
+            html=False,
+        )
 
         response = self.client.get(
             reverse("home") + f"?load_row={season_row['row_id']}&offset=14",

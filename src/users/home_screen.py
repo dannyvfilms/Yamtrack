@@ -13,7 +13,6 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from app import helpers
 from app.models import BasicMedia, Item, MediaTypes, Sources, Status
 from app.templatetags import app_tags
 from lists import smart_rules
@@ -830,6 +829,53 @@ def row_summary(row: HomeScreenRow, user) -> str:
     return f"Sorted by {sort_label} • {direction_label}"
 
 
+def home_row_inline_summary(row: HomeScreenRow, user) -> str | None:
+    """Return the inline sort label for the Home row header."""
+    if row.row_type != HomeScreenRowTypeChoices.LIBRARY_QUERY:
+        return None
+
+    sort_choices = {
+        choice["value"]: choice["label"]
+        for choice in get_allowed_sort_choices(row.media_type, row.row_type)
+    }
+    return sort_choices.get(row.sort_by, row.sort_by.replace("_", " ").title())
+
+
+def home_row_header_title_parts(row: HomeScreenRow, user) -> tuple[str, str | None]:
+    """Return the main title and optional filter suffix for the Home row header."""
+    title = row_title(row, user)
+    if row.row_type != HomeScreenRowTypeChoices.LIBRARY_QUERY:
+        return title, None
+
+    parts = title.split(" • ")
+    if len(parts) <= 1:
+        return title, None
+    return parts[0], " • ".join(parts[1:])
+
+
+def toggle_home_row_direction(user, row_id: int) -> HomeScreenRow:
+    """Flip a library Home row's direction and persist it."""
+    row = (
+        HomeScreenRow.objects.filter(
+            user=user,
+            id=row_id,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+        )
+        .select_related("custom_list")
+        .first()
+    )
+    if not row:
+        raise HomeScreenValidationError("Home row not found.")
+
+    row.direction = (
+        DirectionChoices.DESC
+        if row.direction == DirectionChoices.ASC
+        else DirectionChoices.ASC
+    )
+    row.save(update_fields=["direction"])
+    return row
+
+
 def _normalized_filter_payload(filters: dict | None, media_type: str) -> dict:
     raw_filters = dict(filters or {})
     if "status" in raw_filters:
@@ -1504,11 +1550,15 @@ def build_home_page_groups(
             batch_end = batch_start + items_limit
             section_entries = entries[batch_start:batch_end]
             loaded_count = min(len(entries), batch_start + len(section_entries))
+            title_main, title_detail = home_row_header_title_parts(row, user)
             row_sections.append(
                 {
                     "row_id": row.id,
                     "title": row_title(row, user),
+                    "title_main": title_main,
+                    "title_detail": title_detail,
                     "summary": row_summary(row, user),
+                    "summary_inline": home_row_inline_summary(row, user),
                     "items": section_entries,
                     "total": len(entries),
                     "loaded_count": loaded_count,

@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 {% load app_tags %}
 
+{% block extra_head %}
+  <style>
+    .home-row-scrollbar-hidden {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .home-row-scrollbar-hidden::-webkit-scrollbar {
+      display: none;
+    }
+  </style>
+{% endblock extra_head %}
+
 {% block title %}
   Home - Yamtrack
 {% endblock title %}
@@ -20,30 +33,72 @@
     </div>
     {% for group in home_groups %}
       <section class="space-y-4">
-        <h2 class="text-2xl font-semibold">{{ group.label }}</h2>
         <div class="space-y-6">
           {% for row in group.rows %}
             <div>
-              <div class="mb-2 flex items-center justify-between gap-3">
-                <div>
-                  <h3 class="text-lg font-semibold">{{ row.title }}</h3>
-                  <p class="text-sm text-gray-400">{{ row.summary }}</p>
+              <div class="mb-2 flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  {% if row.summary_inline %}
+                    <h3 class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span class="text-lg font-semibold leading-none text-gray-100">{{ row.title_main }}</span>
+                      {% if row.title_detail %}
+                        <span class="inline-flex items-center gap-x-2">
+                          <span class="text-lg font-semibold leading-none text-white"
+                                aria-hidden="true">•</span>
+                          <span class="text-lg font-semibold leading-none text-gray-100">{{ row.title_detail }}</span>
+                        </span>
+                      {% endif %}
+                      <form method="post"
+                            action="{% url 'toggle_home_screen_row_direction' row.row_id %}"
+                            class="inline ml-3.5">
+                        {% csrf_token %}
+                        <button type="submit"
+                                data-home-row-sort-toggle="true"
+                                aria-label="Toggle sort direction for {{ row.title }}"
+                                class="inline-flex items-center text-sm font-medium leading-none text-gray-400 transition-colors hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-sm">
+                          <span>{{ row.summary_inline }}</span>
+                          {% if row.direction == 'asc' %}
+                            <svg xmlns="http://www.w3.org/2000/svg"
+                                 viewBox="0 0 20 20"
+                                 class="w-4 h-4 ml-2"
+                                 aria-hidden="true">
+                              <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
+                            </svg>
+                          {% else %}
+                            <svg xmlns="http://www.w3.org/2000/svg"
+                                 viewBox="0 0 20 20"
+                                 class="w-4 h-4 ml-2"
+                                 aria-hidden="true">
+                              <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
+                            </svg>
+                          {% endif %}
+                        </button>
+                      </form>
+                    </h3>
+                  {% else %}
+                    <h3 class="text-lg font-semibold">{{ row.title }}</h3>
+                    <p class="text-sm text-gray-400">{{ row.summary }}</p>
+                  {% endif %}
                 </div>
               </div>
               <div id="media-grid-row-{{ row.row_id }}"
-                   class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2"
+                   class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden"
                    data-home-row="true"
                    data-loaded-count="{{ row.loaded_count }}"
                    data-loading="false"
                    data-row-id="{{ row.row_id }}"
                    data-stick-to-end="false"
+                   data-home-row-prefetch-distance="1152"
                    data-total-count="{{ row.total }}"
                    hx-get="{% url 'home' %}?load_row={{ row.row_id }}"
-                   hx-vals='js:{offset: Number(this.dataset.loadedCount || 0)}'
+                   hx-vals='js:{offset: Number(event.target.dataset.loadedCount || 0)}'
                    hx-trigger="home-row-load-more"
                    hx-target="this"
                    hx-swap="beforeend">
                 {% include "app/components/home_grid.html" with media_list=row %}
+                <div data-home-row-sentinel="true"
+                     aria-hidden="true"
+                     class="shrink-0 w-px self-stretch opacity-0 pointer-events-none"></div>
               </div>
             </div>
           {% endfor %}
@@ -72,6 +127,17 @@
     let fetchQueue = [];
     let isProcessing = false;
     let activePlaybackTimer = null;
+    const homeRowLoadTimers = new WeakMap();
+    const homeRowObservers = new WeakMap();
+
+    function getHomeRowItemCount(row) {
+      return Array.from(row.children).filter(child => !child.hasAttribute('data-home-row-sentinel')).length;
+    }
+
+    function getHomeRowPrefetchDistance(row) {
+      const parsedDistance = Number.parseInt(row.dataset.homeRowPrefetchDistance || '1152', 10);
+      return Number.isNaN(parsedDistance) ? 1152 : parsedDistance;
+    }
 
     function processQueue() {
       if (isProcessing || fetchQueue.length === 0) return;
@@ -142,21 +208,36 @@
       };
     }
 
-    function isHomeRowAtEnd(row) {
-      return row.scrollLeft + row.clientWidth >= row.scrollWidth - 48;
-    }
-
     function syncHomeRowLoadedCount(row) {
-      row.dataset.loadedCount = String(row.children.length);
+      row.dataset.loadedCount = String(getHomeRowItemCount(row));
     }
 
-    function maybeLoadMoreHomeRow(row) {
+    function syncHomeRowSentinel(row) {
+      const sentinel = row.querySelector('[data-home-row-sentinel="true"]');
+      if (sentinel) {
+        row.appendChild(sentinel);
+      }
+    }
+
+    function triggerHomeRowLoadMore(row) {
       const { loaded, total } = getHomeRowCounts(row);
-      if (row.dataset.loading === 'true' || loaded >= total || !isHomeRowAtEnd(row)) {
+      if (row.dataset.loading === 'true' || loaded >= total) {
         return;
       }
       row.dataset.stickToEnd = 'true';
       htmx.trigger(row, 'home-row-load-more');
+    }
+
+    function isHomeRowNearEnd(row) {
+      const prefetchDistance = getHomeRowPrefetchDistance(row);
+      return row.scrollLeft + row.clientWidth >= row.scrollWidth - prefetchDistance;
+    }
+
+    function maybeLoadMoreHomeRow(row) {
+      if (!isHomeRowNearEnd(row)) {
+        return;
+      }
+      triggerHomeRowLoadMore(row);
     }
 
     function maybeAutofillHomeRow(row) {
@@ -170,19 +251,59 @@
       }
     }
 
+    function ensureHomeRowObserver(row) {
+      if (!('IntersectionObserver' in window) || homeRowObservers.has(row)) {
+        return;
+      }
+
+      const sentinel = row.querySelector('[data-home-row-sentinel="true"]');
+      if (!sentinel) {
+        return;
+      }
+
+      const observer = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
+          triggerHomeRowLoadMore(row);
+        }
+      }, {
+        root: row,
+        threshold: 0,
+        rootMargin: `0px ${getHomeRowPrefetchDistance(row)}px 0px 0px`,
+      });
+
+      observer.observe(sentinel);
+      homeRowObservers.set(row, observer);
+    }
+
+    function scheduleHomeRowLoadMore(row) {
+      const existingTimer = homeRowLoadTimers.get(row);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+
+      const timer = setTimeout(() => {
+        homeRowLoadTimers.delete(row);
+        maybeLoadMoreHomeRow(row);
+      }, 120);
+      homeRowLoadTimers.set(row, timer);
+    }
+
     function initHomeRowInfiniteScroll() {
       document.querySelectorAll('[data-home-row="true"]').forEach(row => {
         if (row.dataset.homeRowBound === 'true') {
           return;
         }
         row.dataset.homeRowBound = 'true';
+        ensureHomeRowObserver(row);
         row.addEventListener('scroll', () => {
-          row.dataset.stickToEnd = isHomeRowAtEnd(row) ? 'true' : 'false';
+          row.dataset.stickToEnd = isHomeRowNearEnd(row) ? 'true' : 'false';
           maybeLoadMoreHomeRow(row);
+          scheduleHomeRowLoadMore(row);
         }, { passive: true });
       });
       requestAnimationFrame(() => {
         document.querySelectorAll('[data-home-row="true"]').forEach(row => {
+          ensureHomeRowObserver(row);
           syncHomeRowLoadedCount(row);
           maybeAutofillHomeRow(row);
         });
@@ -277,11 +398,10 @@
     document.body.addEventListener('htmx:afterSwap', function(event) {
       const row = event.detail.target;
       if (row && row.matches('[data-home-row="true"]')) {
+        syncHomeRowSentinel(row);
         syncHomeRowLoadedCount(row);
+        row.dataset.stickToEnd = 'false';
         requestAnimationFrame(() => {
-          if (row.dataset.stickToEnd === 'true') {
-            row.scrollLeft = row.scrollWidth;
-          }
           maybeAutofillHomeRow(row);
           maybeLoadMoreHomeRow(row);
         });

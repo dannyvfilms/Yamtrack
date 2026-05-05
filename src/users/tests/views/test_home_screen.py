@@ -9,7 +9,7 @@ from django.urls import reverse
 from app.models import MediaTypes, Status
 from lists.models import CustomList
 from users import home_screen
-from users.models import HomeScreenRow, HomeScreenRowTypeChoices, HomeSortChoices
+from users.models import DirectionChoices, HomeScreenRow, HomeScreenRowTypeChoices, HomeSortChoices
 
 
 class HomeScreenViewTests(TestCase):
@@ -242,6 +242,36 @@ class HomeScreenViewTests(TestCase):
         self.assertEqual(rows[1].custom_list_id, custom_list.id)
         self.assertEqual(rows[1].sort_by, "date_added")
         self.assertEqual(rows[2].sort_by, HomeSortChoices.RECENT)
+
+    def test_home_screen_row_direction_toggle_persists_to_settings(self):
+        self._set_enabled_media_types(MediaTypes.SEASON.value)
+
+        self.client.get(reverse("home_screen"))
+        row = HomeScreenRow.objects.get(
+            user=self.user,
+            media_type=MediaTypes.SEASON.value,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            position=0,
+        )
+        self.assertEqual(row.direction, DirectionChoices.ASC)
+
+        response = self.client.post(
+            reverse("toggle_home_screen_row_direction", args=[row.id]),
+        )
+
+        self.assertRedirects(response, reverse("home"))
+        row.refresh_from_db()
+        self.assertEqual(row.direction, DirectionChoices.DESC)
+
+        settings_response = self.client.get(reverse("home_screen"))
+        sections = {
+            section["media_type"]: section
+            for section in json.loads(settings_response.context["home_screen_sections_json"])
+        }
+        self.assertEqual(
+            sections[MediaTypes.SEASON.value]["rows"][0]["direction"],
+            DirectionChoices.DESC,
+        )
 
     def test_home_screen_post_rejects_unsupported_filter_for_media_type(self):
         self._set_enabled_media_types(MediaTypes.MOVIE.value)
