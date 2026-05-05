@@ -29,6 +29,7 @@
         status: 'all',
         rating: 'all',
         collection: 'all',
+        progress: 'all',
         release: 'all',
       };
 
@@ -66,7 +67,36 @@
     }
   </script>
 
-  <div x-data="{ mediaListUrl: '{% url 'medialist' media_type %}', sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', release: '{{ current_release|default:'all' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', format: '{{ current_format|default:'' }}', author: '{{ current_author|default:'' }}', tag: '{{ current_tag|default:'' }}', tag_exclude: '{{ current_tag_exclude|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, showFormats: {{ filter_data.show_formats|yesno:'true,false' }}, showAuthors: {{ filter_data.show_authors|yesno:'true,false' }}, statusLabels: {
+  <div x-data="{
+    mediaListUrl: '{% url 'medialist' media_type %}',
+    sort: '{{ current_sort }}',
+    direction: '{{ current_direction }}',
+    status: '{{ current_status }}',
+    rating: '{{ current_rating }}',
+    collection: '{{ current_collection }}',
+    progress: '{{ current_progress|default:'all' }}',
+    genre: '{{ current_genre|default:'' }}',
+    year: '{{ current_year|default:'' }}',
+    release: '{{ current_release|default:'all' }}',
+    source: '{{ current_source|default:'' }}',
+    language: '{{ current_language|default:'' }}',
+    country: '{{ current_country|default:'' }}',
+    platform: '{{ current_platform|default:'' }}',
+    origin: '{{ current_origin|default:'' }}',
+    format: '{{ current_format|default:'' }}',
+    author: '{{ current_author|default:'' }}',
+    tag: '{{ current_tag|default:'' }}',
+    tag_exclude: '{{ current_tag_exclude|default:'' }}',
+    layout: '{{ current_layout }}',
+    search: '{{ request.GET.search|default:'' }}',
+    showLanguages: {{ filter_data.show_languages|yesno:'true,false' }},
+    showCountries: {{ filter_data.show_countries|yesno:'true,false' }},
+    showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }},
+    showOrigins: {{ filter_data.show_origins|yesno:'true,false' }},
+    showFormats: {{ filter_data.show_formats|yesno:'true,false' }},
+    showAuthors: {{ filter_data.show_authors|yesno:'true,false' }},
+    showProgress: {{ filter_data.show_progress|yesno:'true,false' }},
+    statusLabels: {
     {% for value, label in status_choices %}
       '{{ value }}': '{{ label }}'
       {% if not forloop.last %},{% endif %}
@@ -80,6 +110,10 @@
       'all': 'All',
       'collected': 'Collected',
       'not_collected': 'Not Collected'
+    }, progressLabels: {
+      'all': 'Any',
+      'not_caught_up': 'Not Caught Up',
+      'caught_up': 'Caught Up'
     }, releaseLabels: {
       'all': 'Any',
       'released': 'Released',
@@ -90,7 +124,108 @@
       {% if not forloop.last %},{% endif %}
 
     {% endfor %}
-    }, defaultDirection(value) { return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, layoutHref(nextLayout) { return buildMediaListHref(this.mediaListUrl, document.getElementById('filter-form'), { layout: nextLayout }); }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.release && this.release !== 'all') { labels.push(this.releaseLabels[this.release] || 'Released'); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (this.showFormats && this.format) { labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1)); } if (this.showAuthors && this.author) { labels.push(this.author); } if (this.tag) { labels.push('+' + this.tag); } if (this.tag_exclude) { labels.push('-' + this.tag_exclude); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.release = 'all'; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; this.format = ''; this.author = ''; this.tag = ''; this.tag_exclude = ''; } }">
+    },
+    defaultDirection(value) {
+      return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat'].includes(value) ? 'asc' : 'desc';
+    },
+    toggleSort(value) {
+      this.direction = (this.sort === value)
+        ? (this.direction === 'asc' ? 'desc' : 'asc')
+        : this.defaultDirection(value);
+      this.sort = value;
+    },
+    toggleRating() {
+      if (this.rating === 'all') {
+        this.rating = 'rated';
+      } else if (this.rating === 'rated') {
+        this.rating = 'not_rated';
+      } else {
+        this.rating = 'all';
+      }
+    },
+    toggleCollection() {
+      if (this.collection === 'all') {
+        this.collection = 'collected';
+      } else if (this.collection === 'collected') {
+        this.collection = 'not_collected';
+      } else {
+        this.collection = 'all';
+      }
+    },
+    layoutHref(nextLayout) { return buildMediaListHref(this.mediaListUrl, document.getElementById('filter-form'), { layout: nextLayout }); },
+    filterLabel() {
+      const labels = [];
+      if (this.rating && this.rating !== 'all') {
+        labels.push(this.ratingLabels[this.rating] || 'Rated');
+      }
+      if (this.collection && this.collection !== 'all') {
+        labels.push(this.collectionLabels[this.collection] || 'Collected');
+      }
+      if (this.progress && this.progress !== 'all') {
+        labels.push(this.progressLabels[this.progress] || 'Any Progress');
+      }
+      if (this.genre) {
+        labels.push(this.genre);
+      }
+      if (this.year) {
+        labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year);
+      }
+      if (this.release && this.release !== 'all') {
+        labels.push(this.releaseLabels[this.release] || 'Released');
+      }
+      if (this.source) {
+        labels.push(this.source.toUpperCase());
+      }
+      if (this.showLanguages && this.language) {
+        labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language);
+      }
+      if (this.showCountries && this.country) {
+        labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country);
+      }
+      if (this.showPlatforms && this.platform) {
+        labels.push(this.platform);
+      }
+      if (this.showOrigins && this.origin) {
+        labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin);
+      }
+      if (this.showFormats && this.format) {
+        labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1));
+      }
+      if (this.showAuthors && this.author) {
+        labels.push(this.author);
+      }
+      if (this.tag) {
+        labels.push('+' + this.tag);
+      }
+      if (this.tag_exclude) {
+        labels.push('-' + this.tag_exclude);
+      }
+      if (labels.length === 0) {
+        return 'All';
+      }
+      if (labels.length === 1) {
+        return labels[0];
+      }
+      return `${labels[0]} +${labels.length - 1}`;
+    },
+    clearFilters() {
+      this.rating = 'all';
+      this.collection = 'all';
+      this.progress = 'all';
+      this.genre = '';
+      this.year = '';
+      this.release = 'all';
+      this.source = '';
+      this.language = '';
+      this.country = '';
+      this.platform = '';
+      this.origin = '';
+      this.format = '';
+      this.author = '';
+      this.tag = '';
+      this.tag_exclude = '';
+    }
+  }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -99,6 +234,7 @@
       <input type="hidden" name="status" x-model="status">
       <input type="hidden" name="rating" x-model="rating">
       <input type="hidden" name="collection" x-model="collection">
+      <input type="hidden" name="progress" x-model="progress">
       <input type="hidden" name="genre" x-model="genre">
       <input type="hidden" name="year" x-model="year">
       <input type="hidden" name="release" x-model="release">
@@ -177,6 +313,17 @@
                       x-text="collectionLabels[collection] || 'Any'"></span>
                 <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
               </button>
+
+              {% if filter_data.show_progress %}
+                <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="view = 'progress'"
+                        type="button">
+                  <span class="flex-shrink-0 mr-3">Progress</span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                        x-text="progressLabels[progress] || 'Any'"></span>
+                  <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+                </button>
+              {% endif %}
 
               {% if filter_data.genres %}
                 <div class="border-t border-gray-700 my-1"></div>
@@ -438,6 +585,57 @@
                 </button>
               </div>
             </div>
+
+            {% if filter_data.show_progress %}
+              <div x-show="view === 'progress'" x-cloak class="p-2">
+                <div class="flex items-center gap-2 px-2 py-1">
+                  <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                          @click="view = 'root'"
+                          type="button">
+                    {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+                  </button>
+                  <div class="text-xs uppercase tracking-wide text-gray-300">Progress</div>
+                </div>
+                <div class="max-h-64 overflow-y-auto">
+                  <button hx-get="{% url 'medialist' media_type %}"
+                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                          @click="progress = 'all'; open = false; view = 'root'"
+                          type="button">
+                    <span>Any Progress</span>
+                    <span class="ml-auto" x-show="progress === 'all'">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                  <button hx-get="{% url 'medialist' media_type %}"
+                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                          @click="progress = 'not_caught_up'; open = false; view = 'root'"
+                          type="button">
+                    <span>Not Caught Up</span>
+                    <span class="ml-auto" x-show="progress === 'not_caught_up'">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                  <button hx-get="{% url 'medialist' media_type %}"
+                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                          @click="progress = 'caught_up'; open = false; view = 'root'"
+                          type="button">
+                    <span>Caught Up</span>
+                    <span class="ml-auto" x-show="progress === 'caught_up'">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            {% endif %}
 
             <div x-show="view === 'year'" x-cloak class="p-2">
               <div class="flex items-center gap-2 px-2 py-1">

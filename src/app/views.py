@@ -2247,6 +2247,10 @@ def media_list(request, media_type):
         MediaTypes.TV.value,
         MediaTypes.ANIME.value,
     }
+    progress_media_types = {
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
     plays_media_types = {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
@@ -2339,6 +2343,11 @@ def media_list(request, media_type):
     valid_collection_filters = {"all", "collected", "not_collected"}
     if collection_filter not in valid_collection_filters:
         collection_filter = "all"
+
+    progress_filter = (request.GET.get("progress") or "all").strip().lower()
+    valid_progress_filters = {"all", "not_caught_up", "caught_up"}
+    if progress_filter not in valid_progress_filters or media_type not in progress_media_types:
+        progress_filter = "all"
 
     genre_filter = (request.GET.get("genre") or "").strip()
     year_filter = (request.GET.get("year") or "").strip()
@@ -2444,6 +2453,40 @@ def media_list(request, media_type):
                 filtered_items.append(media)
 
         return filtered_items
+
+    def _is_caught_up_media(media):
+        """Return True when the item's watched progress has reached its max."""
+        max_progress = getattr(media, "max_progress", None)
+        if max_progress is None:
+            return False
+
+        try:
+            max_progress_value = int(max_progress)
+        except (TypeError, ValueError):
+            return False
+
+        if max_progress_value <= 0:
+            return False
+
+        try:
+            progress_value = int(getattr(media, "progress", 0) or 0)
+        except (TypeError, ValueError):
+            return False
+
+        return progress_value >= max_progress_value
+
+    def apply_progress_filter(media_items, filter_value, media_type):
+        if filter_value == "all" or media_type not in progress_media_types:
+            return media_items
+
+        if any(getattr(media, "max_progress", None) is None for media in media_items):
+            BasicMedia.objects.annotate_max_progress(media_items, media_type)
+
+        if filter_value == "caught_up":
+            return [media for media in media_items if _is_caught_up_media(media)]
+        if filter_value == "not_caught_up":
+            return [media for media in media_items if not _is_caught_up_media(media)]
+        return media_items
 
     def _normalize_filter_value(value):
         return str(value or "").strip().lower()
@@ -3025,6 +3068,7 @@ def media_list(request, media_type):
     filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
     filter_data["show_formats"] = media_type in author_media_types
     filter_data["show_authors"] = media_type in author_media_types
+    filter_data["show_progress"] = media_type in progress_media_types
     user_tags = list(
         Tag.objects.filter(user=request.user)
         .values_list("name", flat=True)
@@ -3033,6 +3077,7 @@ def media_list(request, media_type):
     filter_data["tags"] = user_tags
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
+    media_list = apply_progress_filter(media_list, progress_filter, media_type)
     if media_type in author_media_types:
         media_list = apply_author_filter(media_list, author_filter)
         media_list = apply_format_filter(media_list, format_filter)
@@ -3111,6 +3156,7 @@ def media_list(request, media_type):
             search_query,
             direction,
             rating_filter,
+            progress_filter,
             collection_filter,
             genre_filter,
             year_filter,
@@ -3190,6 +3236,7 @@ def media_list(request, media_type):
         "current_status": status_filter,
         "current_rating": rating_filter,
         "current_collection": collection_filter,
+        "current_progress": progress_filter,
         "current_genre": genre_filter,
         "current_year": year_filter,
         "current_release": release_filter,

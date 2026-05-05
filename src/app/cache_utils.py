@@ -7,7 +7,7 @@ from django.core.cache import cache
 logger = logging.getLogger(__name__)
 
 
-TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v16"
+TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v17"
 _REGISTRY_TEMPLATE = f"{TIME_LEFT_CACHE_PREFIX}_registry_{{user_id}}"
 
 
@@ -18,6 +18,7 @@ def build_time_left_cache_key(
     search_query: str,
     direction: str,
     rating_filter: str,
+    progress_filter: str = "",
     collection_filter: str = "",
     genre_filter: str = "",
     year_filter: str = "",
@@ -35,6 +36,7 @@ def build_time_left_cache_key(
     normalized_query = search_query or ""
     normalized_direction = direction or ""
     normalized_rating = rating_filter or ""
+    normalized_progress = progress_filter or ""
     normalized_collection = collection_filter or ""
     normalized_genre = genre_filter or ""
     normalized_year = year_filter or ""
@@ -48,7 +50,7 @@ def build_time_left_cache_key(
     normalized_tag_exclude = tag_exclude_filter or ""
     return (
         f"{TIME_LEFT_CACHE_PREFIX}_{user_id}_{media_type}_{normalized_status}_"
-        f"{normalized_query}_{normalized_direction}_{normalized_rating}_{normalized_collection}_"
+        f"{normalized_query}_{normalized_direction}_{normalized_rating}_{normalized_progress}_{normalized_collection}_"
         f"{normalized_genre}_{normalized_year}_{normalized_release}_{normalized_source}_"
         f"{normalized_language}_{normalized_country}_{normalized_platform}_{normalized_origin}_"
         f"{normalized_tag}_{normalized_tag_exclude}"

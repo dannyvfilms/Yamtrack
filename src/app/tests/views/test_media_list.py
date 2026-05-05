@@ -8,6 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from app import cache_utils
 from app.models import (
     Album,
     Anime,
@@ -211,7 +212,7 @@ class MediaListViewTests(TestCase):
         )
         return item
 
-    def _create_tv_runtime_entry(self, media_id, title, episode_runtimes):
+    def _create_tv_runtime_entry(self, media_id, title, episode_runtimes, *, progress=0):
         item = Item.objects.create(
             media_id=str(media_id),
             source=Sources.TMDB.value,
@@ -219,19 +220,30 @@ class MediaListViewTests(TestCase):
             title=title,
             image="http://example.com/tv-runtime.jpg",
         )
-        TV.objects.bulk_create(
-            [
-                TV(
-                    item=item,
-                    user=self.user,
-                    status=Status.IN_PROGRESS.value,
-                ),
-            ],
+        tv = TV.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        season_item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title=f"{title} Season 1",
+            image="http://example.com/tv-season.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
         )
 
         released_at = timezone.now() - timedelta(days=30)
         for episode_number, runtime_minutes in enumerate(episode_runtimes, start=1):
-            Item.objects.create(
+            episode_item = Item.objects.create(
                 media_id=str(media_id),
                 source=Sources.TMDB.value,
                 media_type=MediaTypes.EPISODE.value,
@@ -242,10 +254,24 @@ class MediaListViewTests(TestCase):
                 runtime_minutes=runtime_minutes,
                 release_datetime=released_at + timedelta(days=episode_number),
             )
+            if episode_number <= progress:
+                Episode.objects.create(
+                    item=episode_item,
+                    related_season=season,
+                    end_date=timezone.now() - timedelta(days=episode_number),
+                )
 
         return item
 
-    def _create_anime_runtime_entry(self, media_id, title, *, runtime_minutes, episode_count):
+    def _create_anime_runtime_entry(
+        self,
+        media_id,
+        title,
+        *,
+        runtime_minutes,
+        episode_count,
+        progress=0,
+    ):
         item = Item.objects.create(
             media_id=str(media_id),
             source=Sources.MAL.value,
@@ -260,7 +286,7 @@ class MediaListViewTests(TestCase):
                     item=item,
                     user=self.user,
                     status=Status.PLANNING.value,
-                    progress=0,
+                    progress=progress,
                 ),
             ],
         )
@@ -828,6 +854,135 @@ class MediaListViewTests(TestCase):
         self.assertEqual(self.user.movie_status, Status.COMPLETED.value)
         self.assertEqual(self.user.movie_sort, "score")
         self.assertEqual(self.user.movie_layout, "table")
+
+    def test_progress_filter_is_visible_only_for_tv_and_anime(self):
+        """Progress filtering should render only where caught-up semantics are supported."""
+        movie_response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+        tv_response = self.client.get(reverse("medialist", args=[MediaTypes.TV.value]))
+        anime_response = self.client.get(reverse("medialist", args=[MediaTypes.ANIME.value]))
+
+        self.assertFalse(movie_response.context["filter_data"]["show_progress"])
+        self.assertTrue(tv_response.context["filter_data"]["show_progress"])
+        self.assertTrue(anime_response.context["filter_data"]["show_progress"])
+
+        self.assertNotContains(movie_response, "@click=\"view = 'progress'\"")
+        self.assertContains(tv_response, "@click=\"view = 'progress'\"")
+        self.assertContains(anime_response, "@click=\"view = 'progress'\"")
+
+    def test_tv_progress_filter_hides_caught_up_shows(self):
+        """TV caught-up filtering should split shows by watched-vs-released progress."""
+        self._create_tv_runtime_entry(
+            "tv-progress-caught-up",
+            "Caught Up TV",
+            [24, 24, 24],
+            progress=3,
+        )
+        self._create_tv_runtime_entry(
+            "tv-progress-not-caught-up",
+            "Not Caught Up TV",
+            [24, 24, 24],
+            progress=1,
+        )
+
+        url = reverse("medialist", args=[MediaTypes.TV.value])
+
+        not_caught_up_response = self.client.get(f"{url}?progress=not_caught_up")
+        self.assertEqual(not_caught_up_response.status_code, 200)
+        self.assertTrue(not_caught_up_response.context["filter_data"]["show_progress"])
+        self.assertEqual(not_caught_up_response.context["current_progress"], "not_caught_up")
+        self.assertEqual(not_caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            [media.item.title for media in not_caught_up_response.context["media_list"].object_list],
+            ["Not Caught Up TV"],
+        )
+
+        caught_up_response = self.client.get(f"{url}?progress=caught_up")
+        self.assertEqual(caught_up_response.status_code, 200)
+        self.assertEqual(caught_up_response.context["current_progress"], "caught_up")
+        self.assertEqual(caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            [media.item.title for media in caught_up_response.context["media_list"].object_list],
+            ["Caught Up TV"],
+        )
+
+    def test_anime_progress_filter_hides_caught_up_shows(self):
+        """Anime caught-up filtering should split shows by watched-vs-released progress."""
+        self._create_anime_runtime_entry(
+            "anime-progress-caught-up",
+            "Caught Up Anime",
+            runtime_minutes=24,
+            episode_count=12,
+            progress=12,
+        )
+        self._create_anime_runtime_entry(
+            "anime-progress-not-caught-up",
+            "Not Caught Up Anime",
+            runtime_minutes=24,
+            episode_count=12,
+            progress=5,
+        )
+
+        url = reverse("medialist", args=[MediaTypes.ANIME.value])
+
+        not_caught_up_response = self.client.get(f"{url}?progress=not_caught_up")
+        self.assertEqual(not_caught_up_response.status_code, 200)
+        self.assertTrue(not_caught_up_response.context["filter_data"]["show_progress"])
+        self.assertEqual(not_caught_up_response.context["current_progress"], "not_caught_up")
+        self.assertEqual(not_caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            [media.item.title for media in not_caught_up_response.context["media_list"].object_list],
+            ["Not Caught Up Anime"],
+        )
+
+        caught_up_response = self.client.get(f"{url}?progress=caught_up")
+        self.assertEqual(caught_up_response.status_code, 200)
+        self.assertEqual(caught_up_response.context["current_progress"], "caught_up")
+        self.assertEqual(caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            [media.item.title for media in caught_up_response.context["media_list"].object_list],
+            ["Caught Up Anime"],
+        )
+
+    def test_time_left_cache_key_separates_progress_filters(self):
+        """Time-left caching should not bleed across different progress filter states."""
+        cache_utils.clear_time_left_cache_for_user(self.user.id)
+
+        self._create_tv_runtime_entry(
+            "tv-time-left-caught-up",
+            "Caught Up Time Left",
+            [24, 24, 24],
+            progress=3,
+        )
+        self._create_tv_runtime_entry(
+            "tv-time-left-not-caught-up",
+            "Not Caught Up Time Left",
+            [24, 24, 24],
+            progress=1,
+        )
+
+        url = reverse("medialist", args=[MediaTypes.TV.value])
+
+        caught_up_response = self.client.get(
+            f"{url}?sort=time_left&direction=asc&progress=caught_up",
+        )
+        self.assertEqual(caught_up_response.status_code, 200)
+        self.assertEqual(caught_up_response.context["current_progress"], "caught_up")
+        self.assertEqual(caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            caught_up_response.context["media_list"].object_list[0].item.title,
+            "Caught Up Time Left",
+        )
+
+        not_caught_up_response = self.client.get(
+            f"{url}?sort=time_left&direction=asc&progress=not_caught_up",
+        )
+        self.assertEqual(not_caught_up_response.status_code, 200)
+        self.assertEqual(not_caught_up_response.context["current_progress"], "not_caught_up")
+        self.assertEqual(not_caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            not_caught_up_response.context["media_list"].object_list[0].item.title,
+            "Not Caught Up Time Left",
+        )
 
     def test_media_list_with_release_filters(self):
         """Release filter should split tracked media by today."""
