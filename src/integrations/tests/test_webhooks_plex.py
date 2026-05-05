@@ -205,6 +205,13 @@ class PlexWebhookTests(TestCase):
         self.metadata_patcher.stop()
         self.mal_anime_patcher.stop()
 
+    def _post_payload(self, payload):
+        return self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
     def test_invalid_token(self):
         """Test webhook with invalid token returns 401."""
         url = reverse("plex_webhook", kwargs={"token": "invalid-token"})
@@ -311,6 +318,181 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(state["duration_seconds"], 2666)
         self.assertEqual(state["view_offset_seconds"], 1447)
 
+    def test_movie_short_stop_clears_in_progress_row_and_playback_state(self):
+        """Movie stops inside the first minute should be treated as abandoned."""
+        play_payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-1",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+        stop_payload = {
+            "event": "media.stop",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-1",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+
+        play_response = self._post_payload(play_payload)
+        self.assertEqual(play_response.status_code, 200)
+        self.assertTrue(
+            Movie.objects.filter(
+                item__media_id="603",
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
+        )
+
+        stop_response = self._post_payload(stop_payload)
+        self.assertEqual(stop_response.status_code, 200)
+
+        self.assertFalse(
+            Movie.objects.filter(
+                item__media_id="603",
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
+        )
+        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
+
+    def test_short_stop_only_applies_during_the_first_minute_of_playback(self):
+        """A low-progress stop should not be deleted once the start window has aged out."""
+        play_payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-aged-start",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+        stop_payload = {
+            "event": "media.stop",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-aged-start",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+
+        play_response = self._post_payload(play_payload)
+        self.assertEqual(play_response.status_code, 200)
+
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(state)
+        state["started_at_ts"] = int(timezone.now().timestamp()) - 61
+        live_playback.set_user_playback_state(self.user.id, state)
+
+        stop_response = self._post_payload(stop_payload)
+        self.assertEqual(stop_response.status_code, 200)
+
+        self.assertTrue(
+            Movie.objects.filter(
+                item__media_id="603",
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
+        )
+        stopped_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(stopped_state)
+        self.assertEqual(stopped_state["status"], live_playback.PLAYBACK_STATUS_STOPPED)
+
+    def test_episode_short_stop_clears_tv_and_season_rows(self):
+        """Episode stops inside the first minute should clear the fresh rows."""
+        play_payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-short",
+                "duration": 2666000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+        stop_payload = {
+            "event": "media.stop",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-short",
+                "duration": 2666000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+
+        play_response = self._post_payload(play_payload)
+        self.assertEqual(play_response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="85987", user=self.user).exists(),
+        )
+        self.assertTrue(
+            Season.objects.filter(
+                item__media_id="85987",
+                item__season_number=1,
+                user=self.user,
+            ).exists(),
+        )
+
+        stop_response = self._post_payload(stop_payload)
+        self.assertEqual(stop_response.status_code, 200)
+
+        self.assertFalse(
+            TV.objects.filter(item__media_id="85987", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Season.objects.filter(
+                item__media_id="85987",
+                item__season_number=1,
+                user=self.user,
+            ).exists(),
+        )
+        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
+
     def test_pause_and_stop_events_update_live_playback_state(self):
         """Pause should keep card state; stop should transition to stopped with grace period."""
         play_payload = {
@@ -401,6 +583,16 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(
             stopped_state["status"],
             live_playback.PLAYBACK_STATUS_STOPPED,
+        )
+        self.assertTrue(
+            TV.objects.filter(item__media_id="85987", user=self.user).exists(),
+        )
+        self.assertTrue(
+            Season.objects.filter(
+                item__media_id="85987",
+                item__season_number=1,
+                user=self.user,
+            ).exists(),
         )
 
     @patch(
