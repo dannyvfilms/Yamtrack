@@ -13,6 +13,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from app.helpers import is_caught_up_media
 from app.models import BasicMedia, Item, MediaTypes, Sources, Status
 from app.templatetags import app_tags
 from lists import smart_rules
@@ -1470,24 +1471,7 @@ def _entry_next_episode_air_date_timestamp(entry: HomeRowEntry):
 
 
 def _is_caught_up_media(media) -> bool:
-    max_progress = getattr(media, "max_progress", None)
-    if max_progress is None:
-        return False
-
-    try:
-        max_progress_value = int(max_progress)
-    except (TypeError, ValueError):
-        return False
-
-    if max_progress_value <= 0:
-        return False
-
-    try:
-        progress_value = int(getattr(media, "progress", 0) or 0)
-    except (TypeError, ValueError):
-        return False
-
-    return progress_value >= max_progress_value
+    return is_caught_up_media(media)
 
 
 def _apply_progress_filter(entries: list[HomeRowEntry], media_type: str, progress_filter: str) -> list[HomeRowEntry]:

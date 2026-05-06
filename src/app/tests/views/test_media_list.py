@@ -263,6 +263,62 @@ class MediaListViewTests(TestCase):
 
         return item
 
+    def _create_tv_seasonal_entry(self, media_id, title, season_configs):
+        """Create a TV show with explicit per-season status and release counts."""
+        item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title=title,
+            image="http://example.com/tv-seasonal.jpg",
+        )
+        tv = TV.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        now = timezone.now()
+        for season_config in season_configs:
+            season_number = season_config["season_number"]
+            season_item = Item.objects.create(
+                media_id=str(media_id),
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title=f"{title} Season {season_number}",
+                image="http://example.com/tv-seasonal-season.jpg",
+                season_number=season_number,
+            )
+            season = Season.objects.create(
+                item=season_item,
+                user=self.user,
+                related_tv=tv,
+                status=season_config["status"],
+            )
+
+            released_episodes = season_config["released_episodes"]
+            watched_episodes = season_config.get("watched_episodes", 0)
+
+            for episode_number in range(1, released_episodes + 1):
+                episode_item = Item.objects.create(
+                    media_id=str(media_id),
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.EPISODE.value,
+                    title=f"{title} S{season_number:02d}E{episode_number:02d}",
+                    image="http://example.com/tv-seasonal-episode.jpg",
+                    season_number=season_number,
+                    episode_number=episode_number,
+                    release_datetime=now - timedelta(days=episode_number),
+                )
+                if episode_number <= watched_episodes:
+                    Episode.objects.create(
+                        item=episode_item,
+                        related_season=season,
+                        end_date=now - timedelta(days=episode_number),
+                    )
+
+        return tv
+
     def _create_anime_runtime_entry(
         self,
         media_id,
@@ -1043,6 +1099,65 @@ class MediaListViewTests(TestCase):
         self.assertEqual(
             [media.item.title for media in caught_up_response.context["media_list"].object_list],
             ["Caught Up TV"],
+        )
+
+    def test_tv_progress_filter_ignores_dropped_seasons(self):
+        """Dropped seasons should not keep a fully released show out of caught-up."""
+        self._create_tv_seasonal_entry(
+            "tv-progress-dropped-seasons",
+            "Dropped Seasons Caught Up",
+            [
+                {
+                    "season_number": 1,
+                    "status": Status.DROPPED.value,
+                    "released_episodes": 2,
+                    "watched_episodes": 0,
+                },
+                {
+                    "season_number": 2,
+                    "status": Status.DROPPED.value,
+                    "released_episodes": 2,
+                    "watched_episodes": 0,
+                },
+                {
+                    "season_number": 3,
+                    "status": Status.COMPLETED.value,
+                    "released_episodes": 3,
+                    "watched_episodes": 3,
+                },
+                {
+                    "season_number": 4,
+                    "status": Status.IN_PROGRESS.value,
+                    "released_episodes": 2,
+                    "watched_episodes": 2,
+                },
+            ],
+        )
+        self._create_tv_runtime_entry(
+            "tv-progress-not-caught-up-2",
+            "Still In Progress TV",
+            [24, 24, 24],
+            progress=1,
+        )
+
+        url = reverse("medialist", args=[MediaTypes.TV.value])
+
+        caught_up_response = self.client.get(f"{url}?progress=caught_up")
+        self.assertEqual(caught_up_response.status_code, 200)
+        self.assertEqual(caught_up_response.context["current_progress"], "caught_up")
+        self.assertEqual(caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            [media.item.title for media in caught_up_response.context["media_list"].object_list],
+            ["Dropped Seasons Caught Up"],
+        )
+
+        not_caught_up_response = self.client.get(f"{url}?progress=not_caught_up")
+        self.assertEqual(not_caught_up_response.status_code, 200)
+        self.assertEqual(not_caught_up_response.context["current_progress"], "not_caught_up")
+        self.assertEqual(not_caught_up_response.context["media_list"].paginator.count, 1)
+        self.assertEqual(
+            [media.item.title for media in not_caught_up_response.context["media_list"].object_list],
+            ["Still In Progress TV"],
         )
 
     def test_anime_progress_filter_hides_caught_up_shows(self):

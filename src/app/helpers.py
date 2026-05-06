@@ -136,6 +136,69 @@ def format_search_response(page, per_page, total_results, results):
     }
 
 
+def is_caught_up_media(media) -> bool:
+    """Return whether watched progress has caught up to released progress."""
+    max_progress = getattr(media, "max_progress", None)
+    if max_progress is None:
+        return False
+
+    try:
+        max_progress_value = int(max_progress)
+    except (TypeError, ValueError):
+        return False
+
+    if max_progress_value <= 0:
+        return False
+
+    try:
+        progress_value = int(getattr(media, "progress", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+
+    # TV rows can keep dropped seasons in their raw progress/max_progress totals.
+    # Mirror time-left behavior by removing dropped-season episodes from both sides
+    # before deciding whether the show is actually caught up.
+    item_media_type = getattr(getattr(media, "item", None), "media_type", None)
+    if item_media_type == MediaTypes.TV.value:
+        breakdown = getattr(media, "released_episode_breakdown", None) or {}
+        seasons_manager = getattr(media, "seasons", None)
+        if (
+            breakdown
+            and seasons_manager is not None
+            and hasattr(seasons_manager, "all")
+        ):
+            seasons = [
+                season
+                for season in seasons_manager.all()
+                if getattr(getattr(season, "item", None), "season_number", 0)
+            ]
+            if seasons:
+                dropped_season_numbers = {
+                    season.item.season_number
+                    for season in seasons
+                    if season.status == Status.DROPPED.value
+                }
+                if dropped_season_numbers:
+                    filtered_breakdown = {
+                        season_num: count
+                        for season_num, count in breakdown.items()
+                        if season_num not in dropped_season_numbers
+                    }
+                    if filtered_breakdown != breakdown:
+                        included_progress = sum(
+                            int(getattr(season, "progress", 0) or 0)
+                            for season in seasons
+                            if season.status != Status.DROPPED.value
+                        )
+                        remaining = max(
+                            sum(filtered_breakdown.values()) - included_progress,
+                            0,
+                        )
+                        return remaining == 0
+
+    return progress_value >= max_progress_value
+
+
 def enrich_items_with_user_data(request, items, section_name=None, user=None):
     """Enrich a list of items with user tracking data."""
     if not items:

@@ -8,11 +8,25 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from app.models import Game, Item, MediaTypes, Sources, Status
+from app.models import (
+    Episode,
+    Game,
+    Item,
+    MediaTypes,
+    Season,
+    Sources,
+    Status,
+    TV,
+)
 from lists.models import CustomList
 from users import home_screen
-from users.models import DirectionChoices, HomeScreenRow, HomeScreenRowTypeChoices, HomeSortChoices
-from users.models import MediaSortChoices
+from users.models import (
+    DirectionChoices,
+    HomeScreenRow,
+    HomeScreenRowTypeChoices,
+    HomeSortChoices,
+    MediaSortChoices,
+)
 
 
 class HomeScreenViewTests(TestCase):
@@ -57,6 +71,138 @@ class HomeScreenViewTests(TestCase):
         self.assertNotContains(response, "Add List / Smart List")
         self.assertNotContains(response, "Add Recently Played Row")
         self.assertNotContains(response, "Enabled")
+
+    def test_home_rows_progress_filter_ignores_dropped_tv_seasons(self):
+        """Home not-caught-up rows should ignore dropped TV seasons."""
+        self._set_enabled_media_types(MediaTypes.TV.value)
+
+        dropped_caught_up_item = Item.objects.create(
+            title="Dropped Seasons Caught Up",
+            media_id="home-tv-dropped-caught-up",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/tv-caught-up.jpg",
+        )
+        dropped_caught_up_tv = TV.objects.create(
+            item=dropped_caught_up_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        still_in_progress_item = Item.objects.create(
+            title="Still In Progress TV",
+            media_id="home-tv-still-in-progress",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/tv-in-progress.jpg",
+        )
+        still_in_progress_tv = TV.objects.create(
+            item=still_in_progress_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        now = timezone.now()
+        for tv, title, season_configs in (
+            (
+                dropped_caught_up_tv,
+                "Dropped Seasons Caught Up",
+                [
+                    {
+                        "season_number": 1,
+                        "status": Status.DROPPED.value,
+                        "released_episodes": 2,
+                        "watched_episodes": 0,
+                    },
+                    {
+                        "season_number": 2,
+                        "status": Status.DROPPED.value,
+                        "released_episodes": 2,
+                        "watched_episodes": 0,
+                    },
+                    {
+                        "season_number": 3,
+                        "status": Status.COMPLETED.value,
+                        "released_episodes": 3,
+                        "watched_episodes": 3,
+                    },
+                    {
+                        "season_number": 4,
+                        "status": Status.IN_PROGRESS.value,
+                        "released_episodes": 2,
+                        "watched_episodes": 2,
+                    },
+                ],
+            ),
+            (
+                still_in_progress_tv,
+                "Still In Progress TV",
+                [
+                    {
+                        "season_number": 1,
+                        "status": Status.IN_PROGRESS.value,
+                        "released_episodes": 3,
+                        "watched_episodes": 1,
+                    },
+                ],
+            ),
+        ):
+            for season_config in season_configs:
+                season_number = season_config["season_number"]
+                season_item = Item.objects.create(
+                    media_id=tv.item.media_id,
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.SEASON.value,
+                    title=f"{title} Season {season_number}",
+                    image="https://example.com/tv-season.jpg",
+                    season_number=season_number,
+                )
+                season = Season.objects.create(
+                    item=season_item,
+                    user=self.user,
+                    related_tv=tv,
+                    status=season_config["status"],
+                )
+
+                for episode_number in range(1, season_config["released_episodes"] + 1):
+                    episode_item = Item.objects.create(
+                        media_id=tv.item.media_id,
+                        source=Sources.TMDB.value,
+                        media_type=MediaTypes.EPISODE.value,
+                        title=f"{title} S{season_number:02d}E{episode_number:02d}",
+                        image="https://example.com/tv-episode.jpg",
+                        season_number=season_number,
+                        episode_number=episode_number,
+                        release_datetime=now - timedelta(days=episode_number),
+                    )
+                    if episode_number <= season_config["watched_episodes"]:
+                        Episode.objects.create(
+                            item=episode_item,
+                            related_season=season,
+                            end_date=now - timedelta(days=episode_number),
+                        )
+
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.TV.value,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=MediaSortChoices.TITLE,
+            direction=DirectionChoices.ASC,
+            filters={
+                "status": Status.IN_PROGRESS.value,
+                "progress": "not_caught_up",
+            },
+        )
+
+        groups = home_screen.build_home_page_groups(self.user, items_limit=10)
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(len(groups[0]["rows"]), 1)
+        self.assertEqual(
+            [entry.item.title for entry in groups[0]["rows"][0]["items"]],
+            ["Still In Progress TV"],
+        )
 
     def test_planning_library_row_excludes_duplicate_item_with_newer_in_progress_status(self):
         self._set_enabled_media_types(MediaTypes.GAME.value)

@@ -2464,25 +2464,8 @@ def media_list(request, media_type):
         return filtered_items
 
     def _is_caught_up_media(media):
-        """Return True when the item's watched progress has reached its max."""
-        max_progress = getattr(media, "max_progress", None)
-        if max_progress is None:
-            return False
-
-        try:
-            max_progress_value = int(max_progress)
-        except (TypeError, ValueError):
-            return False
-
-        if max_progress_value <= 0:
-            return False
-
-        try:
-            progress_value = int(getattr(media, "progress", 0) or 0)
-        except (TypeError, ValueError):
-            return False
-
-        return progress_value >= max_progress_value
+        """Return True when the item's watched progress has reached released progress."""
+        return helpers.is_caught_up_media(media)
 
     def apply_progress_filter(media_items, filter_value, media_type):
         if filter_value == "all" or media_type not in progress_media_types:
