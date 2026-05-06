@@ -95,6 +95,18 @@ class TrackModalViewTests(TestCase):
             progress=0,
         )
 
+    def assert_release_shortcut_labels(self, response):
+        """Release-date shortcut buttons should split mobile and desktop labels."""
+        content = response.content.decode()
+        self.assertEqual(
+            content.count('track-release-shortcut-mobile-label">Release</span>'),
+            2,
+        )
+        self.assertEqual(
+            content.count('track-release-shortcut-desktop-label">Release Date</span>'),
+            2,
+        )
+
     def test_track_modal_view_existing_media(self):
         """Test the track modal view for existing media."""
         response = self.client.get(
@@ -168,6 +180,7 @@ class TrackModalViewTests(TestCase):
             html=False,
         )
         self.assertContains(response, "Release date", count=2)
+        self.assert_release_shortcut_labels(response)
 
     def test_track_modal_close_button_supports_split_button_wrapper(self):
         """The shared close button should work for edit/create split-button wrappers."""
@@ -279,6 +292,7 @@ class TrackModalViewTests(TestCase):
             html=False,
         )
         self.assertContains(response, "Release date", count=2)
+        self.assert_release_shortcut_labels(response)
 
     def test_artist_save_redirects_to_canonical_music_details(self):
         """Artist saves should land on the canonical shared details page."""
@@ -453,6 +467,7 @@ class TrackModalViewTests(TestCase):
             html=False,
         )
         self.assertContains(response, "Release date", count=2)
+        self.assert_release_shortcut_labels(response)
         self.assertNotContains(response, "Save Image")
 
     def test_update_item_image(self):

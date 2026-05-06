@@ -35,6 +35,45 @@
   max-height: calc(100vh - 4rem);
 }
 
+.track-release-shortcut-input {
+  padding-right: calc(var(--spacing) * 24);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.track-release-shortcut-button {
+  max-width: calc(100% - 1rem);
+  white-space: nowrap;
+}
+
+.track-release-shortcut-mobile-label {
+  display: inline;
+}
+
+.track-release-shortcut-desktop-label {
+  display: none;
+}
+
+@media (min-width: 40rem) {
+  .track-release-shortcut-input {
+    padding-right: calc(var(--spacing) * 28);
+    font-size: 1rem;
+    line-height: 1.5rem;
+  }
+
+  .track-release-shortcut-button {
+    max-width: none;
+  }
+
+  .track-release-shortcut-mobile-label {
+    display: none;
+  }
+
+  .track-release-shortcut-desktop-label {
+    display: inline;
+  }
+}
+
 /* Game/Boardgame stats cards: 3-column grid on mobile, flex-wrap on desktop */
 .stats-card-grid {
   display: grid;
