@@ -10,7 +10,10 @@
              class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
             <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
             {% if entry.image and entry.image != IMG_NONE %}
-              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+              <img src="{{ IMG_NONE }}"
+                   data-src="{{ entry.image }}"
+                   alt="{{ entry.name }}"
+                   class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
             {% else %}
               <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                 {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
@@ -45,7 +48,10 @@
              class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
             <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
             {% if entry.image and entry.image != IMG_NONE %}
-              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+              <img src="{{ IMG_NONE }}"
+                   data-src="{{ entry.image }}"
+                   alt="{{ entry.name }}"
+                   class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
             {% else %}
               <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                 {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
@@ -80,7 +86,10 @@
              class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
             <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
             {% if entry.image and entry.image != IMG_NONE %}
-              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+              <img src="{{ IMG_NONE }}"
+                   data-src="{{ entry.image }}"
+                   alt="{{ entry.name }}"
+                   class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
             {% else %}
               <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                 {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
@@ -115,7 +124,10 @@
              class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
             <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
             {% if entry.image and entry.image != IMG_NONE %}
-              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+              <img src="{{ IMG_NONE }}"
+                   data-src="{{ entry.image }}"
+                   alt="{{ entry.name }}"
+                   class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
             {% else %}
               <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                 {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
@@ -149,7 +161,10 @@
           <div class="flex items-center space-x-3">
             <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
             {% if entry.logo and entry.logo != IMG_NONE %}
-              <img src="{{ entry.logo }}" alt="{{ entry.name }}" class="w-10 h-10 rounded bg-[#2a2f35] p-1 object-contain">
+              <img src="{{ IMG_NONE }}"
+                   data-src="{{ entry.logo }}"
+                   alt="{{ entry.name }}"
+                   class="lazyload w-10 h-10 rounded bg-[#2a2f35] p-1 object-contain">
             {% else %}
               <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                 {% include "app/icons/cube.svg" with classes="w-5 h-5 text-gray-500" %}

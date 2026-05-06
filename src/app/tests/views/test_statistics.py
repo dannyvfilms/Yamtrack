@@ -5,8 +5,10 @@ from unittest.mock import call, patch
 from dateutil.relativedelta import relativedelta
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import connection
 from django.db.utils import OperationalError
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -32,12 +34,14 @@ from app.models import (
     Manga,
     Person,
     PersonGender,
+    Podcast,
     Season,
     Sources,
     Status,
     Studio,
     TV,
 )
+from users.templatetags.user_tags import user_date_format
 
 
 class StatisticsViewTests(TestCase):
@@ -188,14 +192,16 @@ class StatisticsViewTests(TestCase):
 
         self.assertTrue(date_is_none)
 
-    @patch("users.models.CustomUser.update_preference")
+    @patch("users.models.User.update_preference")
     def test_statistics_view_handles_preference_save_operational_error(self, mock_update_preference):
         """Statistics view should render fallback context when preference save hits sqlite lock."""
         mock_update_preference.side_effect = OperationalError("database is locked")
+        today = timezone.localdate()
+        year_start = today.replace(month=1, day=1)
 
         response = self.client.get(
             reverse("statistics")
-            + "?start-date=2026-01-01&end-date=2026-04-25&compare=none",
+            + f"?start-date={year_start.isoformat()}&end-date={today.isoformat()}&compare=none",
         )
 
         self.assertEqual(response.status_code, 200)
@@ -403,6 +409,196 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(comparison["badge"], "New")
         self.assertEqual(comparison["badge_state"], "new")
         self.assertEqual(comparison["badge_short"], "New")
+
+    def test_statistics_view_uses_minutes_only_helper_for_comparison(self):
+        """Comparison ranges should not trigger a second full statistics aggregation."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        current_date = date(2026, 3, 1)
+        previous_date = date(2026, 2, 28)
+
+        self._create_movie_play("movie-current-minutes-helper", "Current Movie", current_date, 120)
+        self._create_movie_play("movie-previous-minutes-helper", "Previous Movie", previous_date, 60)
+
+        with (
+            patch(
+                "app.views.statistics_cache.get_statistics_data",
+                wraps=statistics_cache.get_statistics_data,
+            ) as mock_get_statistics_data,
+            patch(
+                "app.views.statistics_cache.get_statistics_minutes_by_type",
+                wraps=statistics_cache.get_statistics_minutes_by_type,
+            ) as mock_get_statistics_minutes_by_type,
+        ):
+            response = self.client.get(
+                reverse("statistics")
+                + (
+                    f"?start-date={current_date.isoformat()}"
+                    f"&end-date={current_date.isoformat()}"
+                    "&compare=previous_period"
+                ),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_get_statistics_data.call_count, 1)
+        mock_get_statistics_minutes_by_type.assert_called_once()
+
+    def test_statistics_view_predefined_range_cache_miss_reuses_covering_range_day_caches(self):
+        """A missing predefined range cache should derive from current covering day caches."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        today = timezone.localdate()
+        recent_date = today - timedelta(days=5)
+        old_date = today - relativedelta(years=2)
+
+        self._create_movie_play("movie-recent-range-cache", "Recent Movie", recent_date, 120)
+        self._create_movie_play("movie-old-range-cache", "Old Movie", old_date, 90)
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+
+        last_year_key = statistics_cache._cache_key(self.user.id, "Last 12 Months")
+        last_year_lock_key = statistics_cache._refresh_lock_key(self.user.id, "Last 12 Months")
+        cache.delete(last_year_key)
+        cache.delete(last_year_lock_key)
+        self.assertIsNone(cache.get(last_year_key))
+
+        range_start, range_end = statistics_cache._get_predefined_range_dates("Last 12 Months")
+        start_param = range_start.date().isoformat()
+        end_param = range_end.date().isoformat()
+
+        with (
+            patch(
+                "app.statistics_cache.refresh_statistics_cache",
+                wraps=statistics_cache.refresh_statistics_cache,
+            ) as mock_refresh_statistics_cache,
+            patch(
+                "app.statistics_cache.schedule_statistics_refresh",
+                wraps=statistics_cache.schedule_statistics_refresh,
+            ) as mock_schedule_statistics_refresh,
+        ):
+            response = self.client.get(
+                reverse("statistics")
+                + (
+                    f"?start-date={start_param}"
+                    f"&end-date={end_param}"
+                    "&compare=none"
+                ),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_range_name"], "Last 12 Months")
+        self.assertEqual(response.context["hours_per_media_type"]["movie"], "2h 0min")
+        self.assertIsNotNone(cache.get(last_year_key))
+        mock_refresh_statistics_cache.assert_not_called()
+        mock_schedule_statistics_refresh.assert_not_called()
+
+        status_response = self.client.get(
+            reverse("cache_status") + "?cache_type=statistics&range_name=Last+12+Months",
+        )
+        self.assertEqual(status_response.status_code, 200)
+        status_payload = status_response.json()
+        self.assertTrue(status_payload["exists"])
+        self.assertFalse(status_payload["is_refreshing"])
+        self.assertFalse(status_payload["refresh_scheduled"])
+
+    def test_statistics_view_history_highlights_use_active_boundary_days_and_deserialized_dates(self):
+        """Highlight cards should use actual activity days and format cached dates correctly."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        first_play_day = date(2026, 4, 7)
+        last_play_day = date(2026, 5, 5)
+
+        self._create_movie_play("movie-highlight-first", "First Highlight Movie", first_play_day, 120)
+        self._create_movie_play("movie-highlight-last", "Last Highlight Movie", last_play_day, 90)
+
+        history_cache.cache_history_index(
+            self.user.id,
+            "repeats",
+            history_cache.build_history_index(self.user, logging_style_override="repeats"),
+        )
+        history_cache._build_and_cache_history_day(
+            self.user,
+            history_cache._day_key_for_date(first_play_day),
+            logging_style_override="repeats",
+        )
+        history_cache._build_and_cache_history_day(
+            self.user,
+            history_cache._day_key_for_date(last_play_day),
+            logging_style_override="repeats",
+        )
+
+        response = self.client.get(
+            reverse("statistics")
+            + "?start-date=2026-04-07&end-date=2026-05-06&compare=none",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        highlights = response.context["history_highlights"]
+        self.assertIsNotNone(highlights["first_play"])
+        self.assertIsNotNone(highlights["last_play"])
+        self.assertEqual(highlights["first_play"]["title"], "First Highlight Movie")
+        self.assertEqual(highlights["last_play"]["title"], "Last Highlight Movie")
+        self.assertIsInstance(highlights["first_play"]["played_at"], datetime)
+        self.assertIsInstance(highlights["last_play"]["played_at"], datetime)
+
+        response_body = response.content.decode()
+        self.assertIn(
+            f"Played {user_date_format(highlights['first_play']['played_at'], self.user)}",
+            response_body,
+        )
+        self.assertIn(
+            f"Played {user_date_format(highlights['last_play']['played_at'], self.user)}",
+            response_body,
+        )
+        self.assertNotIn("Played 2026-04-07T", response_body)
+        self.assertNotIn("Played 2026-05-05T", response_body)
+        self.assertNotIn("LAST PLAY --", response_body)
+
+    def test_statistics_view_history_highlights_fall_back_to_generic_title_when_metadata_missing(self):
+        """Highlight cards should not render blank titles when source metadata is empty."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        played_at = timezone.make_aware(
+            datetime.combine(date(2026, 4, 7), datetime.min.time()),
+            timezone.get_current_timezone(),
+        )
+        item = Item.objects.create(
+            media_id="podcast-empty-highlight",
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            title="",
+            image="",
+            runtime_minutes=45,
+        )
+        Podcast.objects.create(
+            user=self.user,
+            item=item,
+            progress=45,
+            start_date=played_at,
+            end_date=played_at,
+        )
+
+        history_cache.cache_history_index(
+            self.user.id,
+            "repeats",
+            history_cache.build_history_index(self.user, logging_style_override="repeats"),
+        )
+        history_cache._build_and_cache_history_day(
+            self.user,
+            history_cache._day_key_for_date(date(2026, 4, 7)),
+            logging_style_override="repeats",
+        )
+
+        response = self.client.get(
+            reverse("statistics")
+            + "?start-date=2026-04-07&end-date=2026-04-07&compare=none",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        highlights = response.context["history_highlights"]
+        self.assertEqual(highlights["first_play"]["title"], "Podcast")
+        self.assertContains(response, "Podcast")
 
     def test_refresh_statistics_cache_game_daily_average_tooltip_uses_game_title(self):
         """Cached game daily-average tooltip payload should include resolved game titles."""
@@ -1376,7 +1572,12 @@ class StatisticsViewTests(TestCase):
             response.context["top_talent"]["top_actors"][0]["name"],
             "Plays Leader",
         )
-        self.assertContains(response, "3 Plays")
+        response_body = response.content.decode()
+        top_talent_markup = response_body.split('id="top-talent-grid"', 1)[1].split("</section>", 1)[0]
+        self.assertContains(response, 'id="top-talent-grid"', count=1)
+        self.assertIn("3 Plays", top_talent_markup)
+        self.assertNotIn("3h 20min", top_talent_markup)
+        self.assertNotIn("2 Titles", top_talent_markup)
 
         self.user.top_talent_sort_by = "time"
         self.user.save(update_fields=["top_talent_sort_by"])
@@ -1387,7 +1588,12 @@ class StatisticsViewTests(TestCase):
             response.context["top_talent"]["top_actors"][0]["name"],
             "Titles Leader",
         )
-        self.assertContains(response, "3h 20min")
+        self.assertContains(response, 'id="top-talent-grid"', count=1)
+        response_body = response.content.decode()
+        top_talent_markup = response_body.split('id="top-talent-grid"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("3h 20min", top_talent_markup)
+        self.assertNotIn("3 Plays", top_talent_markup)
+        self.assertNotIn("2 Titles", top_talent_markup)
 
         self.user.top_talent_sort_by = "titles"
         self.user.save(update_fields=["top_talent_sort_by"])
@@ -1398,7 +1604,12 @@ class StatisticsViewTests(TestCase):
             response.context["top_talent"]["top_actors"][0]["name"],
             "Titles Leader",
         )
-        self.assertContains(response, "2 Titles")
+        self.assertContains(response, 'id="top-talent-grid"', count=1)
+        response_body = response.content.decode()
+        top_talent_markup = response_body.split('id="top-talent-grid"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("2 Titles", top_talent_markup)
+        self.assertNotIn("3 Plays", top_talent_markup)
+        self.assertNotIn("3h 20min", top_talent_markup)
 
     def test_statistics_top_talent_precomputes_all_sort_modes(self):
         """Top talent payload should include rankings precomputed for plays, time, and titles."""
@@ -1511,16 +1722,56 @@ class StatisticsViewTests(TestCase):
         self.user.top_talent_sort_by = "plays"
         self.user.save(update_fields=["top_talent_sort_by"])
 
-        response = self.client.post(
-            reverse("update_top_talent_sort"),
-            {"sort_by": "time", "range_name": "All Time"},
-        )
+        with patch(
+            "app.views.statistics_cache.get_top_talent_data",
+            return_value={
+                "by_sort": {
+                    "time": {
+                        "top_actors": [
+                            {
+                                "source": Sources.TMDB.value,
+                                "person_id": "grid-actor-1",
+                                "name": "Grid Actor",
+                                "image": "http://example.com/grid-actor.jpg",
+                                "unique_movies": 2,
+                                "unique_shows": 1,
+                                "plays": 3,
+                                "watched_time": "4h 0min",
+                                "unique_titles": 3,
+                            },
+                        ],
+                        "top_actresses": [],
+                        "top_directors": [],
+                        "top_writers": [],
+                        "top_studios": [],
+                    },
+                },
+            },
+        ) as mock_get_top_talent_data:
+            response = self.client.post(
+                reverse("update_top_talent_sort"),
+                {
+                    "sort_by": "time",
+                    "range_name": "All Time",
+                    "start_date": "all",
+                    "end_date": "all",
+                },
+            )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["success"])
         self.assertTrue(payload["changed"])
         self.assertEqual(payload["sort_by"], "time")
+        self.assertIn("Grid Actor", payload["grid_html"])
+        self.assertIn('data-src="http://example.com/grid-actor.jpg"', payload["grid_html"])
+        self.assertIn("lazyload", payload["grid_html"])
+        mock_get_top_talent_data.assert_called_once_with(
+            self.user,
+            None,
+            None,
+            range_name="All Time",
+        )
 
         self.user.refresh_from_db()
         self.assertEqual(self.user.top_talent_sort_by, "time")
@@ -1583,6 +1834,71 @@ class StatisticsViewTests(TestCase):
         mock_refresh.assert_not_called()
         mock_schedule_all_ranges_refresh.assert_not_called()
 
+    @patch("app.views.statistics_cache.schedule_all_ranges_refresh")
+    @patch("app.views.statistics_cache.refresh_statistics_cache")
+    @patch("app.views.statistics_cache.invalidate_statistics_cache")
+    def test_update_top_talent_sort_renders_requested_range_fragment(
+        self,
+        mock_invalidate,
+        mock_refresh,
+        mock_schedule_all_ranges_refresh,
+    ):
+        """Sort fragment requests should resolve the active statistics range without a full reload."""
+        self.user.top_talent_sort_by = "plays"
+        self.user.save(update_fields=["top_talent_sort_by"])
+
+        with patch(
+            "app.views.statistics_cache.get_top_talent_data",
+            return_value={
+                "by_sort": {
+                    "titles": {
+                        "top_actors": [
+                            {
+                                "source": Sources.TMDB.value,
+                                "person_id": "range-actor-1",
+                                "name": "Range Actor",
+                                "image": "http://example.com/range-actor.jpg",
+                                "unique_movies": 1,
+                                "unique_shows": 0,
+                                "plays": 1,
+                                "watched_time": "2h 0min",
+                                "unique_titles": 1,
+                            },
+                        ],
+                        "top_actresses": [],
+                        "top_directors": [],
+                        "top_writers": [],
+                        "top_studios": [],
+                    },
+                },
+            },
+        ) as mock_get_top_talent_data:
+            response = self.client.post(
+                reverse("update_top_talent_sort"),
+                {
+                    "sort_by": "titles",
+                    "range_name": "Custom Range",
+                    "start_date": "2026-01-01",
+                    "end_date": "2026-01-31",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertFalse(payload["requires_reload"])
+        self.assertIn("Range Actor", payload["grid_html"])
+        call_args = mock_get_top_talent_data.call_args
+        self.assertEqual(call_args.kwargs["range_name"], "Custom Range")
+        self.assertEqual(call_args.args[0], self.user)
+        self.assertEqual(call_args.args[1].date().isoformat(), "2026-01-01")
+        self.assertEqual(call_args.args[2].date().isoformat(), "2026-01-31")
+        self.assertEqual(call_args.args[1].time().isoformat(), "00:00:00")
+        self.assertEqual(call_args.args[2].time().isoformat(), "23:59:59.999999")
+        mock_invalidate.assert_not_called()
+        mock_refresh.assert_not_called()
+        mock_schedule_all_ranges_refresh.assert_not_called()
+
     @patch("app.views.statistics_cache.refresh_statistics_cache")
     @patch("app.views.statistics_cache.invalidate_statistics_cache")
     @patch("app.views.statistics_cache.range_needs_top_talent_upgrade")
@@ -1611,6 +1927,162 @@ class StatisticsViewTests(TestCase):
         mock_range_needs_upgrade.assert_called_once_with(self.user.id, "All Time")
         mock_invalidate.assert_called_once_with(self.user.id, "All Time")
         mock_refresh.assert_called_once_with(self.user.id, "All Time")
+
+    def test_statistics_view_cached_render_avoids_n_plus_one_item_queries(self):
+        """Warmed statistics cache should not fetch Item rows one-by-one during render."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        movie_item = Item.objects.create(
+            media_id="cached-movie-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Cached Movie",
+            image="http://example.com/cached-movie.jpg",
+            runtime_minutes=120,
+        )
+        book_item = Item.objects.create(
+            media_id="cached-book-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Cached Book",
+            image="http://example.com/cached-book.jpg",
+        )
+        game_item = Item.objects.create(
+            media_id="cached-game-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.GAME.value,
+            title="Cached Game",
+            image="http://example.com/cached-game.jpg",
+            platforms=["PlayStation 5"],
+        )
+
+        Movie.objects.create(
+            user=self.user,
+            item=movie_item,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=9,
+            start_date=now,
+            end_date=now,
+        )
+        Book.objects.create(
+            user=self.user,
+            item=book_item,
+            status=Status.IN_PROGRESS.value,
+            progress=120,
+            start_date=now,
+            end_date=now,
+        )
+        Game.objects.create(
+            user=self.user,
+            item=game_item,
+            status=Status.IN_PROGRESS.value,
+            progress=40,
+            start_date=now,
+            end_date=now,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+
+        with CaptureQueriesContext(connection) as captured_queries:
+            response = self.client.get(
+                reverse("statistics") + "?start-date=all&end-date=all&compare=none",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        item_relation_queries = [
+            query["sql"]
+            for query in captured_queries.captured_queries
+            if 'FROM "app_item"' in query["sql"]
+            and 'WHERE "app_item"."id" =' in query["sql"]
+        ]
+        self.assertEqual(item_relation_queries, [])
+
+    def test_statistics_view_lazyloads_media_list_images(self):
+        """Statistics list cards should lazyload their thumbnails instead of eager-loading them."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        played_at = timezone.make_aware(
+            datetime.combine(timezone.localdate(), datetime.min.time()),
+            timezone.get_current_timezone(),
+        )
+
+        movie_item = Item.objects.create(
+            media_id="lazy-movie-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Lazy Movie",
+            image="http://example.com/lazy-movie.jpg",
+            runtime_minutes=110,
+        )
+        game_item = Item.objects.create(
+            media_id="lazy-game-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.GAME.value,
+            title="Lazy Game",
+            image="http://example.com/lazy-game.jpg",
+            platforms=["PC"],
+        )
+        artist = Artist.objects.create(
+            name="Lazy Artist",
+            image="http://example.com/lazy-artist.jpg",
+        )
+        album = Album.objects.create(
+            title="Lazy Album",
+            artist=artist,
+            image="http://example.com/lazy-album.jpg",
+        )
+        track_item = Item.objects.create(
+            media_id="lazy-track-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Lazy Track",
+            image="http://example.com/lazy-album.jpg",
+            runtime_minutes=4,
+        )
+
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=played_at,
+            end_date=played_at,
+            score=8,
+        )
+        Game.objects.create(
+            item=game_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=50,
+            start_date=played_at,
+            end_date=played_at,
+        )
+        Music.objects.create(
+            item=track_item,
+            user=self.user,
+            artist=artist,
+            album=album,
+            status=Status.COMPLETED.value,
+            start_date=played_at,
+            end_date=played_at,
+        )
+
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        response_body = response.content.decode()
+        self.assertRegex(response_body, r'<img[^>]+data-src="http://example\.com/lazy-movie\.jpg"')
+        self.assertRegex(response_body, r'<img[^>]+data-src="http://example\.com/lazy-game\.jpg"')
+        self.assertRegex(response_body, r'<img[^>]+data-src="http://example\.com/lazy-artist\.jpg"')
+        self.assertRegex(response_body, r'<img[^>]+data-src="http://example\.com/lazy-album\.jpg"')
+        self.assertNotRegex(response_body, r'<img[^>]+\ssrc="http://example\.com/lazy-movie\.jpg"')
+        self.assertNotRegex(response_body, r'<img[^>]+\ssrc="http://example\.com/lazy-game\.jpg"')
+        self.assertNotRegex(response_body, r'<img[^>]+\ssrc="http://example\.com/lazy-artist\.jpg"')
+        self.assertNotRegex(response_body, r'<img[^>]+\ssrc="http://example\.com/lazy-album\.jpg"')
 
     @patch("app.tasks.enqueue_credits_backfill_items")
     def test_statistics_top_talent_uses_episode_credits_with_show_fallback(self, mock_enqueue):

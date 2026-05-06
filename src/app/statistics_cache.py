@@ -635,18 +635,102 @@ def _history_entry_card_payload(entry):
     if not item:
         return None
     played_at = entry.get("played_at_local")
+    if isinstance(played_at, str):
+        try:
+            played_at = datetime.fromisoformat(played_at)
+            if timezone.is_naive(played_at):
+                played_at = timezone.make_aware(
+                    played_at,
+                    timezone.get_current_timezone(),
+                )
+        except ValueError:
+            played_at = None
     fallback_image = entry.get("poster") or getattr(item, "image", "")
+    title = entry.get("display_title") or entry.get("title")
+    if not title and isinstance(item, dict):
+        title = (
+            item.get("localized_title")
+            or item.get("title")
+            or item.get("original_title")
+        )
+    elif not title:
+        title = (
+            getattr(item, "localized_title", None)
+            or getattr(item, "title", None)
+            or getattr(item, "original_title", None)
+        )
+    if not title:
+        show = entry.get("show")
+        if isinstance(show, dict):
+            title = show.get("title")
+        else:
+            title = getattr(show, "title", None)
+    if not title:
+        album = entry.get("album")
+        if isinstance(album, dict):
+            title = album.get("title")
+        else:
+            title = getattr(album, "title", None)
+    if not title:
+        media_type = entry.get("media_type") or getattr(item, "media_type", None)
+        title = {
+            MediaTypes.MOVIE.value: "Movie",
+            MediaTypes.TV.value: "TV Show",
+            MediaTypes.EPISODE.value: "Episode",
+            MediaTypes.GAME.value: "Game",
+            MediaTypes.BOARDGAME.value: "Board Game",
+            MediaTypes.MUSIC.value: "Music",
+            MediaTypes.PODCAST.value: "Podcast",
+            MediaTypes.BOOK.value: "Book",
+            MediaTypes.COMIC.value: "Comic",
+            MediaTypes.MANGA.value: "Manga",
+            MediaTypes.ANIME.value: "Anime",
+        }.get(media_type, "Item")
     return {
         "entry": entry,
         "item": item,
         "media_type": entry.get("media_type") or getattr(item, "media_type", None),
-        "title": entry.get("display_title") or entry.get("title") or getattr(item, "title", ""),
-        "image": _get_horizontal_history_image(item, fallback_image),
+        "title": title,
+        "image": _get_horizontal_history_image(item, fallback_image, allow_network=False),
         "played_at": played_at,
     }
 
 
-def _get_horizontal_history_image(item, fallback_image):
+def _cached_horizontal_backdrop(item) -> str | None:
+    """Return a cached horizontal backdrop without triggering provider lookups."""
+    if not item:
+        return None
+
+    if isinstance(item, dict):
+        source = item.get("source")
+        media_type = item.get("media_type")
+        media_id = item.get("media_id")
+    else:
+        source = getattr(item, "source", None)
+        media_type = getattr(item, "media_type", None)
+        media_id = getattr(item, "media_id", None)
+
+    if not source or not media_type or not media_id:
+        return None
+
+    if source == Sources.TMDB.value:
+        backdrop_media_type = media_type
+        if media_type in (MediaTypes.EPISODE.value, MediaTypes.SEASON.value):
+            backdrop_media_type = MediaTypes.TV.value
+        if backdrop_media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+            cached_backdrop = cache.get(f"tmdb_backdrop_{backdrop_media_type}_{media_id}")
+            if cached_backdrop and cached_backdrop != settings.IMG_NONE:
+                return cached_backdrop
+
+    if source == Sources.IGDB.value and media_type == MediaTypes.GAME.value:
+        cached_backdrop = cache.get(f"igdb_backdrop_{media_id}")
+        if cached_backdrop and cached_backdrop != settings.IMG_NONE:
+            return cached_backdrop
+
+    return None
+
+
+def _get_horizontal_history_image(item, fallback_image, *, allow_network=True):
     """Prefer horizontal artwork when available, matching list hub behavior."""
     if not item:
         return fallback_image or settings.IMG_NONE
@@ -664,6 +748,13 @@ def _get_horizontal_history_image(item, fallback_image):
         media_id = getattr(item, "media_id", None)
 
     if not source or not media_type or not media_id:
+        return image or settings.IMG_NONE
+
+    cached_backdrop = _cached_horizontal_backdrop(item)
+    if cached_backdrop:
+        return cached_backdrop
+
+    if not allow_network:
         return image or settings.IMG_NONE
 
     try:
@@ -710,7 +801,11 @@ def _normalize_history_highlight_images(history_highlights):
         if not isinstance(entry, dict):
             continue
         fallback = entry.get("image") or entry.get("poster")
-        entry["image"] = _get_horizontal_history_image(entry.get("item"), fallback)
+        entry["image"] = _get_horizontal_history_image(
+            entry.get("item"),
+            fallback,
+            allow_network=False,
+        )
 
 
 def _select_history_entry_for_day(day_payload, pick_earliest=False, pick_latest=False):
@@ -730,7 +825,7 @@ def _select_history_entry_for_day(day_payload, pick_earliest=False, pick_latest=
 
 def _get_today_history_entries(user):
     today = timezone.localdate()
-    day_keys = history_cache.build_history_index(user)
+    day_keys = _get_history_index_days(user)
     matching_dates = []
     for day_key in day_keys:
         try:
@@ -750,7 +845,7 @@ def _get_today_history_entries(user):
     if not selected_date:
         return None, None
 
-    day_payload = history_cache.build_history_day(user, selected_date)
+    day_payload = _get_history_day_payload(user, selected_date)
     return _select_history_entry_for_day(day_payload), selected_year
 
 
@@ -796,7 +891,7 @@ def _get_today_release_entry(user):
                 "item": item,
                 "media_type": item.media_type,
                 "title": item.title,
-                "image": _get_horizontal_history_image(item, item.image),
+                "image": _get_horizontal_history_image(item, item.image, allow_network=False),
                 "release_date": release_date,
             })
 
@@ -835,7 +930,11 @@ def _get_today_release_entry(user):
             "item": episode_item,
             "media_type": MediaTypes.EPISODE.value,
             "title": display_title or episode_item.title,
-            "image": _get_horizontal_history_image(episode_item, episode_poster),
+            "image": _get_horizontal_history_image(
+                episode_item,
+                episode_poster,
+                allow_network=False,
+            ),
             "release_date": release_date,
         })
 
@@ -871,7 +970,11 @@ def _get_today_release_entry(user):
                 "item": item,
                 "media_type": MediaTypes.PODCAST.value,
                 "title": title,
-                "image": _get_horizontal_history_image(item, image),
+                "image": _get_horizontal_history_image(
+                    item,
+                    image,
+                    allow_network=False,
+                ),
                 "release_date": release_date,
             })
 
@@ -907,7 +1010,11 @@ def _get_today_release_entry(user):
                 "item": item,
                 "media_type": MediaTypes.PODCAST.value,
                 "title": title,
-                "image": _get_horizontal_history_image(item, image),
+                "image": _get_horizontal_history_image(
+                    item,
+                    image,
+                    allow_network=False,
+                ),
                 "release_date": release_date,
             })
 
@@ -2339,17 +2446,158 @@ def _build_activity_data(date_counts, day_minutes_by_type, day_list, start_date,
 
 def _fetch_media_objects(media_refs):
     media_objects = {}
-    by_type = defaultdict(list)
+    by_type = defaultdict(set)
     for media_type, media_id in media_refs:
         if media_type and media_id:
-            by_type[media_type].append(media_id)
+            by_type[media_type].add(media_id)
 
     for media_type, media_ids in by_type.items():
         model = apps.get_model("app", media_type)
-        for media in model.objects.filter(id__in=media_ids):
+        queryset = model.objects.filter(id__in=media_ids)
+        if media_type == MediaTypes.SEASON.value:
+            queryset = queryset.select_related("item", "related_tv__item")
+        elif media_type == MediaTypes.EPISODE.value:
+            queryset = queryset.select_related(
+                "item",
+                "related_season__item",
+                "related_season__related_tv__item",
+            )
+        else:
+            queryset = queryset.select_related("item")
+        for media in queryset:
             media_objects[(media_type, media.id)] = media
 
     return media_objects
+
+
+def _get_history_index_days(user):
+    logging_style = history_cache._normalize_logging_style(None, user)
+    cache_entry = cache.get(history_cache._cache_key(user.id, logging_style))
+    if isinstance(cache_entry, dict):
+        days = cache_entry.get("days")
+        if isinstance(days, list):
+            return days
+
+    day_keys = history_cache.build_history_index(user, logging_style_override=logging_style)
+    history_cache.cache_history_index(user.id, logging_style, day_keys)
+    return day_keys
+
+
+def _get_history_day_payload(user, day_value):
+    logging_style = history_cache._normalize_logging_style(None, user)
+    day_key = history_cache._day_key_from_value(day_value)
+    if not day_key:
+        return None
+
+    cache_key = history_cache._day_cache_key(user.id, logging_style, day_key)
+    cached_payload = cache.get(cache_key)
+    if cached_payload:
+        return history_cache._deserialize_history_day(cached_payload)
+
+    return history_cache.build_history_day(
+        user,
+        day_key,
+        logging_style_override=logging_style,
+    )
+
+
+def _get_range_history_boundary_days(user, start_date, end_date):
+    start_day = _normalize_day_value(start_date)
+    end_day = _normalize_day_value(end_date)
+    index_day_keys = _get_history_index_days(user)
+    if not index_day_keys:
+        return None, None
+
+    matching_days = []
+    for day_key in index_day_keys:
+        day_value = _normalize_day_value(day_key)
+        if not day_value:
+            continue
+        if start_day and day_value < start_day:
+            continue
+        if end_day and day_value > end_day:
+            continue
+        matching_days.append(day_value)
+
+    if not matching_days:
+        return None, None
+    return matching_days[-1], matching_days[0]
+
+
+def _aggregate_minutes_per_media_type_from_days(user, day_list, *, build_missing=False):
+    minutes_by_type = defaultdict(float)
+    if not day_list:
+        return {}
+
+    chunk_size = 50
+    for offset in range(0, len(day_list), chunk_size):
+        chunk = day_list[offset : offset + chunk_size]
+        key_map = {day: _day_cache_key(user.id, day) for day in chunk}
+        cached = cache.get_many(key_map.values())
+        for day in chunk:
+            cache_key = key_map[day]
+            day_stats = cached.get(cache_key)
+            if not day_stats and build_missing:
+                day_stats = build_stats_for_day(user.id, day)
+            if not day_stats:
+                continue
+
+            for media_type, minutes in day_stats.get("totals", {}).get("minutes_by_type", {}).items():
+                minutes_by_type[media_type] += minutes or 0
+
+    return dict(minutes_by_type)
+
+
+def _empty_top_talent_payload(sort_by="plays"):
+    empty_bucket = {
+        "top_actors": [],
+        "top_actresses": [],
+        "top_directors": [],
+        "top_writers": [],
+        "top_studios": [],
+    }
+    by_sort = {
+        "plays": dict(empty_bucket),
+        "time": dict(empty_bucket),
+        "titles": dict(empty_bucket),
+    }
+    return {
+        "sort_by": sort_by,
+        "by_sort": by_sort,
+        **by_sort.get(sort_by, dict(empty_bucket)),
+    }
+
+
+def _empty_reading_consumption(unit_name="Unit", completion_label="Items Finished"):
+    return {
+        "units": {"total": 0, "per_year": 0, "per_month": 0, "per_day": 0},
+        "completions": {"total": 0, "per_year": 0, "per_month": 0, "per_day": 0},
+        "charts": {
+            "by_year": {"labels": [], "datasets": []},
+            "by_month": {"labels": [], "datasets": []},
+            "by_weekday": {"labels": [], "datasets": []},
+            "by_time_of_day": {"labels": [], "datasets": []},
+        },
+        "completion_charts": {
+            "by_year": {"labels": [], "datasets": []},
+            "by_month": {"labels": [], "datasets": []},
+        },
+        "completed_length_chart": {"labels": [], "datasets": []},
+        "release_chart": {"labels": [], "datasets": []},
+        "has_data": False,
+        "unit_name": unit_name,
+        "unit_label": f"{unit_name}s Read",
+        "completion_label": completion_label,
+        "top_items": [],
+        "top_authors": [],
+        "top_genres": [],
+        "highlights": {
+            "longest_item": None,
+            "shortest_item": None,
+            "average_length": 0,
+            "average_rating": None,
+        },
+    }
 
 
 def _is_director_credit(credit) -> bool:
@@ -3819,8 +4067,20 @@ def _aggregate_statistics_from_days(
         color = config.get_stats_color(media_type)
         units_by_day = day_minutes_by_type.get(media_type, {})
         unit_total = sum(units_by_day.values()) if units_by_day else 0
-
         completion_total = int(round((minutes_by_type.get(media_type, 0) or 0) / 60))
+        item_ids = [
+            meta.get("item_id")
+            for meta in items_by_type.get(media_type, {}).values()
+            if meta.get("item_id")
+        ]
+        top_entries = list(top_played_by_type.get(media_type, {}).values())
+        has_any_reading_data = bool(unit_total or completion_total or item_ids or top_entries)
+        if not has_any_reading_data:
+            return _empty_reading_consumption(
+                unit_name=unit_name,
+                completion_label=completion_label,
+            )
+
         completion_by_day = {}
         for day_str, day_minutes in units_by_day.items():
             if day_minutes and day_minutes > 0:
@@ -3840,7 +4100,6 @@ def _aggregate_statistics_from_days(
         )
 
         release_datetimes = []
-        item_ids = [meta.get("item_id") for meta in items_by_type.get(media_type, {}).values() if meta.get("item_id")]
         items_with_authors = stats._fetch_reading_items_with_authors(item_ids)
         if items_with_authors:
             release_datetimes = [
@@ -3861,7 +4120,6 @@ def _aggregate_statistics_from_days(
         release_chart = stats._build_release_year_chart(release_datetimes, color, release_label)
         completed_length_chart = stats._build_completed_length_distribution_chart(completed_lengths, unit_name, color)
 
-        top_entries = list(top_played_by_type.get(media_type, {}).values())
         baseline_dt = datetime(1970, 1, 1, tzinfo=timezone.get_current_timezone())
         top_entries.sort(
             key=lambda entry: (entry.get("minutes", 0), entry.get("activity_dt") or baseline_dt),
@@ -3960,15 +4218,46 @@ def _aggregate_statistics_from_days(
             },
         }
 
-    book_consumption = _build_cached_reading_consumption(MediaTypes.BOOK.value)
-    comic_consumption = _build_cached_reading_consumption(MediaTypes.COMIC.value)
-    manga_consumption = _build_cached_reading_consumption(MediaTypes.MANGA.value)
+    reading_media_types = {
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.MANGA.value,
+    }
+    reading_types_with_data = {
+        media_type
+        for media_type in reading_media_types
+        if media_type in active_types and (
+            minutes_by_type.get(media_type)
+            or items_by_type.get(media_type)
+            or top_played_by_type.get(media_type)
+        )
+    }
+    book_consumption = (
+        _build_cached_reading_consumption(MediaTypes.BOOK.value)
+        if MediaTypes.BOOK.value in reading_types_with_data
+        else _empty_reading_consumption("Page", "Books Finished")
+    )
+    comic_consumption = (
+        _build_cached_reading_consumption(MediaTypes.COMIC.value)
+        if MediaTypes.COMIC.value in reading_types_with_data
+        else _empty_reading_consumption("Page", "Comics Finished")
+    )
+    manga_consumption = (
+        _build_cached_reading_consumption(MediaTypes.MANGA.value)
+        if MediaTypes.MANGA.value in reading_types_with_data
+        else _empty_reading_consumption("Page", "Manga Finished")
+    )
 
     first_play = None
     last_play = None
-    if day_list:
-        first_day_payload = history_cache.build_history_day(user, day_list[0])
-        last_day_payload = history_cache.build_history_day(user, day_list[-1])
+    first_highlight_day, last_highlight_day = _get_range_history_boundary_days(
+        user,
+        start_date,
+        end_date,
+    )
+    if first_highlight_day and last_highlight_day:
+        first_day_payload = _get_history_day_payload(user, first_highlight_day)
+        last_day_payload = _get_history_day_payload(user, last_highlight_day)
         first_play = _select_history_entry_for_day(first_day_payload, pick_earliest=True)
         last_play = _select_history_entry_for_day(last_day_payload, pick_latest=True)
 
@@ -3985,11 +4274,21 @@ def _aggregate_statistics_from_days(
         "today_month": today.month,
         "today_day": today.day,
     }
-    top_talent = _aggregate_top_talent(
-        user,
-        start_date,
-        end_date,
-        schedule_missing_backfill=credit_backfill_hints <= 0,
+    has_movie_tv_activity = bool(
+        plays_by_type.get(MediaTypes.MOVIE.value, 0)
+        or plays_by_type.get(MediaTypes.TV.value, 0)
+    )
+    top_talent = (
+        _aggregate_top_talent(
+            user,
+            start_date,
+            end_date,
+            schedule_missing_backfill=credit_backfill_hints <= 0,
+        )
+        if has_movie_tv_activity
+        else _empty_top_talent_payload(
+            sort_by=getattr(user, "top_talent_sort_by", "plays"),
+        )
     )
 
     return {
@@ -4059,6 +4358,106 @@ def range_needs_top_talent_upgrade(user_id: int, range_name: str) -> bool:
     return False
 
 
+def get_top_talent_data(user, start_date, end_date, range_name=None):
+    """Return top_talent payload without rebuilding the full statistics page payload."""
+    if range_name in PREDEFINED_RANGES:
+        cache_entry = cache.get(_cache_key(user.id, range_name))
+        if isinstance(cache_entry, dict):
+            data = cache_entry.get("data") or {}
+            top_talent = data.get("top_talent")
+            if isinstance(top_talent, dict) and isinstance(top_talent.get("by_sort"), dict):
+                return top_talent
+
+    return _aggregate_top_talent(user, start_date, end_date)
+
+
+def get_statistics_minutes_by_type(user, start_date, end_date, range_name=None):
+    """Return only minute totals for a statistics range.
+
+    This avoids rebuilding the full statistics payload for lightweight comparison cards.
+    """
+    if range_name in PREDEFINED_RANGES:
+        cache_entry = cache.get(_cache_key(user.id, range_name))
+        if isinstance(cache_entry, dict):
+            data = cache_entry.get("data") or {}
+            minutes_per_type = data.get("minutes_per_media_type")
+            if isinstance(minutes_per_type, dict):
+                return minutes_per_type
+
+    day_list = _resolve_day_list(user, start_date, end_date)
+    if not day_list:
+        return {}
+    return _aggregate_minutes_per_media_type_from_days(
+        user,
+        day_list,
+        build_missing=True,
+    )
+
+
+def _range_day_bounds(start_date, end_date):
+    start_day = _normalize_day_value(start_date)
+    end_day = _normalize_day_value(end_date)
+    if start_day and end_day and start_day > end_day:
+        start_day, end_day = end_day, start_day
+    return start_day, end_day
+
+
+def _range_cache_covers_days(range_name: str, start_day, end_day) -> bool:
+    if not start_day or not end_day:
+        return False
+    if range_name == "All Time":
+        return True
+
+    cached_start, cached_end = _get_predefined_range_dates(range_name)
+    cached_start_day, cached_end_day = _range_day_bounds(cached_start, cached_end)
+    if not cached_start_day or not cached_end_day:
+        return False
+    return cached_start_day <= start_day and cached_end_day >= end_day
+
+
+def _has_covering_range_cache(user_id: int, range_name: str, start_date, end_date, history_version: str) -> bool:
+    start_day, end_day = _range_day_bounds(start_date, end_date)
+    if not start_day or not end_day:
+        return False
+
+    for candidate_range in PREDEFINED_RANGES:
+        if candidate_range == range_name:
+            continue
+        cache_entry = cache.get(_cache_key(user_id, candidate_range))
+        if not isinstance(cache_entry, dict):
+            continue
+        if cache_entry.get("history_version") != history_version:
+            continue
+        if _range_cache_covers_days(candidate_range, start_day, end_day):
+            return True
+    return False
+
+
+def _build_predefined_range_from_day_caches(user, start_date, end_date, range_name: str, history_version: str):
+    day_list = _resolve_day_list(user, start_date, end_date)
+    if not day_list:
+        data = _get_empty_statistics_data()
+        cache_statistics_data(user.id, range_name, data, history_version=history_version)
+        return data
+
+    data = _aggregate_statistics_from_days(
+        user,
+        day_list,
+        start_date,
+        end_date,
+        build_missing=False,
+    )
+    _normalize_hours_per_media_type(data.get("hours_per_media_type"))
+    _normalize_history_highlight_images(data.get("history_highlights"))
+    cache_statistics_data(user.id, range_name, data, history_version=history_version)
+    logger.debug(
+        "Derived statistics cache for user %s, range %s from warmed day caches",
+        user.id,
+        range_name,
+    )
+    return data
+
+
 def get_statistics_data(user, start_date, end_date, range_name=None):
     """Return cached statistics, rebuilding if needed.
     
@@ -4126,7 +4525,11 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
         return data
 
     # Cache miss - check if refresh is in progress
-    refresh_lock = cache.get(_refresh_lock_key(user.id, range_name))
+    refresh_lock_key = _refresh_lock_key(user.id, range_name)
+    refresh_lock = cache.get(refresh_lock_key)
+    if refresh_lock and _lock_is_stale(refresh_lock):
+        cache.delete(refresh_lock_key)
+        refresh_lock = None
     if refresh_lock is not None:
         if eager_mode:
             data = refresh_statistics_cache(user.id, range_name)
@@ -4139,6 +4542,22 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
         # Don't build full statistics here - that's expensive and causes delays
         logger.debug("Statistics cache miss but refresh in progress for user %s, range %s, returning empty structure", user.id, range_name)
         return _get_empty_statistics_data()
+
+    current_version = _get_history_version(user.id)
+    if _has_covering_range_cache(
+        user.id,
+        range_name,
+        start_date,
+        end_date,
+        current_version,
+    ):
+        return _build_predefined_range_from_day_caches(
+            user,
+            start_date,
+            end_date,
+            range_name,
+            current_version,
+        )
 
     # No cache and no refresh in progress.
     # In eager mode (tests), build inline. Otherwise schedule and return empty.

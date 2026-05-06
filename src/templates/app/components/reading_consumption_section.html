@@ -124,7 +124,10 @@
             <a href="{{ item.media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
               <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
               {% if item.media.item.image and item.media.item.image != IMG_NONE %}
-              <img src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="w-10 h-10 rounded object-cover">
+              <img src="{{ IMG_NONE }}"
+                   data-src="{{ item.media.item.image }}"
+                   alt="{{ item.media.item.title }}"
+                   class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
               {% else %}
               <div class="w-10 h-10 rounded bg-[#2a2f35]"></div>
               {% endif %}
@@ -155,7 +158,10 @@
               {% endif %}
                 <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                 {% if author.image %}
-                <img src="{{ author.image }}" alt="{{ author.name }}" class="w-10 h-10 rounded-full object-cover">
+                <img src="{{ IMG_NONE }}"
+                     data-src="{{ author.image }}"
+                     alt="{{ author.name }}"
+                     class="lazyload w-10 h-10 rounded-full object-cover bg-[#2a2f35]">
                 {% else %}
                 <div class="w-10 h-10 rounded-full bg-[#2a2f35] flex items-center justify-center">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -223,7 +229,10 @@
             <a href="{{ media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
               <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
               {% if media.item.image and media.item.image != IMG_NONE %}
-              <img src="{{ media.item.image }}" alt="{{ media.item.title }}" class="w-10 h-10 rounded object-cover">
+              <img src="{{ IMG_NONE }}"
+                   data-src="{{ media.item.image }}"
+                   alt="{{ media.item.title }}"
+                   class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
               {% else %}
               <div class="w-10 h-10 rounded bg-[#2a2f35]"></div>
               {% endif %}

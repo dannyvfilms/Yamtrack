@@ -26,6 +26,7 @@ from django.db.models.functions import ExtractDay, ExtractMonth, TruncDate
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.templatetags.static import static
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -13504,6 +13505,24 @@ def _resolve_statistics_comparison_range(start_date, end_date, compare_mode):
     )
 
 
+def _resolve_statistics_range_inputs(range_name, start_date_str, end_date_str):
+    """Resolve statistics UI date inputs into aware datetimes."""
+    if range_name in statistics_cache.PREDEFINED_RANGES:
+        return statistics_cache._get_predefined_range_dates(range_name)
+
+    if start_date_str == "all" and end_date_str == "all":
+        return None, None
+
+    start_date = None
+    end_date = None
+    if start_date_str and start_date_str != "all":
+        start_date = _statistics_day_boundary(parse_date(start_date_str))
+    if end_date_str and end_date_str != "all":
+        end_date = _statistics_day_boundary(parse_date(end_date_str), end_of_day=True)
+
+    return start_date, end_date
+
+
 def _parse_statistics_total_display_to_minutes(value):
     if isinstance(value, (int, float)):
         return float(value)
@@ -13726,9 +13745,9 @@ def statistics(request):
             comparison_start_date,
             comparison_end_date,
         )
-        comparison_statistics_data = {}
+        comparison_minutes_by_type = {}
         if comparison_start_date and comparison_end_date:
-            comparison_statistics_data = statistics_cache.get_statistics_data(
+            comparison_minutes_by_type = statistics_cache.get_statistics_minutes_by_type(
                 request.user,
                 comparison_start_date,
                 comparison_end_date,
@@ -13759,7 +13778,7 @@ def statistics(request):
         )
         hours_per_media_type_comparison = _build_hours_per_media_type_comparison(
             _get_statistics_minutes_by_type(statistics_data),
-            _get_statistics_minutes_by_type(comparison_statistics_data),
+            comparison_minutes_by_type,
             selected_compare_mode,
             comparison_card_suffix,
             current_tooltip_label,
@@ -13964,6 +13983,8 @@ def update_top_talent_sort(request):
     """Autosave top talent sort preference from statistics page controls."""
     sort_by = request.POST.get("sort_by")
     range_name = request.POST.get("range_name")
+    start_date_str = request.POST.get("start_date")
+    end_date_str = request.POST.get("end_date")
 
     valid_sort_values = list(TopTalentSortChoices.values)
     if sort_by not in valid_sort_values:
@@ -13979,6 +14000,7 @@ def update_top_talent_sort(request):
     updated_sort = request.user.update_preference("top_talent_sort_by", sort_by)
     changed = previous_sort != updated_sort
     requires_reload = False
+    grid_html = ""
 
     if range_name in statistics_cache.PREDEFINED_RANGES:
         try:
@@ -13994,12 +14016,40 @@ def update_top_talent_sort(request):
                 exc,
             )
 
+    if not requires_reload:
+        start_date, end_date = _resolve_statistics_range_inputs(
+            range_name,
+            start_date_str,
+            end_date_str,
+        )
+        top_talent = statistics_cache.get_top_talent_data(
+            request.user,
+            start_date,
+            end_date,
+            range_name=range_name,
+        )
+        selected_talent = top_talent
+        by_sort = top_talent.get("by_sort") if isinstance(top_talent, dict) else None
+        if isinstance(by_sort, dict):
+            selected_talent = by_sort.get(updated_sort) or {}
+
+        grid_html = render_to_string(
+            "app/components/top_talent_grid.html",
+            {
+                "talent": selected_talent,
+                "talent_sort": updated_sort,
+                "IMG_NONE": settings.IMG_NONE,
+            },
+            request=request,
+        )
+
     return JsonResponse(
         {
             "success": True,
             "sort_by": updated_sort,
             "changed": changed,
             "requires_reload": requires_reload,
+            "grid_html": grid_html,
         },
     )
 
