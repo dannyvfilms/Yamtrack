@@ -136,7 +136,7 @@ class HomeViewTests(TestCase):
         self.assertContains(response, 'data-home-row-sort-toggle="true"', html=False)
         self.assertContains(response, 'aria-label="Toggle sort direction for In Progress"', html=False)
         self.assertNotContains(response, "Sorted by Title • Ascending", html=False)
-        self.assertContains(response, 'class="w-44 shrink-0"', html=False)
+        self.assertContains(response, 'class="home-row-card w-44 shrink-0"', html=False)
         self.assertContains(response, 'data-home-row="true"', html=False)
         self.assertNotContains(response, '<h2 class="text-2xl font-semibold">', html=False)
         self.assertNotContains(response, "Load All")
@@ -583,7 +583,7 @@ class HomeViewTests(TestCase):
         self.assertEqual(season_row["total"], 15)
         self.assertEqual(len(response.context["media_list"]["items"]), 1)
         self.assertEqual(response.context["media_list"]["total"], 15)
-        self.assertContains(response, 'class="w-44 shrink-0"', html=False)
+        self.assertContains(response, 'class="home-row-card w-44 shrink-0"', html=False)
 
     def test_active_playback_fragment_empty(self):
         """Fragment endpoint returns empty body when nothing is playing."""
