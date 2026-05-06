@@ -132,7 +132,7 @@
                           {{ tv_season.season_number }}
                         </div>
                         <div class="flex-1 text-left">
-                          <div class="text-sm font-medium">{{ tv_season.season_header_title|default:tv_season.title }}</div>
+                          <div class="text-sm font-medium">{{ tv_season.season_title|default:tv_season.title }}</div>
                           <div class="text-xs text-gray-400">
                             {{ tv_season.max_progress }} Episode{{ tv_season.max_progress|pluralize }}
                             {% if tv_season.first_air_date %}• {{ tv_season.first_air_date|user_date_format:user }}{% endif %}

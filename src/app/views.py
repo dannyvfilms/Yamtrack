@@ -6445,7 +6445,10 @@ def _build_local_tv_with_seasons_metadata(
             )
             season_copy.setdefault("title", show_title)
             season_copy.setdefault("season_title", season_title)
-            season_copy.setdefault("season_header_title", season_title)
+            season_copy.setdefault(
+                "season_header_title",
+                season_copy.get("season_title") or season_title,
+            )
             season_copy.setdefault("media_id", media_id)
             season_copy.setdefault("media_type", MediaTypes.SEASON.value)
             season_copy.setdefault("source", source)
