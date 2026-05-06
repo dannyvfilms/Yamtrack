@@ -16,6 +16,49 @@
     .home-row-scrollbar-hidden::-webkit-scrollbar {
       display: none;
     }
+
+    @media (max-width: 639.98px) {
+      .home-row-heading {
+        flex-wrap: nowrap;
+        max-width: 100%;
+        min-width: 0;
+      }
+
+      .home-row-heading-title,
+      .home-row-heading-detail,
+      .home-row-heading-sort-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .home-row-heading-title,
+      .home-row-heading-detail-wrap,
+      .home-row-heading-sort-form,
+      .home-row-heading-sort-button,
+      .home-row-heading-sort-label {
+        min-width: 0;
+      }
+
+      .home-row-heading-detail-wrap,
+      .home-row-heading-sort-form {
+        flex-shrink: 1;
+      }
+
+      .home-row-heading-sort-form,
+      .home-row-heading-sort-button {
+        max-width: 100%;
+      }
+
+      .home-row-heading-sort-form {
+        display: inline-flex;
+      }
+
+      .home-row-heading-separator,
+      .home-row-heading-sort-icon {
+        flex-shrink: 0;
+      }
+    }
   </style>
 {% endblock extra_head %}
 
@@ -44,35 +87,35 @@
               <div class="mb-2 flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
                   {% if row.summary_inline %}
-                    <h3 class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <span class="text-lg font-semibold leading-none text-gray-100">{{ row.title_main }}</span>
+                    <h3 class="home-row-heading flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span class="home-row-heading-title text-lg font-semibold leading-none text-gray-100">{{ row.title_main }}</span>
                       {% if row.title_detail %}
-                        <span class="inline-flex items-center gap-x-2">
-                          <span class="text-lg font-semibold leading-none text-white"
+                        <span class="home-row-heading-detail-wrap inline-flex items-center gap-x-2">
+                          <span class="home-row-heading-separator text-lg font-semibold leading-none text-white"
                                 aria-hidden="true">•</span>
-                          <span class="text-lg font-semibold leading-none text-gray-100">{{ row.title_detail }}</span>
+                          <span class="home-row-heading-detail text-lg font-semibold leading-none text-gray-100">{{ row.title_detail }}</span>
                         </span>
                       {% endif %}
                       <form method="post"
                             action="{% url 'toggle_home_screen_row_direction' row.row_id %}"
-                            class="inline ml-3.5">
+                            class="home-row-heading-sort-form inline ml-3.5">
                         {% csrf_token %}
                         <button type="submit"
                                 data-home-row-sort-toggle="true"
                                 aria-label="Toggle sort direction for {{ row.title }}"
-                                class="inline-flex items-center text-sm font-medium leading-none text-gray-400 transition-colors hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-sm">
-                          <span>{{ row.summary_inline }}</span>
+                                class="home-row-heading-sort-button inline-flex items-center text-sm font-medium leading-none text-gray-400 transition-colors hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-sm">
+                          <span class="home-row-heading-sort-label">{{ row.summary_inline }}</span>
                           {% if row.direction == 'asc' %}
                             <svg xmlns="http://www.w3.org/2000/svg"
                                  viewBox="0 0 20 20"
-                                 class="w-4 h-4 ml-2"
+                                 class="home-row-heading-sort-icon w-4 h-4 ml-2"
                                  aria-hidden="true">
                               <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
                             </svg>
                           {% else %}
                             <svg xmlns="http://www.w3.org/2000/svg"
                                  viewBox="0 0 20 20"
-                                 class="w-4 h-4 ml-2"
+                                 class="home-row-heading-sort-icon w-4 h-4 ml-2"
                                  aria-hidden="true">
                               <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
                             </svg>
