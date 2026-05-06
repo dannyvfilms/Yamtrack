@@ -1,23 +1,26 @@
 from unittest.mock import patch
 
-from django.contrib.auth import get_user_model
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from app import live_playback
 from app.models import (
+    TV,
     Anime,
     Episode,
     Item,
     MediaTypes,
     Movie,
+    Podcast,
+    PodcastEpisode,
+    PodcastShow,
     ProviderMetadataStatus,
     Season,
     Sources,
     Status,
-    TV,
 )
 from users.models import HomeScreenRow, HomeSortChoices
 
@@ -137,6 +140,42 @@ class HomeViewTests(TestCase):
         self.assertContains(response, 'data-home-row="true"', html=False)
         self.assertNotContains(response, '<h2 class="text-2xl font-semibold">', html=False)
         self.assertNotContains(response, "Load All")
+
+    def test_home_podcast_cards_use_standard_card_width(self):
+        """Podcast Home rows should use the same card width as other media rows."""
+        podcast_show = PodcastShow.objects.create(
+            podcast_uuid="show-home-width",
+            title="Home Width Podcast",
+            image="http://example.com/podcast.jpg",
+        )
+        podcast_episode = PodcastEpisode.objects.create(
+            show=podcast_show,
+            episode_uuid="episode-home-width",
+            title="Podcast Episode",
+            duration=1800,
+        )
+        podcast_item = Item.objects.create(
+            media_id="episode-home-width",
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            title="Podcast Episode",
+            image="http://example.com/podcast.jpg",
+        )
+        Podcast.objects.create(
+            item=podcast_item,
+            user=self.user,
+            show=podcast_show,
+            episode=podcast_episode,
+            status=Status.IN_PROGRESS.value,
+            progress=300,
+        )
+
+        response = self.client.get(reverse("home"))
+
+        podcast_row = self._get_first_row(response, MediaTypes.PODCAST.value)
+        self.assertEqual(podcast_row["card_width_class"], "w-44")
+        self.assertContains(response, 'class="w-44 shrink-0"', html=False)
+        self.assertNotContains(response, 'class="w-52 shrink-0"', html=False)
 
     def test_home_view_hides_disabled_sidebar_media_types_even_when_rows_exist(self):
         """Stored rows for disabled libraries should not render on Home."""

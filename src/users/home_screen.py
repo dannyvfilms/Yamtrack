@@ -31,6 +31,9 @@ SQUARE_HOME_MEDIA_TYPES = {
     MediaTypes.MUSIC.value,
     MediaTypes.PODCAST.value,
 }
+WIDE_SQUARE_HOME_MEDIA_TYPES = {
+    MediaTypes.MUSIC.value,
+}
 AUTHOR_MEDIA_TYPES = {
     MediaTypes.BOOK.value,
     MediaTypes.MANGA.value,
@@ -1285,7 +1288,12 @@ def _build_recent_music_album_entries(media_items: list[object]) -> list[HomeRow
     return entries
 
 
-def _media_lookup_for_items(user, items: list[Item]) -> dict[int, object]:
+def _media_lookup_for_items(
+    user,
+    items: list[Item],
+    *,
+    status_filter: str = "all",
+) -> dict[int, object]:
     items_by_media_type: dict[str, list[Item]] = defaultdict(list)
     for item in items:
         items_by_media_type[item.media_type].append(item)
@@ -1317,6 +1325,9 @@ def _media_lookup_for_items(user, items: list[Item]) -> dict[int, object]:
             primary_entry = entries[0]
             if actual_media_type != MediaTypes.PODCAST.value and len(entries) > 1:
                 BasicMedia.objects._aggregate_item_data(primary_entry, entries)
+            latest_status = getattr(primary_entry, "aggregated_status", None) or getattr(primary_entry, "status", None)
+            if status_filter != "all" and latest_status != status_filter:
+                continue
             if actual_media_type == MediaTypes.PODCAST.value:
                 primary_entry.use_podcast_show = bool(getattr(primary_entry, "show", None))
             lookup[item_id] = primary_entry
@@ -1643,6 +1654,7 @@ def sort_home_entries(entries: list[HomeRowEntry], sort_by: str, direction: str)
 
 def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
     normalized_filters = _normalized_filter_payload(row.filters or {}, row.media_type)
+    status_filter = normalized_filters.get("status", "all")
     rule_payload = {
         "media_types": [row.media_type],
         **normalized_filters,
@@ -1655,7 +1667,11 @@ def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
         return []
 
     items = list(Item.objects.filter(id__in=item_ids))
-    media_lookup = _media_lookup_for_items(user, items)
+    media_lookup = _media_lookup_for_items(
+        user,
+        items,
+        status_filter=status_filter,
+    )
     entries = [
         HomeRowEntry(
             item=item,
@@ -1667,6 +1683,8 @@ def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
         for item in items
         if _item_matches_home_media_type(item, row.media_type)
     ]
+    if status_filter != "all":
+        entries = [entry for entry in entries if entry.media is not None]
     entries = _apply_progress_filter(entries, row.media_type, normalized_filters.get("progress", "all"))
     return sort_home_entries(entries, row.sort_by, row.direction)
 
@@ -1762,7 +1780,11 @@ def build_home_page_groups(
                     "total": len(entries),
                     "loaded_count": loaded_count,
                     "show_played_chip": row.row_type == HomeScreenRowTypeChoices.RECENTLY_UNRATED,
-                    "card_width_class": "w-52" if media_type in SQUARE_HOME_MEDIA_TYPES else "w-44",
+                    "card_width_class": (
+                        "w-52"
+                        if media_type in WIDE_SQUARE_HOME_MEDIA_TYPES
+                        else "w-44"
+                    ),
                     "grid_class": "media-grid media-grid-square"
                     if media_type in SQUARE_HOME_MEDIA_TYPES
                     else "media-grid",

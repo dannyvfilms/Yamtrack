@@ -1,12 +1,14 @@
 import json
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from app.models import MediaTypes, Status
+from app.models import Game, Item, MediaTypes, Sources, Status
 from lists.models import CustomList
 from users import home_screen
 from users.models import DirectionChoices, HomeScreenRow, HomeScreenRowTypeChoices, HomeSortChoices
@@ -55,6 +57,68 @@ class HomeScreenViewTests(TestCase):
         self.assertNotContains(response, "Add List / Smart List")
         self.assertNotContains(response, "Add Recently Played Row")
         self.assertNotContains(response, "Enabled")
+
+    def test_planning_library_row_excludes_duplicate_item_with_newer_in_progress_status(self):
+        self._set_enabled_media_types(MediaTypes.GAME.value)
+        stale_planning_item = Item.objects.create(
+            title="Multi-Session Game",
+            media_id="multi-session-game",
+            media_type=MediaTypes.GAME.value,
+            source=Sources.IGDB.value,
+            image="https://example.com/game.jpg",
+        )
+        visible_planning_item = Item.objects.create(
+            title="Planning Only Game",
+            media_id="planning-only-game",
+            media_type=MediaTypes.GAME.value,
+            source=Sources.IGDB.value,
+            image="https://example.com/planning-game.jpg",
+        )
+        planning_game = Game.objects.create(
+            item=stale_planning_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+        in_progress_game = Game.objects.create(
+            item=stale_planning_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=30,
+        )
+        visible_planning_game = Game.objects.create(
+            item=visible_planning_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+        now = timezone.now()
+        Game.objects.filter(id=planning_game.id).update(
+            created_at=now - timedelta(days=1),
+        )
+        Game.objects.filter(id=in_progress_game.id).update(created_at=now)
+        Game.objects.filter(id=visible_planning_game.id).update(created_at=now - timedelta(days=2))
+
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.GAME.value,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=MediaSortChoices.TITLE,
+            direction=DirectionChoices.ASC,
+            filters={"status": Status.PLANNING.value},
+        )
+
+        groups = home_screen.build_home_page_groups(self.user, items_limit=10)
+
+        row_items = groups[0]["rows"][0]["items"]
+        self.assertEqual(len(row_items), 1)
+        self.assertEqual(row_items[0].item.id, visible_planning_item.id)
+        self.assertEqual(row_items[0].media.id, visible_planning_game.id)
+        self.assertEqual(row_items[0].media.status, Status.PLANNING.value)
+        self.assertEqual(
+            getattr(row_items[0].media, "aggregated_status", row_items[0].media.status),
+            Status.PLANNING.value,
+        )
 
     def test_home_screen_get_seeds_default_rows_for_show_libraries(self):
         self._set_enabled_media_types(
