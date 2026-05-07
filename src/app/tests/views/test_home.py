@@ -362,6 +362,7 @@ class HomeViewTests(TestCase):
         self.assertEqual(card["title"], "Test TV Show")
         self.assertEqual(card["episode_code"], "S01E03")
         self.assertIn(" / ", card["progress_display"])
+        self.assertContains(response, "Now Playing")
         self.assertContains(response, "data-active-playback-card")
 
     def test_home_view_marks_season_show_poster_as_fallback(self):
@@ -618,6 +619,7 @@ class HomeViewTests(TestCase):
         )
         response = self.client.get(reverse("active_playback_fragment"))
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Now Playing")
         self.assertContains(response, "data-active-playback-card")
         self.assertContains(response, "Test TV Show")
         self.assertContains(response, "S01E02")
