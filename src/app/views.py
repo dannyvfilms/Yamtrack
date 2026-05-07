@@ -100,9 +100,19 @@ from app.models import (
     Sources,
     Status,
     Tag,
+    Studio,
     Track,
 )
-from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
+from app.providers import (
+    comicvine,
+    hardcover,
+    igdb,
+    mangaupdates,
+    manual,
+    openlibrary,
+    services,
+    tmdb,
+)
 from app.services import game_lengths as game_length_services
 from app.services import (
     anime_migration,
@@ -4981,6 +4991,13 @@ def media_details(
         except Item.DoesNotExist:
             pass
 
+    igdb_game_studios_missing = (
+        source == Sources.IGDB.value
+        and tracking_media_type == MediaTypes.GAME.value
+        and isinstance(media_metadata, dict)
+        and "studios_full" not in media_metadata
+    )
+
     if isinstance(media_metadata, dict):
         media_metadata.setdefault("cast", [])
         media_metadata.setdefault("crew", [])
@@ -5047,6 +5064,48 @@ def media_details(
                     ),
                     operation_name="TMDB detail credits sync",
                 )
+
+    should_refresh_igdb_game_studios = (
+        source == Sources.IGDB.value
+        and tracking_media_type == MediaTypes.GAME.value
+        and detail_item is not None
+        and igdb_game_studios_missing
+    )
+    if should_refresh_igdb_game_studios:
+        cache.delete(f"{source}_{tracking_media_type}_{media_id}")
+        media_metadata = services.get_media_metadata(media_type, media_id, source)
+        if isinstance(media_metadata, dict):
+            media_metadata.update(Item.title_fields_from_metadata(media_metadata))
+
+    if (
+        detail_item
+        and source == Sources.IGDB.value
+        and tracking_media_type == MediaTypes.GAME.value
+        and isinstance(media_metadata, dict)
+        and media_metadata.get("studios_full")
+    ):
+        existing_studio_ids = {
+            str(studio_credit.studio.source_studio_id)
+            for studio_credit in detail_item.studio_credits.select_related("studio")
+            if studio_credit.studio and studio_credit.studio.source_studio_id is not None
+        }
+        incoming_studio_ids = {
+            str(studio.get("studio_id") or studio.get("id"))
+            for studio in media_metadata.get("studios_full", [])
+            if isinstance(studio, dict) and (studio.get("studio_id") or studio.get("id"))
+        }
+        if existing_studio_ids != incoming_studio_ids:
+            _best_effort_detail_db_work(
+                lambda: credits.sync_item_credits_from_metadata(
+                    detail_item,
+                    {
+                        "studios_full": media_metadata.get("studios_full", []),
+                    },
+                ),
+                operation_name="IGDB detail studio sync",
+            )
+
+    identity_media_metadata = media_metadata
 
     if (
         source == Sources.IGDB.value
@@ -5198,6 +5257,49 @@ def media_details(
                         operation_name="refreshed detail author-credit sync",
                     )
                 authors_linked = _collect_authors_linked(media_metadata)
+
+    studio_detail_keys = ("studios", "companies")
+    studios_linked = []
+
+    def _collect_studios_linked(metadata_payload):
+        linked = []
+
+        if detail_item:
+            studio_credits = (
+                detail_item.studio_credits.select_related("studio")
+                .order_by("sort_order", "studio__name")
+            )
+            for studio_credit in studio_credits:
+                studio = studio_credit.studio
+                linked.append(
+                    {
+                        "source": studio.source,
+                        "studio_id": studio.source_studio_id,
+                        "name": studio.name,
+                        "logo": studio.logo,
+                    },
+                )
+
+        studios_full_payload = metadata_payload.get("studios_full")
+        if not linked and isinstance(studios_full_payload, list):
+            for studio in studios_full_payload:
+                studio_id = studio.get("studio_id") or studio.get("id")
+                name = (studio.get("name") or "").strip()
+                if studio_id is None or not name:
+                    continue
+                linked.append(
+                    {
+                        "source": source,
+                        "studio_id": str(studio_id),
+                        "name": name,
+                        "logo": (studio.get("logo") or "").strip(),
+                    },
+                )
+
+        return linked
+
+    if isinstance(media_metadata, dict):
+        studios_linked = _collect_studios_linked(media_metadata)
 
     # Prefer a stored poster/cover override when the tracked item has one.
     if (
@@ -5891,6 +5993,8 @@ def media_details(
         "media_type": media_type,
         "authors_linked": authors_linked,
         "author_detail_keys": author_detail_keys,
+        "studios_linked": studios_linked,
+        "studio_detail_keys": studio_detail_keys,
         "user_medias": user_medias,
         "current_instance": current_instance,
         "music_artist": music_artist,
@@ -11240,6 +11344,128 @@ def person_detail(request, source, person_id, name):
         "source_url": source_url,
     }
     return render(request, "app/person_detail.html", context)
+
+
+def studio_detail(request, source, studio_id, name):
+    """Render a provider-backed studio/company profile page."""
+    del name  # URL slug is cosmetic; studio_id is canonical.
+
+    studio = get_object_or_404(
+        Studio,
+        source=source,
+        source_studio_id=str(studio_id),
+    )
+
+    studio_profile = (
+        igdb.company_profile(studio_id)
+        if source == Sources.IGDB.value
+        else None
+    )
+
+    local_titles = []
+    studio_credits = studio.item_credits.select_related("item").order_by(
+        "sort_order",
+        "item__title",
+    )
+    for index, studio_credit in enumerate(studio_credits):
+        item = studio_credit.item
+        if not item:
+            continue
+        local_titles.append(
+            {
+                "media_id": str(item.media_id),
+                "source": item.source,
+                "media_type": item.media_type,
+                "title": item.title,
+                "image": item.image or settings.IMG_NONE,
+                "year": item.release_datetime.year if item.release_datetime else None,
+                "role": "",
+                "department": "",
+                "credit_type": item.media_type,
+                "sort_order": (
+                    studio_credit.sort_order
+                    if studio_credit.sort_order is not None
+                    else index
+                ),
+                "tracked_item": item,
+            },
+        )
+
+    credited_titles = []
+    if studio_profile:
+        credited_titles = [
+            dict(entry)
+            for entry in studio_profile.get("games") or []
+            if isinstance(entry, dict)
+        ]
+
+    if credited_titles:
+        existing_keys = {
+            (entry.get("media_type"), str(entry.get("media_id")))
+            for entry in credited_titles
+        }
+        for entry in local_titles:
+            media_key = (entry.get("media_type"), str(entry.get("media_id")))
+            if media_key not in existing_keys:
+                credited_titles.append(entry)
+    else:
+        credited_titles = local_titles
+
+    if credited_titles:
+        game_ids = {
+            str(entry.get("media_id"))
+            for entry in credited_titles
+            if entry.get("media_id") is not None
+        }
+        tracked_items = Item.objects.filter(
+            source=source,
+            media_type=MediaTypes.GAME.value,
+            media_id__in=game_ids,
+        )
+        tracked_item_map = {
+            (item.media_type, str(item.media_id)): item for item in tracked_items
+        }
+        for entry in credited_titles:
+            media_key = (entry.get("media_type"), str(entry.get("media_id")))
+            entry["tracked_item"] = tracked_item_map.get(media_key)
+
+        credited_titles.sort(
+            key=lambda row: (
+                row.get("year") is None,
+                -(row.get("year") or 0),
+                row.get("title", "").lower(),
+            ),
+        )
+        for index, entry in enumerate(credited_titles):
+            entry["sort_order"] = index
+
+    studio_description = "Studio profile generated from local credits."
+    studio_source_url = ""
+    studio_founded = None
+    studio_developed_count = None
+    studio_published_count = None
+    if studio_profile:
+        studio_description = studio_profile.get("description") or studio_description
+        studio_source_url = studio_profile.get("source_url") or ""
+        studio_details = studio_profile.get("details") or {}
+        studio_founded = studio_details.get("founded")
+        studio_developed_count = studio_details.get("developed_count")
+        studio_published_count = studio_details.get("published_count")
+
+    context = {
+        "user": request.user,
+        "studio": studio,
+        "source": source,
+        "credited_titles": credited_titles,
+        "studio_description": studio_description,
+        "studio_source_url": studio_source_url,
+        "studio_founded": studio_founded,
+        "studio_developed_count": studio_developed_count,
+        "studio_published_count": studio_published_count,
+        "studio_games_count": len(credited_titles),
+        "IMG_NONE": settings.IMG_NONE,
+    }
+    return render(request, "app/studio_detail.html", context)
 
 
 def _music_artist_detail_url(artist):

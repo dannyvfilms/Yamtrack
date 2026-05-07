@@ -8,7 +8,7 @@ from django.test.client import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
 
-from app.models import Album, Artist, Item, MediaTypes, Sources
+from app.models import Album, Artist, Item, MediaTypes, Sources, Studio
 from app.templatetags import app_tags
 from users.models import DateFormatChoices, TimeFormatChoices
 
@@ -327,6 +327,46 @@ class AppTagsTests(TestCase):
                     "artist_slug": "short-name",
                     "album_id": 17,
                     "album_slug": "live-at-home",
+                },
+            ),
+        )
+
+    def test_studio_url_returns_canonical_details_path(self):
+        """Studio objects should resolve to the canonical shared details route."""
+        studio = Studio.objects.create(
+            source=Sources.IGDB.value,
+            source_studio_id="123",
+            name="CD Projekt Red",
+        )
+
+        self.assertEqual(
+            app_tags.studio_url(studio),
+            reverse(
+                "studio_detail",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "studio_id": studio.source_studio_id,
+                    "name": "cd-projekt-red",
+                },
+            ),
+        )
+
+    def test_studio_url_accepts_metadata_dict(self):
+        """Studio metadata dicts should still resolve canonically."""
+        self.assertEqual(
+            app_tags.studio_url(
+                {
+                    "source": Sources.TMDB.value,
+                    "studio_id": 44,
+                    "name": "Pixar Animation Studios",
+                },
+            ),
+            reverse(
+                "studio_detail",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "studio_id": 44,
+                    "name": "pixar-animation-studios",
                 },
             ),
         )

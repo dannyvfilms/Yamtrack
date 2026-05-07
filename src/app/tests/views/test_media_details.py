@@ -29,6 +29,7 @@ from app.models import (
     Game,
     Item,
     ItemPersonCredit,
+    ItemStudioCredit,
     ItemTag,
     Manga,
     MediaTypes,
@@ -44,6 +45,7 @@ from app.models import (
     Season,
     Sources,
     Status,
+    Studio,
     Tag,
     Track,
 )
@@ -4705,6 +4707,99 @@ class MediaDetailsViewTests(TestCase):
         self.assertFalse(response.context["fetching_collection_data"])
         self.assertIsNone(response.context["item_id_for_polling"])
         mock_fetch_delay.assert_not_called()
+
+    @patch("app.views._should_queue_game_lengths_refresh", return_value=False)
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_details_backfills_studio_credits_and_renders_links(
+        self,
+        mock_get_metadata,
+        _mock_should_queue_game_lengths_refresh,
+    ):
+        """Game details should sync studio credits and render studio detail links."""
+        stale_metadata = {
+            "media_id": "1942",
+            "title": "The Witcher 3: Wild Hunt",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+            "image": "http://example.com/witcher3.jpg",
+            "synopsis": "A test game synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2015-05-19",
+                "companies": "CD Projekt Red",
+            },
+            "related": {},
+        }
+        refreshed_metadata = {
+            **stale_metadata,
+            "studios_full": [
+                {
+                    "studio_id": "1",
+                    "name": "CD Projekt Red",
+                    "logo": "https://images.igdb.com/igdb/image/upload/t_logo_med/logo123.png",
+                },
+            ],
+        }
+        call_count = {"count": 0}
+
+        def _metadata_side_effect(*_args, **_kwargs):
+            call_count["count"] += 1
+            if call_count["count"] == 1:
+                return stale_metadata
+            return refreshed_metadata
+
+        mock_get_metadata.side_effect = _metadata_side_effect
+
+        item = Item.objects.create(
+            media_id="1942",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="The Witcher 3: Wild Hunt",
+            image="http://example.com/witcher3.jpg",
+        )
+
+        cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_1942"
+        cache.set(cache_key, stale_metadata)
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "1942",
+                    "title": "the-witcher-3-wild-hunt",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(call_count["count"], 2)
+        self.assertContains(response, "CD Projekt Red")
+        self.assertContains(
+            response,
+            reverse(
+                "studio_detail",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "studio_id": "1",
+                    "name": "cd-projekt-red",
+                },
+            ),
+        )
+        studio = Studio.objects.get(
+            source=Sources.IGDB.value,
+            source_studio_id="1",
+        )
+        self.assertTrue(
+            ItemStudioCredit.objects.filter(
+                item=item,
+                studio=studio,
+            ).exists(),
+        )
+        self.assertEqual(len(response.context["studios_linked"]), 1)
+        self.assertEqual(response.context["studios_linked"][0]["name"], "CD Projekt Red")
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_cast_and_crew_links(self, mock_get_metadata):

@@ -1010,18 +1010,20 @@
         {% if media.details.items %}
           {% for key, value in media.details.items %}
             {% if not authors_linked or key not in author_detail_keys %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">{{ key|no_underscore|upper }}</h3>
-                {% if value|is_list %}
-                  {% for item in value %}<p class="text-gray-200">{{ item|iso_date_format:request.user }}</p>{% endfor %}
-                {% else %}
-                  {% if key == 'first_air_date' or key == 'last_air_date' %}
-                    <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
+              {% if not studios_linked or key not in studio_detail_keys %}
+                <div class="mb-4">
+                  <h3 class="text-sm font-semibold text-gray-400">{{ key|no_underscore|upper }}</h3>
+                  {% if value|is_list %}
+                    {% for item in value %}<p class="text-gray-200">{{ item|iso_date_format:request.user }}</p>{% endfor %}
                   {% else %}
-                    <p class="text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
+                    {% if key == 'first_air_date' or key == 'last_air_date' %}
+                      <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
+                    {% else %}
+                      <p class="text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
+                    {% endif %}
                   {% endif %}
-                {% endif %}
-              </div>
+                </div>
+              {% endif %}
             {% endif %}
           {% endfor %}
           {% if authors_linked %}
@@ -1040,14 +1042,17 @@
         {% endif %}
       </div>
 
-      {% if media.source == Sources.TMDB.value and media_type != MediaTypes.PODCAST.value and media.studios_full %}
+      {% if studios_linked %}
         <h2 class="text-xl font-bold mb-4 mt-6">Studios</h2>
         <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
-          {% for studio in media.studios_full|slice:":12" %}
-            <p class="text-gray-200">{{ studio.name|default:"Unknown Studio" }}</p>
-          {% empty %}
-            <p class="text-gray-500">No studio metadata available.</p>
-          {% endfor %}
+          <div class="flex flex-col gap-1">
+            {% for studio in studios_linked|slice:":12" %}
+              <a href="{{ studio|studio_url }}"
+                 class="text-gray-200 hover:text-indigo-500 transition-colors duration-200">
+                {{ studio.name|default:"Unknown Studio" }}
+              </a>
+            {% endfor %}
+          </div>
         </div>
       {% endif %}
 

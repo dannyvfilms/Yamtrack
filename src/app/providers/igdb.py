@@ -1,5 +1,6 @@
 import logging
 import re
+from collections import defaultdict
 from datetime import UTC, datetime
 from enum import IntEnum
 from urllib.parse import quote_plus, urlparse
@@ -374,7 +375,9 @@ def game(media_id):
         data = (
             "fields name,cover.image_id,artworks.image_id,screenshots.image_id,"
             "url,summary,game_type,first_release_date,total_rating,total_rating_count,"
-            "genres.name,themes.name,platforms.name,involved_companies.company.name,"
+            "genres.name,themes.name,platforms.name,"
+            "involved_companies.company.id,involved_companies.company.name,"
+            "involved_companies.company.logo.image_id,"
             "parent_game.name,parent_game.cover.image_id,"
             "remasters.name,remasters.cover.image_id,"
             "remakes.name,remakes.cover.image_id,"
@@ -441,6 +444,7 @@ def game(media_id):
                 "platforms": get_list(response, "platforms"),
                 "companies": get_companies(response),
             },
+            "studios_full": get_companies_full(response),
             "related": {
                 "parent_game": get_parent(response.get("parent_game")),
                 "remasters": get_related(response.get("remasters")),
@@ -469,6 +473,78 @@ def game(media_id):
         external_ids = get_external_ids(response, hltb_url)
         if external_ids:
             data["external_ids"] = external_ids
+        cache.set(cache_key, data)
+    return data
+
+
+def company_profile(company_id):
+    """Return the metadata and game catalog for an IGDB company."""
+    if not str(company_id).strip().isdigit():
+        return None
+
+    cache_key = f"{Sources.IGDB.value}_company_{company_id}"
+    data = cache.get(cache_key)
+    if data is None:
+        access_token = get_access_token()
+        url = f"{base_url}/companies"
+        query = (
+            "fields name,description,developed,published,logo.image_id,"
+            "url,start_date,country,status;"
+            f"where id = {company_id};"
+        )
+        headers = {
+            "Client-ID": settings.IGDB_ID,
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        try:
+            response = services.api_request(
+                Sources.IGDB.value,
+                "POST",
+                url,
+                data=query,
+                headers=headers,
+            )
+        except requests.exceptions.HTTPError as error:
+            error_resp = handle_error(error)
+            if error_resp and error_resp.get("retry"):
+                headers["Authorization"] = f"Bearer {get_access_token()}"
+                response = services.api_request(
+                    Sources.IGDB.value,
+                    "POST",
+                    url,
+                    data=query,
+                    headers=headers,
+                )
+
+        if not response:
+            return None
+
+        response = response[0]
+        developed_ids = [str(game_id) for game_id in response.get("developed") or []]
+        published_ids = [str(game_id) for game_id in response.get("published") or []]
+        game_entries = get_company_games(
+            developed_ids,
+            published_ids,
+            access_token=access_token,
+        )
+        data = {
+            "media_id": str(response["id"]),
+            "source": Sources.IGDB.value,
+            "source_url": response.get("url") or "",
+            "title": response["name"],
+            "name": response["name"],
+            "image": get_company_logo_url(response.get("logo")),
+            "description": (response.get("description") or "").strip(),
+            "details": {
+                "founded": get_company_start_date(response),
+                "country": response.get("country"),
+                "status": response.get("status"),
+                "developed_count": len(developed_ids),
+                "published_count": len(published_ids),
+            },
+            "games": game_entries,
+        }
         cache.set(cache_key, data)
     return data
 
@@ -524,6 +600,123 @@ def get_release_year(media):
         return None
 
 
+def get_company_start_date(response):
+    """Return the founded date for an IGDB company."""
+    try:
+        return timezone.datetime.fromtimestamp(
+            response["start_date"],
+            tz=timezone.get_current_timezone(),
+        ).strftime("%Y-%m-%d")
+    except KeyError:
+        return None
+
+
+def _fetch_games_by_ids(game_ids, *, access_token=None):
+    """Return raw IGDB game rows for the provided ids."""
+    if not game_ids:
+        return []
+
+    access_token = access_token or get_access_token()
+    headers = {
+        "Client-ID": settings.IGDB_ID,
+        "Authorization": f"Bearer {access_token}",
+    }
+    game_rows = []
+    chunk_size = 100
+
+    for start_index in range(0, len(game_ids), chunk_size):
+        chunk = game_ids[start_index : start_index + chunk_size]
+        url = f"{base_url}/games"
+        query = (
+            "fields id,name,cover.image_id,first_release_date;"
+            f"where id = ({','.join(chunk)});"
+        )
+        try:
+            response = services.api_request(
+                Sources.IGDB.value,
+                "POST",
+                url,
+                data=query,
+                headers=headers,
+            )
+        except requests.exceptions.HTTPError as error:
+            error_resp = handle_error(error)
+            if error_resp and error_resp.get("retry"):
+                headers["Authorization"] = f"Bearer {get_access_token()}"
+                response = services.api_request(
+                    Sources.IGDB.value,
+                    "POST",
+                    url,
+                    data=query,
+                    headers=headers,
+                )
+        if response:
+            game_rows.extend(response)
+
+    return game_rows
+
+
+def get_company_games(developed_ids, published_ids, *, access_token=None):
+    """Return normalized game rows for an IGDB company."""
+    ordered_game_ids = []
+    game_roles = defaultdict(set)
+
+    for game_id in developed_ids or []:
+        if game_id not in ordered_game_ids:
+            ordered_game_ids.append(game_id)
+        game_roles[game_id].add("Developer")
+
+    for game_id in published_ids or []:
+        if game_id not in ordered_game_ids:
+            ordered_game_ids.append(game_id)
+        game_roles[game_id].add("Publisher")
+
+    if not ordered_game_ids:
+        return []
+
+    game_rows = _fetch_games_by_ids(ordered_game_ids, access_token=access_token)
+    game_rows_by_id = {str(game["id"]): game for game in game_rows if game.get("id")}
+    games = []
+
+    for index, game_id in enumerate(ordered_game_ids):
+        game = game_rows_by_id.get(game_id)
+        if not game:
+            continue
+
+        roles = [
+            role
+            for role in ("Developer", "Publisher")
+            if role in game_roles.get(game_id, set())
+        ]
+        games.append(
+            {
+                "media_id": game_id,
+                "source": Sources.IGDB.value,
+                "media_type": MediaTypes.GAME.value,
+                "title": game["name"],
+                "image": get_image_url(game),
+                "year": get_release_year(game),
+                "role": ", ".join(roles),
+                "department": "",
+                "credit_type": "game",
+                "sort_order": index,
+            },
+        )
+
+    games.sort(
+        key=lambda row: (
+            row.get("year") is None,
+            -(row.get("year") or 0),
+            row.get("title", "").lower(),
+        ),
+    )
+
+    for index, game in enumerate(games):
+        game["sort_order"] = index
+
+    return games
+
+
 def get_start_date(response):
     """Return the start date of the game."""
     # when no release date, first_release_date is not present in the response
@@ -547,16 +740,67 @@ def get_list(response, field):
         return None
 
 
+def get_company_logo_url(logo):
+    """Return a normalized company logo URL for IGDB company rows."""
+    if not isinstance(logo, dict):
+        return ""
+
+    image_id = str(logo.get("image_id") or "").strip()
+    if not image_id:
+        return ""
+
+    return f"https://images.igdb.com/igdb/image/upload/t_logo_med/{image_id}.png"
+
+
+def get_companies_full(response):
+    """Return normalized studio/company rows for the game."""
+    studios = []
+    seen_company_ids = set()
+
+    for index, company_entry in enumerate(response.get("involved_companies") or []):
+        if not isinstance(company_entry, dict):
+            continue
+        company = company_entry.get("company")
+        if not isinstance(company, dict):
+            continue
+
+        company_id = company.get("id")
+        company_name = str(company.get("name") or "").strip()
+        if company_id is None or not company_name:
+            continue
+
+        company_id_str = str(company_id)
+        if company_id_str in seen_company_ids:
+            continue
+        seen_company_ids.add(company_id_str)
+
+        studios.append(
+            {
+                "studio_id": company_id_str,
+                "name": company_name,
+                "logo": get_company_logo_url(company.get("logo")),
+                "sort_order": index,
+            },
+        )
+
+    studios.sort(
+        key=lambda row: (
+            row.get("sort_order") is None,
+            row.get("sort_order", 0),
+            row.get("name", "").lower(),
+        ),
+    )
+    return studios
+
+
 def get_companies(response):
     """Return the companies involved in the game."""
     # when no companies, involved_companies is not present in the response
     # e.g game: 238417
-    try:
-        return ", ".join(
-            company["company"]["name"] for company in response["involved_companies"]
-        )
-    except KeyError:
-        return None
+    studios = get_companies_full(response)
+    if studios:
+        return ", ".join(company["name"] for company in studios)
+    return None
 
 
 def get_score(response):

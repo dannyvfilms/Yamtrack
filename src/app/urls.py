@@ -140,6 +140,11 @@ urlpatterns = [
         name="person_detail",
     ),
     path(
+        "studio/<source:source>/<str:studio_id>/<slug:name>",
+        views.studio_detail,
+        name="studio_detail",
+    ),
+    path(
         "api/active-playback/",
         views.active_playback_fragment,
         name="active_playback_fragment",

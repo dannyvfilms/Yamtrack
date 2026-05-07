@@ -91,15 +91,20 @@ class Metadata(TestCase):
         self.assertEqual(tmdb.get_original_title(response), "The Sound of Music")
 
     @patch("app.providers.tvdb.build_specials_season")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
     @patch("app.providers.tmdb.services.api_request")
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     def test_tv_with_seasons_adds_specials_when_tmdb_lacks_season_zero(
         self,
         mock_api_request,
+        mock_get_tvdb_episode_image_map,
         mock_build_specials_season,
     ):
         """TV details should synthesize season 0 only from TVDB-linked fallback data."""
         tmdb.cache.clear()
+        mock_get_tvdb_episode_image_map.return_value = {
+            "1": "https://example.com/s0e1.jpg",
+        }
         mock_build_specials_season.return_value = {
             "source": Sources.TMDB.value,
             "media_type": MediaTypes.SEASON.value,
@@ -132,7 +137,13 @@ class Metadata(TestCase):
             },
         }
 
-        def _mock_api_request(source, _method, url, params=None):  # noqa: ARG001
+        def _mock_api_request(
+            source,
+            _method,
+            url,
+            params=None,
+            headers=None,
+        ):  # noqa: ARG001
             if source == Sources.TMDB.value and url.endswith("/tv/114410"):
                 return {
                     "id": 114410,
@@ -1164,7 +1175,10 @@ class Metadata(TestCase):
         with self.assertRaises(services.ProviderAPIError) as cm:
             tmdb.episode("1396", "1", "3")
 
-        self.assertIn("The Movie Database API (HTTP 404)", str(cm.exception))
+        self.assertIn(
+            "There was an error contacting The Movie Database (HTTP 404)",
+            str(cm.exception),
+        )
 
         mock_tv_with_seasons.assert_called_with("1396", ["1"])
 
@@ -1372,16 +1386,138 @@ class Metadata(TestCase):
         self.assertEqual(response["details"]["country"], None)
         self.assertEqual(response["details"]["languages"], None)
 
-    def test_games(self):
+    @patch("app.providers.igdb.services.api_request")
+    @patch("app.providers.igdb.get_access_token", return_value="test-access-token")
+    def test_games(self, _mock_get_access_token, mock_api_request):
         """Test the metadata method for games."""
+        igdb.cache.clear()
+        mock_api_request.return_value = [
+            {
+                "id": 1942,
+                "name": "The Witcher 3: Wild Hunt",
+                "cover": {"image_id": "abcd1234"},
+                "artworks": [],
+                "screenshots": [],
+                "url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+                "summary": "Test summary",
+                "game_type": 0,
+                "first_release_date": 1431993600,
+                "total_rating": 92.7,
+                "total_rating_count": 123456,
+                "genres": [{"name": "RPG"}],
+                "themes": [
+                    {"name": "Action"},
+                    {"name": "Fantasy"},
+                    {"name": "Open world"},
+                ],
+                "platforms": [{"name": "PC"}],
+                "involved_companies": [
+                    {
+                        "company": {
+                            "id": 1,
+                            "name": "CD Projekt Red",
+                            "logo": {"image_id": "logo123"},
+                        },
+                    },
+                ],
+                "parent_game": None,
+                "remasters": [],
+                "remakes": [],
+                "expansions": [],
+                "standalone_expansions": [],
+                "expanded_games": [],
+                "similar_games": [],
+                "dlcs": [],
+                "external_games": [],
+                "websites": [],
+            },
+        ]
+
         response = igdb.game("1942")
         self.assertEqual(response["title"], "The Witcher 3: Wild Hunt")
         self.assertEqual(response["details"]["format"], "Main game")
         self.assertEqual(response["details"]["release_date"], "2015-05-19")
+        self.assertEqual(response["details"]["companies"], "CD Projekt Red")
         self.assertEqual(
             response["details"]["themes"],
             ["Action", "Fantasy", "Open world"],
         )
+        self.assertEqual(
+            response["studios_full"],
+            [
+                {
+                    "studio_id": "1",
+                    "name": "CD Projekt Red",
+                    "logo": "https://images.igdb.com/igdb/image/upload/t_logo_med/logo123.png",
+                    "sort_order": 0,
+                },
+            ],
+        )
+
+    @patch("app.providers.igdb.services.api_request")
+    @patch("app.providers.igdb.get_access_token", return_value="test-access-token")
+    def test_company_profile(self, _mock_get_access_token, mock_api_request):
+        """Test the IGDB company profile metadata helper."""
+        igdb.cache.clear()
+
+        def _mock_api_request(source, _method, url, data=None, params=None, headers=None):  # noqa: ARG001
+            if source == Sources.IGDB.value and url.endswith("/companies"):
+                self.assertIn(
+                    "fields name,description,developed,published,logo.image_id,",
+                    data,
+                )
+                return [
+                    {
+                        "id": 1,
+                        "name": "CD Projekt Red",
+                        "description": "We make role-playing games.",
+                        "logo": {"image_id": "logo123"},
+                        "developed": [1942],
+                        "published": [1942, 2077],
+                        "url": "https://www.cdprojekt.com/",
+                        "start_date": 762489600,
+                        "country": 616,
+                        "status": 0,
+                    },
+                ]
+            if source == Sources.IGDB.value and url.endswith("/games"):
+                self.assertIn(
+                    "fields id,name,cover.image_id,first_release_date;",
+                    data,
+                )
+                return [
+                    {
+                        "id": 1942,
+                        "name": "The Witcher 3: Wild Hunt",
+                        "cover": {"image_id": "abcd1234"},
+                        "first_release_date": 1431993600,
+                    },
+                    {
+                        "id": 2077,
+                        "name": "Cyberpunk 2077",
+                        "cover": {"image_id": "efgh5678"},
+                        "first_release_date": 1607980800,
+                    },
+                ]
+
+            raise AssertionError(f"Unexpected request in test: {source} {url}")
+
+        mock_api_request.side_effect = _mock_api_request
+
+        response = igdb.company_profile("1")
+        self.assertIsNotNone(response)
+        self.assertEqual(response["name"], "CD Projekt Red")
+        self.assertEqual(response["source_url"], "https://www.cdprojekt.com/")
+        self.assertEqual(response["description"], "We make role-playing games.")
+        self.assertEqual(response["details"]["founded"], "1994-03-01")
+        self.assertEqual(response["details"]["developed_count"], 1)
+        self.assertEqual(response["details"]["published_count"], 2)
+        self.assertEqual(
+            [game["title"] for game in response["games"]],
+            ["Cyberpunk 2077", "The Witcher 3: Wild Hunt"],
+        )
+        self.assertEqual(response["games"][0]["role"], "Publisher")
+        self.assertEqual(response["games"][1]["role"], "Developer, Publisher")
 
     def test_game_non_numeric_id_raises_value_error(self):
         """Non-numeric IGDB IDs should raise ValueError before any API call."""
