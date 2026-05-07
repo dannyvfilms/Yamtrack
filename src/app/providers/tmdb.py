@@ -19,6 +19,12 @@ TMDB_APPEND_TO_RESPONSE_MAX_REMOTE_CALLS = 20
 TV_DETAIL_APPEND_RESPONSES = (
     "recommendations,external_ids,aggregate_credits,alternative_titles,watch/providers"
 )
+TV_DETAIL_SEASON_APPEND_RESPONSES = (
+    "season/{season}",
+    "season/{season}/credits",
+    "season/{season}/watch/providers",
+)
+TMDB_SEASON_CACHE_VERSION = 3
 base_params = {
     "api_key": settings.TMDB_API,
     "language": settings.TMDB_LANG,
@@ -29,8 +35,17 @@ def _tv_detail_max_seasons_per_request():
     """Return the largest season batch that fits within TMDB's append limit."""
     base_append_count = len(TV_DETAIL_APPEND_RESPONSES.split(","))
     return max(
-        (TMDB_APPEND_TO_RESPONSE_MAX_REMOTE_CALLS - base_append_count) // 2,
+        (TMDB_APPEND_TO_RESPONSE_MAX_REMOTE_CALLS - base_append_count)
+        // len(TV_DETAIL_SEASON_APPEND_RESPONSES),
         1,
+    )
+
+
+def _season_cache_key(media_id, season_number):
+    """Return the cache key for a TMDB season payload."""
+    return (
+        f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_v{TMDB_SEASON_CACHE_VERSION}_"
+        f"{media_id}_{season_number}"
     )
 
 
@@ -124,9 +139,7 @@ def _apply_tvdb_id_override_to_tv_data(media_id, tv_data):
             ]
             if len(filtered_seasons) != len(seasons):
                 related["seasons"] = filtered_seasons
-                cache.delete(
-                    f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_0",
-                )
+                cache.delete(_season_cache_key(media_id, 0))
 
     external_links = dict(tv_data.get("external_links") or {})
     preferred_tvdb_link = (
@@ -152,7 +165,7 @@ def set_tvdb_id_override(media_id, tvdb_id):
         tvdb_id,
         timeout=TVDB_OVERRIDE_CACHE_TIMEOUT,
     )
-    cache.delete(f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_0")
+    cache.delete(_season_cache_key(media_id, 0))
 
     tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
     cached_tv_data = cache.get(tv_cache_key)
@@ -503,10 +516,7 @@ def get_cached_seasons(media_id, season_numbers):
     uncached_seasons = []
 
     for season_number in season_numbers:
-        season_cache_key = (
-            f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_{season_number}"
-        )
-        season_data = cache.get(season_cache_key)
+        season_data = cache.get(_season_cache_key(media_id, season_number))
         if season_data:
             cached_data[f"season/{season_number}"] = season_data
         else:
@@ -635,6 +645,8 @@ def cache_fallback_season_metadata(media_id, season_number, tv_data, season_data
         "synopsis": season_data.get("synopsis") or get_synopsis(""),
         "score": season_data.get("score"),
         "score_count": season_data.get("score_count"),
+        "cast": season_data.get("cast") or [],
+        "crew": season_data.get("crew") or [],
         "details": details,
         "episodes": episodes,
         "providers": season_data.get("providers") or {},
@@ -652,7 +664,7 @@ def cache_fallback_season_metadata(media_id, season_number, tv_data, season_data
     )
 
     cache.set(
-        f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_{season_number}",
+        _season_cache_key(media_id, season_number),
         cached_season_data,
     )
 
@@ -804,10 +816,9 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
     for i in range(0, len(season_numbers), max_seasons_per_request):
         season_subset = season_numbers[i : i + max_seasons_per_request]
         append_text = ",".join(
-            [
-                f"season/{season},season/{season}/watch/providers"
-                for season in season_subset
-            ]
+            template.format(season=season)
+            for season in season_subset
+            for template in TV_DETAIL_SEASON_APPEND_RESPONSES
         )
 
         params = {
@@ -855,8 +866,11 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
                 )
                 continue
 
+            season_credits = response.get(f"{season_key}/credits", {}) or {}
             season_data = process_season(
-                response[season_key], response[f"{season_key}/watch/providers"]
+                response[season_key],
+                response[f"{season_key}/watch/providers"],
+                season_credits,
             )
             season_data = enrich_season_with_tv_data(
                 season_data,
@@ -865,7 +879,7 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
                 season_number,
             )
             cache.set(
-                f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_{season_number}",
+                _season_cache_key(media_id, season_number),
                 season_data,
             )
             result_data[season_key] = season_data
@@ -879,7 +893,7 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
             result_data["season/0"] = specials_season
             _attach_specials_to_tv_data(fetched_tv_data, specials_season)
             cache.set(
-                f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_0",
+                _season_cache_key(media_id, 0),
                 specials_season,
             )
             cache.set(
@@ -1019,7 +1033,7 @@ def process_tv(response, media_id=None):
     }
 
 
-def process_season(response, providers_response):
+def process_season(response, providers_response, credits_response=None):
     """Process the metadata for the selected season from The Movie Database."""
     episodes = response["episodes"]
     num_episodes = len(episodes)
@@ -1038,6 +1052,7 @@ def process_season(response, providers_response):
         get_readable_duration(sum(runtimes) / len(runtimes)) if runtimes else None
     )
     total_runtime = get_readable_duration(total_runtime) if total_runtime else None
+    credits_response = credits_response if isinstance(credits_response, dict) else {}
 
     return {
         "source": Sources.TMDB.value,
@@ -1056,6 +1071,8 @@ def process_season(response, providers_response):
             "runtime": avg_runtime,
             "total_runtime": total_runtime,
         },
+        "cast": get_cast_credits(credits_response),
+        "crew": get_crew_credits(credits_response),
         "episodes": response["episodes"],
         "providers": providers_response.get("results", {}),
     }

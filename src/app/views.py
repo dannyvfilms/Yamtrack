@@ -4914,7 +4914,11 @@ def media_details(
     should_refresh_tmdb_titles = (
         request.user.is_authenticated
         and source == Sources.TMDB.value
-        and tracking_media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        and tracking_media_type in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+        )
         and getattr(request.user, "title_display_preference", "localized") == "original"
         and isinstance(media_metadata, dict)
         and not media_metadata.get("original_title")
@@ -4927,7 +4931,7 @@ def media_details(
 
     should_refresh_tmdb_tv_credits = (
         source == Sources.TMDB.value
-        and tracking_media_type == MediaTypes.TV.value
+        and tracking_media_type in (MediaTypes.TV.value, MediaTypes.SEASON.value)
         and isinstance(media_metadata, dict)
         and not media_metadata.get("cast")
         and not media_metadata.get("crew")
@@ -5039,7 +5043,11 @@ def media_details(
 
     if (
         source == Sources.TMDB.value
-        and tracking_media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        and tracking_media_type in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+        )
         and isinstance(media_metadata, dict)
     ):
         if detail_item:
@@ -8011,6 +8019,7 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         if source == Sources.TMDB.value and tracking_media_type in (
             MediaTypes.MOVIE.value,
             MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
         ):
             credits.sync_item_credits_from_metadata(item, metadata)
 
@@ -14930,6 +14939,12 @@ def _identify_predefined_range(start_date, end_date):
     if local_start == yesterday and local_end == yesterday:
         return "Yesterday"
 
+    month_start = today.replace(day=1)
+    if local_start == month_start and local_end == today:
+        return "This Month"
+    if local_start == month_start and local_end == today - timedelta(days=1):
+        return "This Month"
+
     monday = today - timedelta(days=today.weekday())
     if local_start == monday and local_end == today:
         return "This Week"
@@ -14938,12 +14953,6 @@ def _identify_predefined_range(start_date, end_date):
 
     if local_start == today - timedelta(days=6) and local_end == today:
         return "Last 7 Days"
-
-    month_start = today.replace(day=1)
-    if local_start == month_start and local_end == today:
-        return "This Month"
-    if local_start == month_start and local_end == today - timedelta(days=1):
-        return "This Month"
 
     if local_start == today - timedelta(days=29) and local_end == today:
         return "Last 30 Days"

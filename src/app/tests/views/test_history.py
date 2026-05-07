@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from app import history_cache
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
     Album,
     Artist,
     Book,
@@ -16,9 +17,12 @@ from app.models import (
     Episode,
     Game,
     Item,
+    ItemStudioCredit,
     ItemPersonCredit,
     Manga,
     MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
     Music,
     Movie,
     Person,
@@ -26,6 +30,7 @@ from app.models import (
     Season,
     Sources,
     Status,
+    Studio,
     Track,
     TV,
 )
@@ -694,6 +699,120 @@ class HistoryViewPersonFilterTests(TestCase):
             end_date=timezone.now(),
         )
 
+    @staticmethod
+    def _credit(person, role="Lead", sort_order=0):
+        return {
+            "person": person,
+            "role": role,
+            "sort_order": sort_order,
+        }
+
+    def _mark_tmdb_credits_current(self, *items):
+        for item in items:
+            MetadataBackfillState.objects.update_or_create(
+                item=item,
+                field=MetadataBackfillField.CREDITS,
+                defaults={
+                    "last_success_at": timezone.now(),
+                    "strategy_version": CREDITS_BACKFILL_VERSION,
+                },
+            )
+
+    def _create_tmdb_tv_show(self, media_id, title, studio, show_credits, seasons, base_time):
+        tv_item = Item.objects.create(
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title=title,
+            image=f"http://example.com/{media_id}.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        ItemStudioCredit.objects.create(item=tv_item, studio=studio)
+        for credit in show_credits:
+            ItemPersonCredit.objects.create(
+                item=tv_item,
+                person=credit["person"],
+                role_type=CreditRoleType.CAST.value,
+                role=credit.get("role", "Lead"),
+                sort_order=credit.get("sort_order"),
+            )
+        self._mark_tmdb_credits_current(tv_item)
+
+        for season_number, season_spec in seasons.items():
+            season_item = Item.objects.create(
+                media_id=media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title=title,
+                image=f"http://example.com/{media_id}-s{season_number}.jpg",
+                season_number=season_number,
+            )
+            season = Season.objects.create(
+                item=season_item,
+                user=self.user,
+                related_tv=tv,
+                status=Status.COMPLETED.value,
+            )
+
+            for credit in season_spec.get("season_credits", []):
+                ItemPersonCredit.objects.create(
+                    item=season_item,
+                    person=credit["person"],
+                    role_type=CreditRoleType.CAST.value,
+                    role=credit.get("role", "Lead"),
+                    sort_order=credit.get("sort_order"),
+                )
+            for credit in season_spec.get("crew", []):
+                ItemPersonCredit.objects.create(
+                    item=season_item,
+                    person=credit["person"],
+                    role_type=CreditRoleType.CREW.value,
+                    role=credit.get("role", "Director"),
+                    department=credit.get("department", "Directing"),
+                    sort_order=credit.get("sort_order"),
+                )
+            self._mark_tmdb_credits_current(season_item)
+
+            for episode_spec in season_spec.get("episodes", []):
+                episode_number = episode_spec["episode_number"]
+                episode_item = Item.objects.create(
+                    media_id=media_id,
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.EPISODE.value,
+                    title=episode_spec.get("title") or f"{title} Episode {season_number}-{episode_number}",
+                    image=episode_spec.get("image") or f"http://example.com/{media_id}-s{season_number}e{episode_number}.jpg",
+                    season_number=season_number,
+                    episode_number=episode_number,
+                    runtime_minutes=episode_spec.get("runtime_minutes", 45),
+                )
+                Episode.objects.create(
+                    item=episode_item,
+                    related_season=season,
+                    end_date=base_time + timedelta(minutes=episode_spec.get("offset_minutes", 0)),
+                )
+                for credit in episode_spec.get("credits", []):
+                    ItemPersonCredit.objects.create(
+                        item=episode_item,
+                        person=credit["person"],
+                        role_type=CreditRoleType.CAST.value,
+                        role=credit.get("role", "Guest"),
+                        sort_order=credit.get("sort_order"),
+                    )
+                for credit in episode_spec.get("crew", []):
+                    ItemPersonCredit.objects.create(
+                        item=episode_item,
+                        person=credit["person"],
+                        role_type=CreditRoleType.CREW.value,
+                        role=credit.get("role", "Director"),
+                        department=credit.get("department", "Directing"),
+                        sort_order=credit.get("sort_order"),
+                    )
+                self._mark_tmdb_credits_current(episode_item)
+
     def test_history_filters_by_person_source_and_id(self):
         response = self.client.get(
             reverse("history") + "?person_source=tmdb&person_id=900",
@@ -811,6 +930,7 @@ class HistoryViewPersonFilterTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Episode-level non-match",
         )
+        self._mark_tmdb_credits_current(tv_item, season_item, episode_item_match, episode_item_exclude, episode_item_fallback)
 
         response = self.client.get(
             reverse("history") + "?person_source=tmdb&person_id=900",
@@ -931,6 +1051,7 @@ class HistoryViewPersonFilterTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Guest Star",
         )
+        self._mark_tmdb_credits_current(tv_item, season_item, episode_item_match, episode_item_exclude, episode_item_fallback)
 
         response = self.client.get(
             reverse("history") + "?person_source=tmdb&person_id=990",
@@ -945,6 +1066,285 @@ class HistoryViewPersonFilterTests(TestCase):
         self.assertIn("TMDB Guest Match", titles)
         self.assertNotIn("TMDB Guest Exclusion", titles)
         self.assertNotIn("TMDB Guest Fallback", titles)
+
+    @patch("app.providers.services.get_media_metadata", return_value={})
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_history_person_filter_uses_season_episode_and_show_fallback_ladder(
+        self,
+        _mock_enqueue,
+        _mock_get_media_metadata,
+    ):
+        base_time = timezone.now().replace(second=0, microsecond=0)
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="9800",
+            name="History Ladder Studio",
+        )
+
+        stable_woman = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9801",
+            name="History Stable Woman",
+            gender=PersonGender.FEMALE.value,
+        )
+        stable_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9802",
+            name="History Stable Helper",
+            gender=PersonGender.MALE.value,
+        )
+        left_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9803",
+            name="History Left Man",
+            gender=PersonGender.MALE.value,
+        )
+        left_other = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9804",
+            name="History Left Other",
+            gender=PersonGender.MALE.value,
+        )
+        left_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9805",
+            name="History Left Helper",
+            gender=PersonGender.MALE.value,
+        )
+        join_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9806",
+            name="History Join Man",
+            gender=PersonGender.MALE.value,
+        )
+        join_other = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9807",
+            name="History Join Other",
+            gender=PersonGender.MALE.value,
+        )
+        join_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9808",
+            name="History Join Helper",
+            gender=PersonGender.MALE.value,
+        )
+        guest_woman = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9809",
+            name="History Guest Woman",
+            gender=PersonGender.FEMALE.value,
+        )
+        guest_show_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9810",
+            name="History Guest Show Helper",
+            gender=PersonGender.MALE.value,
+        )
+        guest_episode_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9811",
+            name="History Guest Episode Helper",
+            gender=PersonGender.MALE.value,
+        )
+        season_regular_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9812",
+            name="History Season Regular Man",
+            gender=PersonGender.MALE.value,
+        )
+        fallback_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9813",
+            name="History Fallback Man",
+            gender=PersonGender.MALE.value,
+        )
+        mixed_episode_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9814",
+            name="History Mixed Episode Helper",
+            gender=PersonGender.MALE.value,
+        )
+        mixed_season2_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9815",
+            name="History Mixed Season 2 Helper",
+            gender=PersonGender.MALE.value,
+        )
+        mixed_season2_director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9816",
+            name="History Mixed Season 2 Director",
+            gender=PersonGender.UNKNOWN.value,
+        )
+
+        self._create_tmdb_tv_show(
+            "9801",
+            "History Stable Ensemble",
+            studio,
+            show_credits=[self._credit(stable_woman, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(stable_woman, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 0,
+                            "credits": [self._credit(stable_helper, "Support")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [self._credit(stable_woman, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 1,
+                            "credits": [self._credit(stable_helper, "Support")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9802",
+            "History Leaving Cast",
+            studio,
+            show_credits=[self._credit(left_man, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(left_man, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 2,
+                            "credits": [self._credit(left_helper, "Support")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [self._credit(left_other, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 3,
+                            "credits": [self._credit(left_helper, "Support")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9803",
+            "History Joining Cast",
+            studio,
+            show_credits=[self._credit(join_man, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(join_other, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 4,
+                            "credits": [self._credit(join_helper, "Support")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [self._credit(join_man, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 5,
+                            "credits": [self._credit(join_helper, "Support")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9804",
+            "History Guest Star Show",
+            studio,
+            show_credits=[self._credit(guest_show_helper, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 6,
+                            "credits": [self._credit(guest_woman, "Guest")],
+                        },
+                        {
+                            "episode_number": 2,
+                            "offset_minutes": 7,
+                            "credits": [self._credit(guest_episode_helper, "Guest")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9805",
+            "History Mixed Fallback Show",
+            studio,
+            show_credits=[self._credit(fallback_man, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(season_regular_man, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 8,
+                            "credits": [self._credit(mixed_episode_helper, "Guest")],
+                        },
+                        {
+                            "episode_number": 2,
+                            "offset_minutes": 9,
+                            "credits": [self._credit(mixed_episode_helper, "Guest")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [],
+                    "crew": [self._credit(mixed_season2_director, "Director")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 10,
+                            "credits": [self._credit(mixed_season2_helper, "Guest")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+
+        expectations = {
+            "9801": {"History Stable Woman": {"History Stable Ensemble Episode 1-1", "History Stable Ensemble Episode 2-1"}},
+            "9803": {"History Left Man": {"History Leaving Cast Episode 1-1"}},
+            "9806": {"History Join Man": {"History Joining Cast Episode 2-1"}},
+            "9809": {"History Guest Woman": {"History Guest Star Show Episode 1-1"}},
+            "9813": {"History Fallback Man": {"History Mixed Fallback Show Episode 2-1"}},
+        }
+
+        for person_id, person_expectations in expectations.items():
+            response = self.client.get(
+                reverse("history") + f"?person_source=tmdb&person_id={person_id}",
+            )
+            self.assertEqual(response.status_code, 200)
+            titles = {
+                entry["title"]
+                for day in response.context["history_days"]
+                for entry in day.get("entries", [])
+            }
+            expected_titles = set().union(*person_expectations.values())
+            self.assertSetEqual(titles, expected_titles)
 
 
 class HistoryViewAuthorFilterTests(TestCase):

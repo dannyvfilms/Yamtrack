@@ -692,6 +692,7 @@ class Metadata(TestCase):
             self.assertEqual(source, Sources.TMDB.value)
             self.assertEqual(url, "https://api.themoviedb.org/3/tv/1396")
             self.assertIn("season/1", params["append_to_response"])
+            self.assertIn("season/1/credits", params["append_to_response"])
 
             response = {
                 "id": 1396,
@@ -739,6 +740,31 @@ class Metadata(TestCase):
                             "runtime": 58,
                             "vote_count": 100,
                             "air_date": "2008-01-20",
+                        },
+                    ],
+                },
+                "season/1/credits": {
+                    "cast": [
+                        {
+                            "id": 12,
+                            "name": "Season Actor",
+                            "profile_path": None,
+                            "known_for_department": "Acting",
+                            "gender": 2,
+                            "order": 0,
+                            "character": "Season Character",
+                        },
+                    ],
+                    "crew": [
+                        {
+                            "id": 13,
+                            "name": "Season Director",
+                            "profile_path": None,
+                            "known_for_department": "Directing",
+                            "gender": 1,
+                            "department": "Directing",
+                            "order": 0,
+                            "job": "Director",
                         },
                     ],
                 },
@@ -790,6 +816,10 @@ class Metadata(TestCase):
         self.assertEqual(result["cast"][0]["role"], "Walter White")
         self.assertEqual(result["crew"][0]["name"], "Jane Director")
         self.assertEqual(result["crew"][0]["role"], "Director")
+        self.assertEqual(result["season/1"]["cast"][0]["name"], "Season Actor")
+        self.assertEqual(result["season/1"]["cast"][0]["role"], "Season Character")
+        self.assertEqual(result["season/1"]["crew"][0]["name"], "Season Director")
+        self.assertEqual(result["season/1"]["crew"][0]["role"], "Director")
         self.assertEqual(tmdb.cache.get(tv_cache_key)["cast"][0]["name"], "John Actor")
         self.assertEqual(
             tmdb.cache.get(tv_cache_key)["crew"][0]["name"],

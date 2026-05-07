@@ -12,7 +12,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from app import helpers, history_cache, metadata_utils
+from app import credits as credit_helpers, helpers, history_cache, metadata_utils
 from app.log_safety import exception_summary
 from app.models import (
     CREDITS_BACKFILL_VERSION,
@@ -313,6 +313,18 @@ def _collect_backfill_day_keys(items, field: str):
         ):
             rows = Episode.objects.filter(
                 related_season__related_tv__item_id=item.id,
+            ).values("related_season__user_id", "end_date")
+            for row in rows:
+                _add_user_day_key(
+                    user_day_keys,
+                    row.get("related_season__user_id"),
+                    history_cache.history_day_key(row.get("end_date")),
+                )
+            continue
+
+        if item.media_type == MediaTypes.SEASON.value and field == MetadataBackfillField.CREDITS:
+            rows = Episode.objects.filter(
+                related_season__item_id=item.id,
             ).values("related_season__user_id", "end_date")
             for row in rows:
                 _add_user_day_key(
@@ -728,16 +740,17 @@ def _next_credits_backfill_item_ids(batch_size: int, scan_multiplier: int):
         return []
     candidate_limit = max(batch_size * max(scan_multiplier, 1), batch_size)
     candidates = (
-        Item.objects.filter(
-            source__in=CREDITS_BACKFILL_SOURCES,
-            media_type__in=[
-                MediaTypes.MOVIE.value,
-                MediaTypes.TV.value,
-                MediaTypes.EPISODE.value,
-            ],
-        )
-        .order_by("id")
-        .values_list("id", flat=True)[:candidate_limit]
+            Item.objects.filter(
+                source__in=CREDITS_BACKFILL_SOURCES,
+                media_type__in=[
+                    MediaTypes.MOVIE.value,
+                    MediaTypes.TV.value,
+                    MediaTypes.SEASON.value,
+                    MediaTypes.EPISODE.value,
+                ],
+            )
+            .order_by("id")
+            .values_list("id", flat=True)[:candidate_limit]
     )
     candidate_ids = _filter_backfill_item_ids(list(candidates), MetadataBackfillField.CREDITS)
     if not candidate_ids:
@@ -747,58 +760,7 @@ def _next_credits_backfill_item_ids(batch_size: int, scan_multiplier: int):
 
 
 def _missing_credits_item_ids(item_ids):
-    if not item_ids:
-        return []
-    candidate_items = list(
-        Item.objects.filter(
-            id__in=item_ids,
-            source__in=CREDITS_BACKFILL_SOURCES,
-            media_type__in=[
-                MediaTypes.MOVIE.value,
-                MediaTypes.TV.value,
-                MediaTypes.EPISODE.value,
-            ],
-        ).values("id", "media_type"),
-    )
-    if not candidate_items:
-        return []
-    candidate_ids = {item["id"] for item in candidate_items}
-    media_type_by_id = {item["id"]: item["media_type"] for item in candidate_items}
-    episode_item_ids = [
-        item_id
-        for item_id, media_type in media_type_by_id.items()
-        if media_type == MediaTypes.EPISODE.value
-    ]
-    credits_version_by_item_id = {}
-    if episode_item_ids:
-        credits_version_by_item_id = {
-            row["item_id"]: int(row.get("strategy_version") or 0)
-            for row in MetadataBackfillState.objects.filter(
-                field=MetadataBackfillField.CREDITS,
-                item_id__in=episode_item_ids,
-            ).values("item_id", "strategy_version")
-        }
-    person_credit_ids = set(
-        ItemPersonCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
-    )
-    studio_credit_ids = set(
-        ItemStudioCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
-    )
-    missing_ids = []
-    for item_id in sorted(candidate_ids):
-        media_type = media_type_by_id.get(item_id)
-        has_people = item_id in person_credit_ids
-        has_studios = item_id in studio_credit_ids
-        if media_type == MediaTypes.EPISODE.value:
-            has_current_episode_attempt = (
-                credits_version_by_item_id.get(item_id, 0) >= CREDITS_BACKFILL_VERSION
-            )
-            if not has_people or not has_current_episode_attempt:
-                missing_ids.append(item_id)
-            continue
-        if not has_people or not has_studios:
-            missing_ids.append(item_id)
-    return missing_ids
+    return credit_helpers.missing_credits_backfill_item_ids(item_ids)
 
 
 def _encode_season_key(media_id, source, season_number):
@@ -1104,32 +1066,35 @@ def _populate_credits_for_items(items, delay_seconds):
 
     for item in items:
         try:
-            if item.media_type == MediaTypes.EPISODE.value:
-                if item.season_number is None or item.episode_number is None:
-                    logger.warning(
-                        "Episode item %s is missing season/episode numbers; skipping credits backfill",
-                        item.id,
-                    )
-                    error_count += 1
-                    _record_backfill_failure(
-                        item,
-                        MetadataBackfillField.CREDITS,
-                        "missing season/episode numbers",
-                    )
-                    continue
-                metadata = services.get_media_metadata(
-                    item.media_type.lower(),
-                    item.media_id,
-                    item.source,
-                    [item.season_number],
-                    item.episode_number,
+            if item.media_type == MediaTypes.EPISODE.value and (
+                item.season_number is None or item.episode_number is None
+            ):
+                logger.warning(
+                    "Episode item %s is missing season/episode numbers; skipping credits backfill",
+                    item.id,
                 )
-            else:
-                metadata = services.get_media_metadata(
-                    item.media_type.lower(),
-                    item.media_id,
-                    item.source,
+                error_count += 1
+                _record_backfill_failure(
+                    item,
+                    MetadataBackfillField.CREDITS,
+                    "missing season/episode numbers",
                 )
+                continue
+
+            if item.media_type == MediaTypes.SEASON.value and item.season_number is None:
+                logger.warning(
+                    "Season item %s is missing season_number; skipping credits backfill",
+                    item.id,
+                )
+                error_count += 1
+                _record_backfill_failure(
+                    item,
+                    MetadataBackfillField.CREDITS,
+                    "missing season number",
+                )
+                continue
+
+            metadata = _fetch_item_metadata(item)
 
             if not isinstance(metadata, dict):
                 logger.warning(
@@ -1368,6 +1333,7 @@ def populate_credits_data_for_items(item_ids: list[int], delay_seconds: float = 
             media_type__in=[
                 MediaTypes.MOVIE.value,
                 MediaTypes.TV.value,
+                MediaTypes.SEASON.value,
                 MediaTypes.EPISODE.value,
             ],
         ),

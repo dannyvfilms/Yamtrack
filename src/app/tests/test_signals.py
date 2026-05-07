@@ -5,10 +5,15 @@ from django.utils import timezone
 
 from app import signals, tasks
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
+    CreditRoleType,
+    ItemPersonCredit,
+    MetadataBackfillField,
     Item,
     MediaTypes,
-    MetadataBackfillField,
     MetadataBackfillState,
+    Person,
+    PersonGender,
     Sources,
 )
 
@@ -85,3 +90,91 @@ class ItemSignalTests(TestCase):
             ).exists(),
         )
         mock_enqueue_genre_backfill_items.assert_called_once_with([item.id])
+
+
+class CreditsBackfillSignalTests(TestCase):
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_schedule_credits_backfill_if_needed_keeps_current_tmdb_season_state(
+        self,
+        mock_enqueue,
+    ):
+        season_item = Item.objects.create(
+            media_id="4001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Signal Season",
+            image="https://example.com/signal-season.jpg",
+            season_number=1,
+        )
+        person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="4001",
+            name="Signal Person",
+            gender=PersonGender.UNKNOWN.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=season_item,
+            person=person,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        MetadataBackfillState.objects.create(
+            item=season_item,
+            field=MetadataBackfillField.CREDITS,
+            strategy_version=CREDITS_BACKFILL_VERSION,
+            last_success_at=timezone.now(),
+        )
+
+        signals._schedule_credits_backfill_if_needed(season_item.id)
+
+        self.assertTrue(
+            MetadataBackfillState.objects.filter(
+                item=season_item,
+                field=MetadataBackfillField.CREDITS,
+                strategy_version=CREDITS_BACKFILL_VERSION,
+            ).exists(),
+        )
+        mock_enqueue.assert_not_called()
+
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_schedule_credits_backfill_if_needed_requeues_stale_tmdb_season_state(
+        self,
+        mock_enqueue,
+    ):
+        season_item = Item.objects.create(
+            media_id="4002",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Stale Signal Season",
+            image="https://example.com/stale-signal-season.jpg",
+            season_number=1,
+        )
+        person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="4002",
+            name="Stale Signal Person",
+            gender=PersonGender.UNKNOWN.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=season_item,
+            person=person,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        MetadataBackfillState.objects.create(
+            item=season_item,
+            field=MetadataBackfillField.CREDITS,
+            strategy_version=max(CREDITS_BACKFILL_VERSION - 1, 1),
+            last_success_at=timezone.now(),
+        )
+
+        signals._schedule_credits_backfill_if_needed(season_item.id)
+
+        self.assertTrue(
+            MetadataBackfillState.objects.filter(
+                item=season_item,
+                field=MetadataBackfillField.CREDITS,
+                strategy_version=max(CREDITS_BACKFILL_VERSION - 1, 1),
+            ).exists(),
+        )
+        mock_enqueue.assert_called_once_with([season_item.id], countdown=3)

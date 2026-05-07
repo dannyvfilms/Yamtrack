@@ -1061,6 +1061,11 @@ def _check_week_ranges(start_date, end_date, today):
 def _check_month_ranges(start_date, end_date, today):
     """Check for month-based date ranges."""
     days_diff = (end_date - start_date).days
+    month_start = today.replace(day=1)
+    if start_date == month_start and end_date == today:
+        return "This Month"
+    if start_date == month_start and end_date == today - timedelta(days=1):
+        return "This Month"
     if days_diff == 29:  # 30 days including start and end
         if start_date == today - timedelta(days=29):
             return "This Month"
@@ -1096,13 +1101,13 @@ def _is_predefined_date_range(start_date, end_date, today):
     if result:
         return result
 
-    # Check week ranges
-    result = _check_week_ranges(start_date, end_date, today)
+    # Check month ranges
+    result = _check_month_ranges(start_date, end_date, today)
     if result:
         return result
 
-    # Check month ranges
-    result = _check_month_ranges(start_date, end_date, today)
+    # Check week ranges
+    result = _check_week_ranges(start_date, end_date, today)
     if result:
         return result
 

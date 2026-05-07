@@ -16,6 +16,7 @@ from django.utils import formats, timezone
 from app import credits as credit_helpers, helpers
 from app.log_safety import stable_hmac
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
     Album,
     BoardGame,
     Book,
@@ -31,6 +32,8 @@ from app.models import (
     Music,
     Podcast,
     Sources,
+    MetadataBackfillField,
+    MetadataBackfillState,
     Track,
 )
 
@@ -48,7 +51,7 @@ def _coerce_timedelta(value, default):
         return default
 
 
-HISTORY_CACHE_VERSION = 17
+HISTORY_CACHE_VERSION = 18
 HISTORY_INDEX_PREFIX = f"history_index_v{HISTORY_CACHE_VERSION}"
 HISTORY_DAY_PREFIX = f"history_day_v{HISTORY_CACHE_VERSION}"
 HISTORY_CACHE_PREFIX = HISTORY_INDEX_PREFIX
@@ -688,19 +691,77 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             person__source=person_source_filter,
             person__source_person_id=person_id_filter,
         )
-        show_person_matches = ItemPersonCredit.objects.filter(
+        season_person_credits = ItemPersonCredit.objects.filter(
+            item_id=models.OuterRef("related_season__item_id"),
+        )
+        season_person_matches = season_person_credits.filter(
+            person__source=person_source_filter,
+            person__source_person_id=person_id_filter,
+        )
+        season_has_cast_credits = models.Exists(
+            ItemPersonCredit.objects.filter(
+                item_id=models.OuterRef("related_season__item_id"),
+                role_type=CreditRoleType.CAST.value,
+            ),
+        )
+        season_has_crew_credits = models.Exists(
+            ItemPersonCredit.objects.filter(
+                item_id=models.OuterRef("related_season__item_id"),
+                role_type=CreditRoleType.CREW.value,
+            ),
+        )
+        season_has_usable_credits = models.Exists(
+            MetadataBackfillState.objects.filter(
+                item_id=models.OuterRef("related_season__item_id"),
+                field=MetadataBackfillField.CREDITS,
+                last_success_at__isnull=False,
+                strategy_version__gte=CREDITS_BACKFILL_VERSION,
+            ),
+        )
+        show_cast_person_matches = ItemPersonCredit.objects.filter(
             item_id=models.OuterRef("related_season__related_tv__item_id"),
             person__source=person_source_filter,
             person__source_person_id=person_id_filter,
         ).filter(
-            regular_show_cast_filter | ~models.Q(role_type=CreditRoleType.CAST.value),
+            regular_show_cast_filter,
+        )
+        show_noncast_person_matches = ItemPersonCredit.objects.filter(
+            item_id=models.OuterRef("related_season__related_tv__item_id"),
+            person__source=person_source_filter,
+            person__source_person_id=person_id_filter,
+        ).filter(
+            role_type=CreditRoleType.CREW.value,
+        )
+        show_has_usable_credits = models.Exists(
+            MetadataBackfillState.objects.filter(
+                item_id=models.OuterRef("related_season__related_tv__item_id"),
+                field=MetadataBackfillField.CREDITS,
+                last_success_at__isnull=False,
+                strategy_version__gte=CREDITS_BACKFILL_VERSION,
+            ),
         )
         episodes = episodes.annotate(
             has_episode_person=models.Exists(episode_person_matches),
-            has_show_person=models.Exists(show_person_matches),
+            has_season_person=models.Exists(season_person_matches),
+            season_has_cast_credits=season_has_cast_credits,
+            season_has_crew_credits=season_has_crew_credits,
+            season_has_usable_credits=season_has_usable_credits,
+            has_show_cast_person=models.Exists(show_cast_person_matches),
+            has_show_noncast_person=models.Exists(show_noncast_person_matches),
+            show_has_usable_credits=show_has_usable_credits,
         ).filter(
             models.Q(has_episode_person=True)
-            | models.Q(has_show_person=True),
+            | models.Q(has_season_person=True)
+            | (
+                (models.Q(season_has_cast_credits=False) | models.Q(season_has_usable_credits=False))
+                & models.Q(has_show_cast_person=True)
+                & models.Q(show_has_usable_credits=True)
+            )
+            | (
+                (models.Q(season_has_crew_credits=False) | models.Q(season_has_usable_credits=False))
+                & models.Q(has_show_noncast_person=True)
+                & models.Q(show_has_usable_credits=True)
+            ),
         )
     if target_media_id and target_source and (
         media_type_filter == MediaTypes.TV.value

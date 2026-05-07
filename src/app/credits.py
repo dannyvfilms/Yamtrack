@@ -7,9 +7,14 @@ from datetime import date
 from django.db import transaction
 
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
     CreditRoleType,
+    Item,
     ItemPersonCredit,
     ItemStudioCredit,
+    MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
     Person,
     PersonGender,
     Sources,
@@ -62,6 +67,145 @@ def is_regular_show_cast_credit(source, sort_order):
         sort_order is not None
         and sort_order < TMDB_SHOW_REGULAR_CAST_SORT_ORDER_CUTOFF
     )
+
+
+def is_usable_tv_show_credit(source, role_type, sort_order):
+    """Return whether a show-level TV credit is usable as attribution fallback."""
+    if role_type != CreditRoleType.CAST.value:
+        return True
+    return is_regular_show_cast_credit(source, sort_order)
+
+
+def current_credits_backfill_item_ids(item_ids):
+    """Return item IDs whose credits are backed by the current TMDB strategy."""
+    normalized_ids = []
+    for item_id in item_ids or []:
+        try:
+            parsed = int(item_id)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            normalized_ids.append(parsed)
+    if not normalized_ids:
+        return set()
+    return set(
+        MetadataBackfillState.objects.filter(
+            field=MetadataBackfillField.CREDITS,
+            item_id__in=normalized_ids,
+            give_up=False,
+            fail_count=0,
+            last_success_at__isnull=False,
+            strategy_version__gte=CREDITS_BACKFILL_VERSION,
+        ).values_list("item_id", flat=True),
+    )
+
+
+def usable_credits_backfill_item_ids(item_ids):
+    """Return item IDs whose stored TMDB credits remain usable for reads."""
+    normalized_ids = []
+    for item_id in item_ids or []:
+        try:
+            parsed = int(item_id)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            normalized_ids.append(parsed)
+    if not normalized_ids:
+        return set()
+    return set(
+        MetadataBackfillState.objects.filter(
+            field=MetadataBackfillField.CREDITS,
+            item_id__in=normalized_ids,
+            last_success_at__isnull=False,
+            strategy_version__gte=CREDITS_BACKFILL_VERSION,
+        ).values_list("item_id", flat=True),
+    )
+
+
+def missing_credits_backfill_item_ids(item_ids):
+    """Return TMDB item IDs that still need credits backfill."""
+    normalized_ids = []
+    for item_id in item_ids or []:
+        try:
+            parsed = int(item_id)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            normalized_ids.append(parsed)
+    normalized_ids = sorted(set(normalized_ids))
+    if not normalized_ids:
+        return []
+
+    candidate_items = list(
+        Item.objects.filter(
+            id__in=normalized_ids,
+            source=Sources.TMDB.value,
+            media_type__in=[
+                MediaTypes.MOVIE.value,
+                MediaTypes.TV.value,
+                MediaTypes.SEASON.value,
+                MediaTypes.EPISODE.value,
+            ],
+        ).values("id", "media_type"),
+    )
+    if not candidate_items:
+        return []
+
+    candidate_ids = {row["id"] for row in candidate_items}
+    media_type_by_id = {row["id"]: row["media_type"] for row in candidate_items}
+    current_credit_ids = current_credits_backfill_item_ids(candidate_ids)
+
+    person_credit_ids = set(
+        ItemPersonCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
+    )
+    cast_credit_ids = set(
+        ItemPersonCredit.objects.filter(
+            item_id__in=candidate_ids,
+            role_type=CreditRoleType.CAST.value,
+        ).values_list("item_id", flat=True),
+    )
+    studio_credit_ids = set(
+        ItemStudioCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
+    )
+
+    missing_ids = []
+    for item_id in sorted(candidate_ids):
+        media_type = media_type_by_id.get(item_id)
+        has_people = item_id in person_credit_ids
+        has_cast = item_id in cast_credit_ids
+        has_studios = item_id in studio_credit_ids
+        if media_type == MediaTypes.SEASON.value:
+            if not has_cast or item_id not in current_credit_ids:
+                missing_ids.append(item_id)
+            continue
+        if media_type == MediaTypes.TV.value:
+            if not has_cast or not has_studios or item_id not in current_credit_ids:
+                missing_ids.append(item_id)
+            continue
+        if media_type == MediaTypes.EPISODE.value:
+            if not has_people or item_id not in current_credit_ids:
+                missing_ids.append(item_id)
+            continue
+        if not has_people or not has_studios:
+            missing_ids.append(item_id)
+    return missing_ids
+
+
+def should_count_tv_show_credit_for_episode(
+    source,
+    role_type,
+    sort_order,
+    season_has_usable_credits,
+    show_has_current_credits,
+):
+    """Return whether a show-level TV credit should count for a played episode."""
+    if season_has_usable_credits:
+        return False
+    if not show_has_current_credits:
+        return False
+    if sort_order is None:
+        return True
+    return is_usable_tv_show_credit(source, role_type, sort_order)
 
 
 def _normalize_credit_rows(rows):

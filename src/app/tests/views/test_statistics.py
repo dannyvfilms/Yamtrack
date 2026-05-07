@@ -75,6 +75,130 @@ class StatisticsViewTests(TestCase):
             end_date=played_at,
         )
 
+    @staticmethod
+    def _credit(person, role="Lead", sort_order=0):
+        return {
+            "person": person,
+            "role": role,
+            "sort_order": sort_order,
+        }
+
+    def _mark_tmdb_credits_current(self, *items):
+        for item in items:
+            MetadataBackfillState.objects.update_or_create(
+                item=item,
+                field=MetadataBackfillField.CREDITS,
+                defaults={
+                    "last_success_at": timezone.now(),
+                    "strategy_version": CREDITS_BACKFILL_VERSION,
+                },
+            )
+
+    def _create_tmdb_tv_show(self, media_id, title, studio, show_credits, seasons, base_time):
+        tv_item = Item.objects.create(
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title=title,
+            image=f"http://example.com/{media_id}.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        ItemStudioCredit.objects.create(item=tv_item, studio=studio)
+        for credit in show_credits:
+            ItemPersonCredit.objects.create(
+                item=tv_item,
+                person=credit["person"],
+                role_type=CreditRoleType.CAST.value,
+                role=credit.get("role", "Lead"),
+                sort_order=credit.get("sort_order"),
+            )
+        self._mark_tmdb_credits_current(tv_item)
+
+        season_items = {}
+        episode_items = {}
+        for season_number, season_spec in seasons.items():
+            season_item = Item.objects.create(
+                media_id=media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title=title,
+                image=f"http://example.com/{media_id}-s{season_number}.jpg",
+                season_number=season_number,
+            )
+            season = Season.objects.create(
+                item=season_item,
+                user=self.user,
+                related_tv=tv,
+                status=Status.COMPLETED.value,
+            )
+            season_items[season_number] = season_item
+
+            for credit in season_spec.get("season_credits", []):
+                ItemPersonCredit.objects.create(
+                    item=season_item,
+                    person=credit["person"],
+                    role_type=CreditRoleType.CAST.value,
+                    role=credit.get("role", "Lead"),
+                    sort_order=credit.get("sort_order"),
+                )
+            for credit in season_spec.get("crew", []):
+                ItemPersonCredit.objects.create(
+                    item=season_item,
+                    person=credit["person"],
+                    role_type=CreditRoleType.CREW.value,
+                    role=credit.get("role", "Director"),
+                    department=credit.get("department", "Directing"),
+                    sort_order=credit.get("sort_order"),
+                )
+            self._mark_tmdb_credits_current(season_item)
+
+            for episode_spec in season_spec.get("episodes", []):
+                episode_number = episode_spec["episode_number"]
+                episode_item = Item.objects.create(
+                    media_id=media_id,
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.EPISODE.value,
+                    title=episode_spec.get("title") or f"{title} Episode {season_number}-{episode_number}",
+                    image=episode_spec.get("image") or f"http://example.com/{media_id}-s{season_number}e{episode_number}.jpg",
+                    season_number=season_number,
+                    episode_number=episode_number,
+                    runtime_minutes=episode_spec.get("runtime_minutes", 45),
+                )
+                Episode.objects.create(
+                    item=episode_item,
+                    related_season=season,
+                    end_date=base_time + timedelta(minutes=episode_spec.get("offset_minutes", 0)),
+                )
+                episode_items[(season_number, episode_number)] = episode_item
+                for credit in episode_spec.get("credits", []):
+                    ItemPersonCredit.objects.create(
+                        item=episode_item,
+                        person=credit["person"],
+                        role_type=CreditRoleType.CAST.value,
+                        role=credit.get("role", "Guest"),
+                        sort_order=credit.get("sort_order"),
+                    )
+                for credit in episode_spec.get("crew", []):
+                    ItemPersonCredit.objects.create(
+                        item=episode_item,
+                        person=credit["person"],
+                        role_type=CreditRoleType.CREW.value,
+                        role=credit.get("role", "Director"),
+                        department=credit.get("department", "Directing"),
+                        sort_order=credit.get("sort_order"),
+                    )
+                self._mark_tmdb_credits_current(episode_item)
+
+        return {
+            "tv_item": tv_item,
+            "season_items": season_items,
+            "episode_items": episode_items,
+        }
+
     def test_statistics_view_default_date_range(self):
         """Test the statistics view with default date range (last year)."""
         # Call the view
@@ -2181,12 +2305,7 @@ class StatisticsViewTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Guest",
         )
-        MetadataBackfillState.objects.create(
-            item=episode_item_one,
-            field=MetadataBackfillField.CREDITS,
-            last_success_at=timezone.now(),
-            strategy_version=CREDITS_BACKFILL_VERSION,
-        )
+        self._mark_tmdb_credits_current(show_item, season_item, episode_item_one, episode_item_two)
 
         mock_enqueue.reset_mock()
         statistics_cache.invalidate_statistics_cache(self.user.id)
@@ -2285,12 +2404,7 @@ class StatisticsViewTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Guest",
         )
-        MetadataBackfillState.objects.create(
-            item=episode_item,
-            field=MetadataBackfillField.CREDITS,
-            last_success_at=timezone.now(),
-            strategy_version=CREDITS_BACKFILL_VERSION,
-        )
+        self._mark_tmdb_credits_current(show_item, season_item, episode_item)
 
         statistics_cache.invalidate_statistics_cache(self.user.id)
         response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
@@ -2406,18 +2520,7 @@ class StatisticsViewTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Guest Star",
         )
-        MetadataBackfillState.objects.create(
-            item=first_episode_item,
-            field=MetadataBackfillField.CREDITS,
-            last_success_at=timezone.now(),
-            strategy_version=CREDITS_BACKFILL_VERSION,
-        )
-        MetadataBackfillState.objects.create(
-            item=second_episode_item,
-            field=MetadataBackfillField.CREDITS,
-            last_success_at=timezone.now(),
-            strategy_version=CREDITS_BACKFILL_VERSION,
-        )
+        self._mark_tmdb_credits_current(show_item, season_item, first_episode_item, second_episode_item)
 
         statistics_cache.invalidate_statistics_cache(self.user.id)
         response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
@@ -2429,6 +2532,283 @@ class StatisticsViewTests(TestCase):
         }
         self.assertEqual(by_name["High-Order Guest"]["plays"], 1)
         self.assertEqual(by_name["Other Episode Actor"]["plays"], 1)
+
+    @patch("app.providers.services.get_media_metadata", return_value={})
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_statistics_top_talent_uses_season_episode_and_show_fallback_credit_ladder(
+        self,
+        _mock_enqueue,
+        _mock_get_media_metadata,
+    ):
+        cache.clear()
+        self.client.force_login(self.user)
+        base_time = timezone.now().replace(second=0, microsecond=0)
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="9900",
+            name="Season Ladder Studio",
+        )
+
+        stable_woman = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9901",
+            name="Stable Woman",
+            gender=PersonGender.FEMALE.value,
+        )
+        stable_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9902",
+            name="Stable Helper",
+            gender=PersonGender.MALE.value,
+        )
+        left_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9903",
+            name="Left Man",
+            gender=PersonGender.MALE.value,
+        )
+        left_other = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9904",
+            name="Left Other",
+            gender=PersonGender.MALE.value,
+        )
+        left_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9905",
+            name="Left Helper",
+            gender=PersonGender.MALE.value,
+        )
+        join_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9906",
+            name="Join Man",
+            gender=PersonGender.MALE.value,
+        )
+        join_other = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9907",
+            name="Join Other",
+            gender=PersonGender.MALE.value,
+        )
+        join_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9908",
+            name="Join Helper",
+            gender=PersonGender.MALE.value,
+        )
+        guest_woman = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9909",
+            name="Guest Woman",
+            gender=PersonGender.FEMALE.value,
+        )
+        guest_show_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9910",
+            name="Guest Show Helper",
+            gender=PersonGender.MALE.value,
+        )
+        guest_episode_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9911",
+            name="Guest Episode Helper",
+            gender=PersonGender.MALE.value,
+        )
+        season_regular_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9912",
+            name="Season Regular Man",
+            gender=PersonGender.MALE.value,
+        )
+        fallback_man = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9913",
+            name="Fallback Man",
+            gender=PersonGender.MALE.value,
+        )
+        mixed_episode_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9914",
+            name="Mixed Episode Helper",
+            gender=PersonGender.MALE.value,
+        )
+        mixed_season2_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9915",
+            name="Mixed Season 2 Helper",
+            gender=PersonGender.MALE.value,
+        )
+        mixed_season2_director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="9916",
+            name="Mixed Season 2 Director",
+            gender=PersonGender.UNKNOWN.value,
+        )
+
+        self._create_tmdb_tv_show(
+            "9901",
+            "Stable Ensemble",
+            studio,
+            show_credits=[self._credit(stable_woman, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(stable_woman, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 0,
+                            "credits": [self._credit(stable_helper, "Support")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [self._credit(stable_woman, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 1,
+                            "credits": [self._credit(stable_helper, "Support")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9902",
+            "Leaving Cast",
+            studio,
+            show_credits=[self._credit(left_man, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(left_man, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 2,
+                            "credits": [self._credit(left_helper, "Support")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [self._credit(left_other, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 3,
+                            "credits": [self._credit(left_helper, "Support")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9903",
+            "Joining Cast",
+            studio,
+            show_credits=[self._credit(join_man, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(join_other, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 4,
+                            "credits": [self._credit(join_helper, "Support")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [self._credit(join_man, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 5,
+                            "credits": [self._credit(join_helper, "Support")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9904",
+            "Guest Star Show",
+            studio,
+            show_credits=[self._credit(guest_show_helper, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 6,
+                            "credits": [self._credit(guest_woman, "Guest")],
+                        },
+                        {
+                            "episode_number": 2,
+                            "offset_minutes": 7,
+                            "credits": [self._credit(guest_episode_helper, "Guest")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+        self._create_tmdb_tv_show(
+            "9905",
+            "Mixed Fallback Show",
+            studio,
+            show_credits=[self._credit(fallback_man, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(season_regular_man, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 8,
+                            "credits": [self._credit(mixed_episode_helper, "Guest")],
+                        },
+                        {
+                            "episode_number": 2,
+                            "offset_minutes": 9,
+                            "credits": [self._credit(mixed_episode_helper, "Guest")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [],
+                    "crew": [self._credit(mixed_season2_director, "Director")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 10,
+                            "credits": [self._credit(mixed_season2_helper, "Guest")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        top_talent = response.context["top_talent"]
+        top_people = {
+            entry["name"]: entry
+            for entry in top_talent["top_actors"] + top_talent["top_actresses"]
+        }
+        self.assertEqual(top_people["Stable Woman"]["plays"], 2)
+        self.assertEqual(top_people["Left Man"]["plays"], 1)
+        self.assertEqual(top_people["Join Man"]["plays"], 1)
+        self.assertEqual(top_people["Guest Woman"]["plays"], 1)
+        self.assertEqual(top_people["Season Regular Man"]["plays"], 2)
+        self.assertEqual(top_people["Fallback Man"]["plays"], 1)
+        self.assertGreaterEqual(len(top_people), 6)
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.tasks.enqueue_credits_backfill_items")
