@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -1231,6 +1231,225 @@ class PlexWebhookTests(TestCase):
             user=self.user,
         )
         self.assertEqual(anime.progress, 1)
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show", return_value="900001")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_routes_to_anime_when_tvdb_confirms_anime(
+        self,
+        mock_tv_with_seasons,
+        mock_resolve_tvdb_id,
+        mock_tvdb_tv,
+    ):
+        """Brand-new TV shows should route to Anime when TVDB classifies them as Anime."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+        mock_tvdb_tv.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "provider_external_ids": {"mal_id": "52991"},
+            "genres": ["Action", "Anime"],
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/900001",
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Anime Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777777"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            Anime.objects.filter(item__media_id="52991", user=self.user).exists(),
+        )
+        self.assertFalse(
+            TV.objects.filter(item__media_id="777777", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_called_once_with("777777", mock_tv_with_seasons.return_value)
+        mock_tvdb_tv.assert_called_once_with("900001")
+
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_stays_tv_when_anime_is_disabled(
+        self,
+        mock_tv_with_seasons,
+        mock_tvdb_tv,
+        mock_resolve_tvdb_id,
+    ):
+        """Anime routing should not run when the user has Anime disabled."""
+        self.user.anime_enabled = False
+        self.user.save(update_fields=["anime_enabled"])
+        mock_tv_with_seasons.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Anime Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777778"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="777778", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Anime.objects.filter(item__media_id="52991", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_not_called()
+        mock_tvdb_tv.assert_not_called()
+
+    @override_settings(TVDB_API_KEY="")
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_stays_tv_when_tvdb_is_disabled(
+        self,
+        mock_tv_with_seasons,
+        mock_tvdb_tv,
+        mock_resolve_tvdb_id,
+    ):
+        """Anime routing should not run when TVDB is not configured."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Anime Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777779"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="777779", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Anime.objects.filter(item__media_id="52991", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_not_called()
+        mock_tvdb_tv.assert_not_called()
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show", return_value="900002")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_stays_tv_when_tvdb_genre_is_not_anime(
+        self,
+        mock_tv_with_seasons,
+        mock_resolve_tvdb_id,
+        mock_tvdb_tv,
+    ):
+        """Anime routing should fall back to TV when TVDB does not confirm Anime."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Drama Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+        mock_tvdb_tv.return_value = {
+            "title": "Drama Candidate",
+            "image": "",
+            "provider_external_ids": {"mal_id": "52992"},
+            "genres": ["Drama"],
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/900002",
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Drama Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777780"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="777780", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Anime.objects.filter(item__media_id="52992", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_called_once_with("777780", mock_tv_with_seasons.return_value)
+        mock_tvdb_tv.assert_called_once_with("900002")
 
     def test_ignored_event_types(self):
         """Test webhook ignores irrelevant event types."""

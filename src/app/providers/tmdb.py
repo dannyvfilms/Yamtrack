@@ -269,6 +269,11 @@ def _discover_tmdb_tvdb_id_from_search(media_id, tv_data=None):
     return None
 
 
+def resolve_tvdb_id_for_tmdb_show(media_id, tv_data=None):
+    """Return a TVDB series id for a TMDB show using cached data or search."""
+    return _discover_tmdb_tvdb_id_from_search(media_id, tv_data=tv_data)
+
+
 def _normalize_season_numbers(season_numbers):
     """Normalize season numbers from route and form inputs before TMDB lookups."""
     normalized_seasons = []

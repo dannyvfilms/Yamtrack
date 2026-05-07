@@ -262,6 +262,34 @@ class TVDBProviderTests(TestCase):
             "To You, in 2000 Years",
         )
 
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.providers.tvdb.tv")
+    def test_series_has_anime_genre_uses_supplied_metadata(self, mock_tv):
+        """Anime genre detection should use supplied metadata without refetching."""
+        result = tvdb.series_has_anime_genre(
+            "81189",
+            tv_data={"genres": ["Drama", "Anime"]},
+        )
+
+        self.assertTrue(result)
+        mock_tv.assert_not_called()
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.providers.tvdb.tv")
+    def test_series_has_anime_genre_fetches_tvdb_metadata(self, mock_tv):
+        """Anime genre detection should fetch TVDB metadata when needed."""
+        mock_tv.return_value = {
+            "genres": ["Action", "Anime"],
+        }
+
+        result = tvdb.series_has_anime_genre("81189")
+
+        self.assertTrue(result)
+        mock_tv.assert_called_once_with(
+            "81189",
+            routed_media_type=MediaTypes.TV.value,
+        )
+
     @patch("app.providers.tvdb._request")
     def test_search_prefers_english_translation_rows(self, mock_request):
         """Search results should prefer English names from translation arrays."""

@@ -873,6 +873,59 @@ class Metadata(TestCase):
             1,
         )
 
+    @patch("app.providers.tvdb.search")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    def test_resolve_tvdb_id_for_tmdb_show_uses_existing_tvdb_id_without_search(
+        self,
+        mock_tvdb_search,
+    ):
+        """The TMDB->TVDB resolver should prefer an existing TVDB id from metadata."""
+        result = tmdb.resolve_tvdb_id_for_tmdb_show(
+            "294737",
+            {
+                "title": "Guz Khan's Custom Cars",
+                "tvdb_id": "468632",
+                "details": {"first_air_date": "2026-01-19"},
+            },
+        )
+
+        self.assertEqual(result, "468632")
+        mock_tvdb_search.assert_not_called()
+
+    @patch("app.providers.tvdb.search")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    def test_resolve_tvdb_id_for_tmdb_show_searches_exact_tvdb_title_match(
+        self,
+        mock_tvdb_search,
+    ):
+        """The TMDB->TVDB resolver should fall back to exact TVDB title matching."""
+        tmdb.cache.clear()
+        mock_tvdb_search.return_value = {
+            "results": [
+                {
+                    "media_id": "468632",
+                    "title": "Guz Khan's Custom Cars",
+                    "year": "2026",
+                },
+            ],
+        }
+
+        result = tmdb.resolve_tvdb_id_for_tmdb_show(
+            "294737",
+            {
+                "title": "Guz Khan's Custom Cars",
+                "details": {"first_air_date": "2026-01-19"},
+            },
+        )
+
+        self.assertEqual(result, "468632")
+        self.assertEqual(tmdb.get_tvdb_id_override("294737"), "468632")
+        mock_tvdb_search.assert_called_once_with(
+            MediaTypes.TV.value,
+            "Guz Khan's Custom Cars",
+            1,
+        )
+
     @patch("app.providers.tmdb.timezone.localdate")
     @patch("app.providers.tmdb.services.api_request")
     def test_tv_changes(self, mock_api_request, mock_localdate):

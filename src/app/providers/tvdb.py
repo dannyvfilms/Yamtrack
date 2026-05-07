@@ -401,6 +401,30 @@ def _get_genres(row: dict | None):
     return genres or None
 
 
+def series_has_anime_genre(
+    media_id,
+    *,
+    routed_media_type=MediaTypes.TV.value,
+    tv_data=None,
+):
+    """Return whether a TVDB series is tagged with the Anime genre."""
+    if not enabled():
+        return False
+
+    if not isinstance(tv_data, dict):
+        tv_data = tv(media_id, routed_media_type=routed_media_type)
+    if not isinstance(tv_data, dict):
+        return False
+
+    from app import metadata_utils  # noqa: PLC0415
+
+    genres = metadata_utils.extract_metadata_genres(tv_data)
+    return metadata_utils.genre_list_has_name(
+        genres,
+        metadata_utils.ANIME_SUPPLEMENT_GENRE,
+    )
+
+
 def _get_remote_ids_map(row: dict | None) -> dict[str, str]:
     """Return normalized remote IDs for a TVDB entity."""
     remote_ids: dict[str, str] = {}

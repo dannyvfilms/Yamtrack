@@ -1012,11 +1012,7 @@ def _tmdb_tv_item_is_tvdb_anime(item: Item, tmdb_metadata: dict | None) -> bool:
         provider=Sources.TVDB.value,
         provider_media_type=MediaTypes.TV.value,
     )
-    tvdb_genres = metadata_utils.extract_metadata_genres(tvdb_metadata)
-    return metadata_utils.genre_list_has_name(
-        tvdb_genres,
-        metadata_utils.ANIME_SUPPLEMENT_GENRE,
-    )
+    return tvdb.series_has_anime_genre(tvdb_id, tv_data=tvdb_metadata)
 
 
 def _populate_genres_for_items(items, delay_seconds):
