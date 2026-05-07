@@ -796,6 +796,97 @@ class Metadata(TestCase):
             "Jane Director",
         )
 
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_batches_requests_within_tmdb_append_limit(
+        self,
+        mock_api_request,
+    ):
+        """Season fetches should split large TV batches before TMDB rejects them."""
+        tmdb.cache.clear()
+
+        def _build_season_payload(season_number):
+            episode_date = f"2024-01-{season_number:02d}"
+            return {
+                "name": f"Season {season_number}",
+                "overview": f"Season {season_number} overview",
+                "season_number": season_number,
+                "poster_path": f"/season{season_number}.jpg",
+                "air_date": episode_date,
+                "vote_average": 0,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": f"Episode {season_number}-1",
+                        "overview": "Episode overview",
+                        "still_path": None,
+                        "runtime": 29,
+                        "vote_count": 0,
+                        "air_date": episode_date,
+                    },
+                ],
+            }
+
+        tv_response = {
+            "id": 61746,
+            "name": "Inside No. 9",
+            "original_name": "Inside No. 9",
+            "poster_path": "/inside-no-9.jpg",
+            "overview": "A test show.",
+            "genres": [],
+            "vote_average": 8.0,
+            "vote_count": 10,
+            "production_companies": [],
+            "production_countries": [],
+            "spoken_languages": [],
+            "recommendations": {"results": []},
+            "external_ids": {"tvdb_id": "12345"},
+            "watch/providers": {"results": {}},
+            "aggregate_credits": {"cast": [], "crew": []},
+            "alternative_titles": {"results": []},
+            "episode_run_time": [29],
+            "first_air_date": "2014-05-07",
+            "last_air_date": "2023-05-17",
+            "status": "Ended",
+            "number_of_seasons": 8,
+            "number_of_episodes": 8,
+            "seasons": [],
+        }
+        for season_number in range(1, 9):
+            tv_response["seasons"].append(
+                {
+                    "season_number": season_number,
+                    "name": f"Season {season_number}",
+                    "air_date": f"2024-01-{season_number:02d}",
+                    "episode_count": 1,
+                    "poster_path": f"/season{season_number}.jpg",
+                },
+            )
+            tv_response[f"season/{season_number}"] = _build_season_payload(
+                season_number,
+            )
+            tv_response[f"season/{season_number}/watch/providers"] = {
+                "results": {},
+            }
+
+        append_requests = []
+
+        def _mock_api_request(source, _method, url, params=None):
+            self.assertEqual(source, Sources.TMDB.value)
+            self.assertEqual(url, "https://api.themoviedb.org/3/tv/61746")
+            append_to_response = params["append_to_response"]
+            append_requests.append(append_to_response)
+            self.assertLessEqual(len(append_to_response.split(",")), 20)
+            return tv_response
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("61746", list(range(1, 9)))
+
+        self.assertEqual(len(append_requests), 2)
+        self.assertEqual(result["title"], "Inside No. 9")
+        self.assertIn("season/8", result)
+        self.assertEqual(result["season/8"]["season_number"], 8)
+
     @patch("app.providers.tvdb.search")
     @patch("app.providers.tmdb.services.api_request")
     @override_settings(TVDB_API_KEY="test-tvdb-key")
