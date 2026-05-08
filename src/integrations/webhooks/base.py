@@ -1108,6 +1108,49 @@ class BaseWebhookProcessor:
             provider_media_type=MediaTypes.TV.value,
         )
 
+        # For grouped anime (TMDB/TVDB anime tracked with flat progress in Anime library),
+        # create/update Anime instance directly.
+        # Note: This is for TMDB/TVDB anime tracking where the user wants flat tracking.
+        # The episode number is used directly - it is NOT flattened across seasons.
+        # This is distinct from:
+        #   - _handle_anime: ONLY for MAL tracking (flat episode numbers from MAL)
+        #   - TV/Season/Episode tracking: For full TV-style tracking with per-episode records
+        if is_grouped_anime:
+            # Get or create Anime instance with direct episode number
+            anime_instance, anime_created = app.models.Anime.objects.get_or_create(
+                item=tv_item,
+                user=user,
+                defaults={
+                    "status": Status.IN_PROGRESS.value,
+                    "progress": episode_number,
+                },
+            )
+            
+            if anime_created:
+                logger.info(
+                    "Created new anime instance (grouped): %s with progress %d",
+                    tv_metadata["title"],
+                    episode_number,
+                )
+            else:
+                # Update existing instance if needed
+                if anime_instance.progress != episode_number:
+                    anime_instance.progress = episode_number
+                if anime_instance.status != Status.IN_PROGRESS.value:
+                    anime_instance.status = Status.IN_PROGRESS.value
+                if anime_instance.tracker.changed():
+                    anime_instance.save()
+                    logger.info(
+                        "Updated anime instance (grouped): %s with progress %d",
+                        tv_metadata["title"],
+                        episode_number,
+                    )
+            
+            # Queue collection metadata update
+            self._queue_collection_metadata_update(payload, user, tv_item)
+            return
+        
+
         tv_instance, tv_created = app.models.TV.objects.get_or_create(
             item=tv_item,
             user=user,
