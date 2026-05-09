@@ -4,12 +4,13 @@ from pathlib import Path
 from django.apps import apps
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth.decorators import login_not_required
 from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db import IntegrityError
 from django.db.models import prefetch_related_objects
-from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
-from django.shortcuts import redirect, render
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -37,6 +38,7 @@ from users.models import (
     HomeSortChoices,
     MediaSortChoices,
     MediaStatusChoices,
+    User,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,21 +126,54 @@ def progress_edit(request, media_type, instance_id):
     )
 
 
+@login_not_required
 @require_GET
-def media_list(request, media_type):
+def media_list(request, username, media_type):
     """Return the media list page."""
-    layout = request.user.update_preference(
-        f"{media_type}_layout",
-        request.GET.get("layout"),
-    )
-    sort_filter = request.user.update_preference(
-        f"{media_type}_sort",
-        request.GET.get("sort"),
-    )
-    status_filter = request.user.update_preference(
-        f"{media_type}_status",
-        request.GET.get("status"),
-    )
+    target_user = get_object_or_404(User, username=username)
+
+    # if user is looking at own page then update preferences
+    if request.user == target_user:
+        layout = target_user.update_preference(
+            f"{media_type}_layout",
+            request.GET.get("layout"),
+        )
+        sort_filter = target_user.update_preference(
+            f"{media_type}_sort",
+            request.GET.get("sort"),
+        )
+        status_filter = target_user.update_preference(
+            f"{media_type}_status",
+            request.GET.get("status"),
+        )
+    else:
+        # privacy check then media type check
+        if target_user.profile_private:
+            msg = "User not found"
+            raise Http404(msg)
+
+        enabled_media_types = target_user.get_enabled_media_types()
+        if not enabled_media_types:
+            msg = "User doesn't have any media types enabled"
+            raise Http404(msg)
+
+        if media_type not in enabled_media_types:
+            return redirect(
+                "medialist",
+                username=target_user.username,
+                media_type=enabled_media_types[0],
+            )
+
+        layout = request.GET.get("layout") or getattr(
+            target_user, f"{media_type}_layout"
+        )
+        sort_filter = request.GET.get("sort") or getattr(
+            target_user, f"{media_type}_sort"
+        )
+        status_filter = request.GET.get("status") or getattr(
+            target_user, f"{media_type}_status"
+        )
+
     search_query = request.GET.get("search", "")
     page = request.GET.get("page", 1)
 
@@ -148,7 +183,7 @@ def media_list(request, media_type):
 
     # Get media list with filters applied
     media_queryset = BasicMedia.objects.get_media_list(
-        user=request.user,
+        user=target_user,
         media_type=media_type,
         status_filter=status_filter,
         sort_filter=sort_filter,
@@ -175,6 +210,7 @@ def media_list(request, media_type):
         "current_status": status_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
+        "target_user": target_user,
     }
 
     # Handle HTMX requests for partial updates
@@ -185,7 +221,9 @@ def media_list(request, media_type):
             if not media_page.object_list:
                 return HttpResponse(status=204)
             response = HttpResponse()
-            response["HX-Redirect"] = reverse("medialist", args=[media_type])
+            response["HX-Redirect"] = reverse(
+                "medialist", args=[target_user.username, media_type]
+            )
             return response
         if layout == "grid":
             template_name = "app/components/media_grid_items.html"
