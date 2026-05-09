@@ -114,6 +114,52 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/components/media_table_items.html")
 
+    def test_public_media_list_ignores_invalid_filters(self):
+        """Test invalid public filters fall back to the target user's preferences."""
+        self.external_user.profile_private = False
+        self.external_user.save(update_fields=["profile_private"])
+
+        response = self.client.get(
+            reverse(
+                "medialist", args=[self.external_user.username, MediaTypes.MOVIE.value]
+            )
+            + "?status=invalid&sort=bad_field&layout=invalid",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["current_status"], self.external_user.movie_status
+        )
+        self.assertEqual(
+            response.context["current_sort"], self.external_user.movie_sort
+        )
+        self.assertEqual(
+            response.context["current_layout"], self.external_user.movie_layout
+        )
+
+    def test_anonymous_user_can_view_public_media_list(self):
+        """Test anonymous users can view public media lists."""
+        self.external_user.profile_private = False
+        self.external_user.save(update_fields=["profile_private"])
+        self.client.logout()
+
+        response = self.client.get(
+            reverse(
+                "medialist", args=[self.external_user.username, MediaTypes.MOVIE.value]
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("media_list", response.context)
+
+    def test_profile_private_defaults_to_true(self):
+        """Test new users have private profiles by default."""
+        user = get_user_model().objects.create_user(
+            username="private-default",
+        )
+
+        self.assertTrue(user.profile_private)
+
     def test_private_media_list(self):
         """Test the private media list view."""
         response = self.client.get(

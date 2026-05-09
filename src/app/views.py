@@ -164,14 +164,17 @@ def media_list(request, username, media_type):
                 media_type=enabled_media_types[0],
             )
 
-        layout = request.GET.get("layout") or getattr(
-            target_user, f"{media_type}_layout"
+        layout = target_user.get_valid_preference(
+            f"{media_type}_layout",
+            request.GET.get("layout"),
         )
-        sort_filter = request.GET.get("sort") or getattr(
-            target_user, f"{media_type}_sort"
+        sort_filter = target_user.get_valid_preference(
+            f"{media_type}_sort",
+            request.GET.get("sort"),
         )
-        status_filter = request.GET.get("status") or getattr(
-            target_user, f"{media_type}_status"
+        status_filter = target_user.get_valid_preference(
+            f"{media_type}_status",
+            request.GET.get("status"),
         )
 
     search_query = request.GET.get("search", "")
