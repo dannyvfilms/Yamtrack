@@ -1855,13 +1855,15 @@
       </div>
 
       {% with talent=top_talent %}
-      {% with talent_sort=request.user.top_talent_sort_by|default:talent.sort_by|default:'plays' %}
+      {% with talent_sort=request.user.top_talent_sort_by|default:'plays' %}
       {% if talent.top_actors or talent.top_actresses or talent.top_directors or talent.top_writers or talent.top_studios %}
       <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-8"
                x-data="{
                  open: false,
                  selectedSort: '{{ talent_sort|escapejs }}',
                  currentRangeName: '{{ selected_range_name|default:""|escapejs }}',
+                 currentStartDate: '{{ start_date_str|default:""|escapejs }}',
+                 currentEndDate: '{{ end_date_str|default:""|escapejs }}',
                  selectedLabel: '',
                  init() {
                    this.selectedLabel = this.selectedSort === 'time' ? 'Time' : (this.selectedSort === 'titles' ? 'Titles' : 'Plays');
@@ -1871,6 +1873,8 @@
                      this.open = false;
                      return;
                    }
+                   const previousSort = this.selectedSort;
+                   const previousLabel = this.selectedLabel;
                    this.selectedSort = sortBy;
                    this.selectedLabel = label;
                    this.open = false;
@@ -1879,6 +1883,12 @@
                      body.set('sort_by', sortBy);
                      if (this.currentRangeName) {
                        body.set('range_name', this.currentRangeName);
+                     }
+                     if (this.currentStartDate) {
+                       body.set('start_date', this.currentStartDate);
+                     }
+                     if (this.currentEndDate) {
+                       body.set('end_date', this.currentEndDate);
                      }
                      const response = await fetch('{% url 'update_top_talent_sort' %}', {
                        method: 'POST',
@@ -1895,8 +1905,14 @@
                      }
                      if (data.requires_reload) {
                        window.location.reload();
+                       return;
+                     }
+                     if (data.grid_html && this.$refs.topTalentGrid) {
+                       this.$refs.topTalentGrid.innerHTML = data.grid_html;
                      }
                    } catch (error) {
+                     this.selectedSort = previousSort;
+                     this.selectedLabel = previousLabel;
                      console.error('Failed to save top talent sort:', error);
                    }
                  }
@@ -1957,19 +1973,19 @@
           </div>
         </div>
 
-        {% if talent.by_sort %}
-          <div x-show="selectedSort === 'plays'" x-cloak>
-            {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.plays talent_sort='plays' %}
-          </div>
-          <div x-show="selectedSort === 'time'" x-cloak>
-            {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.time talent_sort='time' %}
-          </div>
-          <div x-show="selectedSort === 'titles'" x-cloak>
-            {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.titles talent_sort='titles' %}
-          </div>
-        {% else %}
-          {% include "app/components/top_talent_grid.html" with talent=talent talent_sort=talent_sort %}
-        {% endif %}
+        <div id="top-talent-grid" x-ref="topTalentGrid">
+          {% if talent.by_sort %}
+            {% if talent_sort == 'time' %}
+              {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.time talent_sort='time' %}
+            {% elif talent_sort == 'titles' %}
+              {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.titles talent_sort='titles' %}
+            {% else %}
+              {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.plays talent_sort='plays' %}
+            {% endif %}
+          {% else %}
+            {% include "app/components/top_talent_grid.html" with talent=talent talent_sort=talent_sort %}
+          {% endif %}
+        </div>
       </section>
       {% endif %}
       {% endwith %}
@@ -2129,7 +2145,7 @@
                   <a href="{{ item.media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     {% if item.media.item.image and item.media.item.image != IMG_NONE %}
-                    <img src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="w-10 h-10 rounded object-cover">
+                    <img src="{{ IMG_NONE }}" data-src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2185,7 +2201,7 @@
                   <a href="{{ media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     {% if media.item.image and media.item.image != IMG_NONE %}
-                    <img src="{{ media.item.image }}" alt="{{ media.item.title }}" class="w-10 h-10 rounded object-cover">
+                    <img src="{{ IMG_NONE }}" data-src="{{ media.item.image }}" alt="{{ media.item.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2374,7 +2390,7 @@
                   <a href="{{ item.media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     {% if item.media.item.image and item.media.item.image != IMG_NONE %}
-                    <img src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="w-10 h-10 rounded object-cover">
+                    <img src="{{ IMG_NONE }}" data-src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2430,7 +2446,7 @@
                   <a href="{{ media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     {% if media.item.image and media.item.image != IMG_NONE %}
-                    <img src="{{ media.item.image }}" alt="{{ media.item.title }}" class="w-10 h-10 rounded object-cover">
+                    <img src="{{ IMG_NONE }}" data-src="{{ media.item.image }}" alt="{{ media.item.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2605,7 +2621,7 @@
                   <a href="{{ item.media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     {% if item.media.item.image and item.media.item.image != IMG_NONE %}
-                    <img src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="w-10 h-10 rounded object-cover">
+                    <img src="{{ IMG_NONE }}" data-src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2872,8 +2888,8 @@
                   {% for artist in music_consumption.top_artists %}
                   <a href="{{ artist|music_artist_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if artist.image %}
-                    <img src="{{ artist.image }}" alt="{{ artist.name }}" class="w-10 h-10 rounded-full object-cover">
+                    {% if artist.image and artist.image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ artist.image }}" alt="{{ artist.name }}" class="lazyload w-10 h-10 rounded-full object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded-full bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2903,8 +2919,8 @@
                   {% for album in music_consumption.top_albums %}
                   <a href="{{ album|music_album_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if album.image %}
-                    <img src="{{ album.image }}" alt="{{ album.title }}" class="w-10 h-10 rounded object-cover">
+                    {% if album.image and album.image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ album.image }}" alt="{{ album.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2938,8 +2954,8 @@
                   <div class="flex items-center space-x-3">
                   {% endif %}
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if track.album_image %}
-                    <img src="{{ track.album_image }}" alt="{{ track.album }}" class="w-10 h-10 rounded object-cover">
+                    {% if track.album_image and track.album_image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ track.album_image }}" alt="{{ track.album }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -3208,8 +3224,8 @@
                   {% for episode in podcast_consumption.most_played %}
                   <a href="{% if episode.show_id and episode.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=episode.podcast_uuid title=episode.slug|default:episode.title|slug %}{% elif episode.show_id %}{% url 'podcast_show_detail' episode.show_id %}{% else %}#{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if episode.image %}
-                    <img src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="w-10 h-10 rounded object-cover">
+                    {% if episode.image and episode.image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -3239,8 +3255,8 @@
                   {% for episode in podcast_consumption.most_listened %}
                   <a href="{% if episode.show_id and episode.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=episode.podcast_uuid title=episode.slug|default:episode.title|slug %}{% elif episode.show_id %}{% url 'podcast_show_detail' episode.show_id %}{% else %}#{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if episode.image %}
-                    <img src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="w-10 h-10 rounded object-cover">
+                    {% if episode.image and episode.image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -3270,8 +3286,8 @@
                   {% for episode in podcast_consumption.longest_episodes %}
                   <a href="{% if episode.show_id and episode.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=episode.podcast_uuid title=episode.slug|default:episode.title|slug %}{% elif episode.show_id %}{% url 'podcast_show_detail' episode.show_id %}{% else %}#{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if episode.image %}
-                    <img src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="w-10 h-10 rounded object-cover">
+                    {% if episode.image and episode.image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
                     {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">

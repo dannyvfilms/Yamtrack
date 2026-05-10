@@ -76,6 +76,14 @@ def _show_last_watched(media_type: str, current_sort: str, _user: Any) -> bool:
     return media_type == MediaTypes.TV.value and current_sort != "time_left"
 
 
+def _show_next_episode_air_date(media_type: str, current_sort: str, _user: Any) -> bool:
+    return media_type in (
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.ANIME.value,
+    ) and current_sort == "next_episode_air_date"
+
+
 def _show_author(media_type: str, _current_sort: str, _user: Any) -> bool:
     return media_type in (
         MediaTypes.BOOK.value,
@@ -240,6 +248,16 @@ MEDIA_COLUMNS: list[ColumnDef] = [
         cell_template="app/components/cells/media_release_date_cell.html",
         table_types=("media",),
         default_order=85,
+    ),
+    ColumnDef(
+        key="next_episode_air_date",
+        label="Episode Air Date",
+        th_classes="p-2 text-center",
+        td_classes="p-2 text-center",
+        cell_template="app/components/cells/next_episode_air_date_cell.html",
+        table_types=("media",),
+        is_visible=_show_next_episode_air_date,
+        default_order=86,
     ),
     ColumnDef(
         key="date_added",

@@ -4,11 +4,11 @@ import logging
 import math
 import re
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from uuid import uuid4
 
 import requests
@@ -21,11 +21,12 @@ from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
-from django.db.models import F, Min, Q, prefetch_related_objects
+from django.db.models import F, Max, Min, Q, prefetch_related_objects
 from django.db.models.functions import ExtractDay, ExtractMonth, TruncDate
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.templatetags.static import static
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -49,6 +50,7 @@ from app import (
     metadata_utils,
     statistics_cache,
 )
+from app.db_retry import run_retryable_db_operation
 from app.discover import tab_cache as discover_tab_cache
 from app.columns import (
     resolve_column_config,
@@ -89,6 +91,7 @@ from app.models import (
     ItemTag,
     Manga,
     MediaTypes,
+    ProviderMetadataStatus,
     Movie,
     Music,
     Person,
@@ -97,9 +100,19 @@ from app.models import (
     Sources,
     Status,
     Tag,
+    Studio,
     Track,
 )
-from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
+from app.providers import (
+    comicvine,
+    hardcover,
+    igdb,
+    mangaupdates,
+    manual,
+    openlibrary,
+    services,
+    tmdb,
+)
 from app.services import game_lengths as game_length_services
 from app.services import (
     anime_migration,
@@ -116,11 +129,19 @@ from app.services.tracking_hydration import (
 from app.templatetags import app_tags
 from app.signals import suppress_media_cache_change_signals
 from integrations import anime_mapping
+from integrations.models import CollectionSourceState
 from lists.models import CustomList
+from users.home_screen import build_home_page_groups
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 from users.models import TopTalentSortChoices
 
 logger = logging.getLogger(__name__)
+
+
+LOCAL_ONLY_MISSING_SEASON_BANNER = (
+    "Season metadata is missing from the provider. "
+    "This page is built from local activity and the linked show may be mismatched."
+)
 DETAIL_EPISODES_PER_PAGE = 25
 
 MEDIA_RATING_CHOICES = (
@@ -1046,7 +1067,7 @@ def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
 
 
 def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None):
-    """Return grouped genre and user-tag chips for the media detail action row."""
+    """Return grouped genre and tag preview sections for the media detail action row."""
     sections = []
 
     genres = _resolve_detail_tag_genres(
@@ -1070,7 +1091,8 @@ def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None)
         )
 
     tag_names = []
-    if item is not None and getattr(user, "is_authenticated", False):
+    is_authenticated_user = item is not None and getattr(user, "is_authenticated", False)
+    if is_authenticated_user:
         tag_names = list(
             ItemTag.objects.filter(item=item, tag__user=user)
             .select_related("tag")
@@ -1078,18 +1100,22 @@ def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None)
             .values_list("tag__name", flat=True)
         )
 
-    if tag_names:
+    if is_authenticated_user:
+        tag_section = {
+            "title": "Tags",
+            "entries": [
+                {
+                    "label": tag_name,
+                    "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
+                }
+                for tag_name in tag_names
+            ],
+        }
+        if not tag_names:
+            tag_section["empty_label"] = "Click to add tags"
+
         sections.append(
-            {
-                "title": "Tags",
-                "entries": [
-                    {
-                        "label": tag_name,
-                        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
-                    }
-                    for tag_name in tag_names
-                ],
-            }
+            tag_section,
         )
 
     return sections
@@ -1104,6 +1130,54 @@ def _parse_detail_tag_preview_genres(raw_value):
     except (TypeError, json.JSONDecodeError):
         return []
     return stats._coerce_genre_list(parsed_value)
+
+
+def _user_tags_for_item(user, item):
+    """Return the user's tags annotated with whether they apply to the item."""
+    from django.db import models as db_models
+
+    return (
+        Tag.objects.filter(user=user)
+        .annotate(
+            has_tag=db_models.Exists(
+                ItemTag.objects.filter(
+                    tag_id=db_models.OuterRef("id"),
+                    item=item,
+                ),
+            ),
+        )
+        .order_by("name")
+    )
+
+
+def _render_tag_modal_response(request, item, preview_genres):
+    """Render the tag modal plus OOB preview refresh for the current item."""
+    from django.template.loader import render_to_string
+
+    modal_html = render_to_string(
+        "app/components/fill_tags.html",
+        {
+            "item": item,
+            "user_tags": _user_tags_for_item(request.user, item),
+            "preview_genres_json": json.dumps(preview_genres),
+        },
+        request=request,
+    )
+    preview_html = render_to_string(
+        "app/components/detail_tag_preview.html",
+        {
+            "preview_id": app_tags.component_id("tag-preview", item),
+            "detail_tag_sections": _build_detail_tag_sections(
+                {},
+                item,
+                request.user,
+                fallback_genres=preview_genres,
+            ),
+            "swap_oob": True,
+        },
+        request=request,
+    )
+    return HttpResponse(modal_html + preview_html)
 
 
 def _should_queue_game_lengths_refresh(detail_item):
@@ -1203,314 +1277,54 @@ def _annotate_home_card_images(media_items):
 def home(request):
     """Home page with media items in progress."""
     try:
-        sort_by = request.user.update_preference("home_sort", request.GET.get("sort"))
-        media_type_to_load = request.GET.get("load_media_type")
         items_limit = 14
+        try:
+            load_row_id = int(request.GET.get("load_row", ""))
+        except (TypeError, ValueError):
+            load_row_id = None
+        try:
+            load_row_offset = max(int(request.GET.get("offset", "0")), 0)
+        except (TypeError, ValueError):
+            load_row_offset = 0
 
-        if request.headers.get("HX-Request") and media_type_to_load == RECENTLY_NOT_RATED_KEY:
-            from django.template.loader import render_to_string
-            from collections import defaultdict
-            from django.conf import settings
-            from app.models import Album, Item, Sources
-            
-            recent_items = BasicMedia.objects.get_recently_unrated(
-                request.user,
-                days=RECENTLY_NOT_RATED_DAYS,
-            )
-            
-            # Aggregate music tracks to albums (same logic as main view)
-            music_tracks = []
-            other_items = []
-            albums_by_id = {}
-            
-            for item in recent_items:
-                if item.item.media_type == MediaTypes.MUSIC.value:
-                    music_tracks.append(item)
-                else:
-                    other_items.append(item)
-            
-            # Aggregate music tracks to albums
-            album_play_counts = defaultdict(int)
-            album_last_played = {}
-            album_primary_track = {}
-            
-            for track in music_tracks:
-                album = getattr(track, "album", None)
-                if album:
-                    album_id = album.id
-                    albums_by_id[album_id] = album
-                    play_count = getattr(track, "repeats", None) or 1
-                    album_play_counts[album_id] += play_count
-                    last_played = track.last_played_at or track.created_at
-                    if album_id not in album_last_played or last_played > album_last_played[album_id]:
-                        album_last_played[album_id] = last_played
-                        album_primary_track[album_id] = track
-            
-            # Create AlbumAdapter for each unique album
-            class AlbumAdapter:
-                """Adapter to make Album compatible with media components."""
-                
-                def __init__(self, album, play_count, last_played_at, primary_track):
-                    self.album = album
-                    self.id = album.id
-                    self.play_count = play_count
-                    self.last_played_at = last_played_at
-                    self.created_at = last_played_at
-                    
-                    # Media-like attributes for template compatibility
-                    self.status = None  # Albums don't have status in Recently Played - Not Rated
-                    self.end_date = last_played_at  # Use last_played_at as end_date
-                    self.next_event = None  # Albums don't have next events
-                    self.score = None  # Albums in Recently Played - Not Rated don't have scores
-                    self.title = album.title  # For template title display
-                    
-                    album_media_id = f"album_{album.id}"
-                    self.item, _ = Item.objects.get_or_create(
-                        media_id=album_media_id,
-                        source=Sources.MANUAL.value,
-                        media_type=MediaTypes.MUSIC.value,
-                        defaults={
-                            "title": album.title,
-                            "image": album.image or settings.IMG_NONE,
-                        },
-                    )
-                    album_image = album.image or settings.IMG_NONE
-                    if self.item.title != album.title or self.item.image != album_image:
-                        self.item.title = album.title
-                        self.item.image = album_image
-                        self.item.save(update_fields=["title", "image"])
-                    
-                    self.primary_track = primary_track
-                
-                def __str__(self):
-                    """Return album title for string representation."""
-                    return self.album.title
-            
-            album_adapters = [
-                AlbumAdapter(
-                    albums_by_id[album_id],
-                    album_play_counts[album_id],
-                    album_last_played[album_id],
-                    album_primary_track[album_id],
-                )
-                for album_id in albums_by_id.keys()
-            ]
-            
-            album_adapters.sort(key=lambda a: a.last_played_at or a.created_at, reverse=True)
-            all_items = album_adapters + other_items
-            
-            items_to_load = all_items[items_limit:]
-            _annotate_home_card_images(items_to_load)
-            
-            # Split items into 2:3 (standard) and 1:1 (square) types
-            square_types = {"music", "podcast"}
-            standard_items = []
-            square_items = []
-            for item in items_to_load:
-                if isinstance(item, AlbumAdapter):
-                    square_items.append(item)
-                else:
-                    media_type = getattr(getattr(item, "item", None), "media_type", "").lower() if getattr(item, "item", None) else None
-                    if media_type in square_types:
-                        square_items.append(item)
-                    elif media_type:
-                        standard_items.append(item)
-            
-            # Render each group with proper grid wrappers
-            result_parts = []
-            
-            if standard_items:
-                standard_context = {
-                    "media_list": {
-                        "items": standard_items,
-                        "show_played_chip": True,
-                    },
-                    "user": request.user,
-                    "MediaTypes": MediaTypes,
-                    "csrf_token": request.META.get("CSRF_COOKIE"),
-                }
-                standard_html = render_to_string("app/components/home_grid.html", standard_context, request)
-                result_parts.append(f'<div class="media-grid">{standard_html}</div>')
-            
-            if square_items:
-                square_context = {
-                    "media_list": {
-                        "items": square_items,
-                        "show_played_chip": True,
-                    },
-                    "user": request.user,
-                    "MediaTypes": MediaTypes,
-                    "csrf_token": request.META.get("CSRF_COOKIE"),
-                }
-                square_html = render_to_string("app/components/home_grid.html", square_context, request)
-                result_parts.append(f'<div class="media-grid media-grid-square mt-4">{square_html}</div>')
-            
-            return HttpResponse("".join(result_parts))
-
-        if media_type_to_load == RECENTLY_NOT_RATED_KEY:
-            media_type_to_load = None
-
-        list_by_type = BasicMedia.objects.get_in_progress(
+        home_groups = build_home_page_groups(
             request.user,
-            sort_by,
             items_limit,
-            media_type_to_load,
+            load_row_id=load_row_id,
+            load_row_offset=load_row_offset,
+            append_only=bool(request.headers.get("HX-Request") and load_row_id),
         )
 
-        # If this is an HTMX request to load more items for a specific media type
-        if request.headers.get("HX-Request") and media_type_to_load:
-            context = {
-                "media_list": list_by_type.get(media_type_to_load, []),
-            }
-            return render(request, "app/components/home_grid.html", context)
-
-        recent_items = BasicMedia.objects.get_recently_unrated(
-            request.user,
-            days=RECENTLY_NOT_RATED_DAYS,
-        )
-        if recent_items:
-            # Aggregate music tracks to albums
-            from collections import defaultdict
-            from django.conf import settings
-            from app.models import Album, Item, Sources
-            
-            music_tracks = []
-            other_items = []
-            albums_by_id = {}  # Track albums we've seen
-            
-            for item in recent_items:
-                if item.item.media_type == MediaTypes.MUSIC.value:
-                    music_tracks.append(item)
-                else:
-                    other_items.append(item)
-            
-            # Aggregate music tracks to albums
-            album_play_counts = defaultdict(int)
-            album_last_played = {}
-            album_primary_track = {}
-            
-            for track in music_tracks:
-                album = getattr(track, "album", None)
-                if album:
-                    album_id = album.id
-                    albums_by_id[album_id] = album
-                    # Count plays (repeats or 1)
-                    play_count = getattr(track, "repeats", None) or 1
-                    album_play_counts[album_id] += play_count
-                    # Track most recent play
-                    last_played = track.last_played_at or track.created_at
-                    if album_id not in album_last_played or last_played > album_last_played[album_id]:
-                        album_last_played[album_id] = last_played
-                        album_primary_track[album_id] = track
-            
-            # Create AlbumAdapter for each unique album
-            class AlbumAdapter:
-                """Adapter to make Album compatible with media components."""
-                
-                def __init__(self, album, play_count, last_played_at, primary_track):
-                    self.album = album
-                    self.id = album.id
-                    self.play_count = play_count
-                    self.last_played_at = last_played_at
-                    self.created_at = last_played_at  # For sorting
-                    
-                    # Media-like attributes for template compatibility
-                    self.status = None  # Albums don't have status in Recently Played - Not Rated
-                    self.end_date = last_played_at  # Use last_played_at as end_date
-                    self.next_event = None  # Albums don't have next events
-                    self.score = None  # Albums in Recently Played - Not Rated don't have scores
-                    self.title = album.title  # For template title display
-                    
-                    # Create a mock Item for compatibility with media components
-                    # Use a unique identifier for the album
-                    album_media_id = f"album_{album.id}"
-                    self.item, _ = Item.objects.get_or_create(
-                        media_id=album_media_id,
-                        source=Sources.MANUAL.value,
-                        media_type=MediaTypes.MUSIC.value,
-                        defaults={
-                            "title": album.title,
-                            "image": album.image or settings.IMG_NONE,
-                        },
-                    )
-                    # Update item if album data changed
-                    album_image = album.image or settings.IMG_NONE
-                    if self.item.title != album.title or self.item.image != album_image:
-                        self.item.title = album.title
-                        self.item.image = album_image
-                        self.item.save(update_fields=["title", "image"])
-                    
-                    # Store primary track for reference
-                    self.primary_track = primary_track
-                
-                def __str__(self):
-                    """Return album title for string representation."""
-                    return self.album.title
-            
-            album_adapters = [
-                AlbumAdapter(
-                    albums_by_id[album_id],
-                    album_play_counts[album_id],
-                    album_last_played[album_id],
-                    album_primary_track[album_id],
-                )
-                for album_id in albums_by_id.keys()
-            ]
-            
-            # Sort albums by last played (most recent first)
-            album_adapters.sort(key=lambda a: a.last_played_at or a.created_at, reverse=True)
-            
-            # Combine albums with other items
-            all_items = album_adapters + other_items
-            
-            # Split items into 2:3 (standard) and 1:1 (square) types
-            # This ensures both grids show if both types exist in the dataset
-            square_types = {"music", "podcast"}
-            
-            standard_items = []
-            square_items = []
-            for item in all_items:
-                # For AlbumAdapter, it's always music (square)
-                # For other items, check media_type
-                if isinstance(item, AlbumAdapter):
-                    square_items.append(item)
-                else:
-                    media_type = item.item.media_type.lower() if item.item else None
-                    if media_type in square_types:
-                        square_items.append(item)
-                    elif media_type:
-                        standard_items.append(item)
-            
-            # If both types exist, show items from both types up to the limit
-            # Prioritize showing both grids if both types are available
-            limited_items = []
-            if standard_items and square_items:
-                # Show a mix: take up to half from each type (rounded up for standard)
-                # This ensures both grids render
-                standard_count = min(len(standard_items), (items_limit + 1) // 2)
-                square_count = min(len(square_items), items_limit - standard_count)
-                limited_items = standard_items[:standard_count] + square_items[:square_count]
-            elif standard_items:
-                limited_items = standard_items[:items_limit]
-            elif square_items:
-                limited_items = square_items[:items_limit]
-
-            _annotate_home_card_images(limited_items)
-            
-            list_by_type[RECENTLY_NOT_RATED_KEY] = {
-                "items": limited_items,
-                "total": len(all_items),
-                "section_title": RECENTLY_NOT_RATED_LABEL,
-                "show_played_chip": True,
-            }
+        if request.headers.get("HX-Request") and load_row_id:
+            target_row = next(
+                (
+                    row
+                    for group in home_groups
+                    for row in group["rows"]
+                    if row["row_id"] == load_row_id
+                ),
+                None,
+            )
+            if target_row is None:
+                return HttpResponse("")
+            return render(
+                request,
+                "app/components/home_grid.html",
+                {
+                    "media_list": target_row,
+                    "user": request.user,
+                    "MediaTypes": MediaTypes,
+                    "IMG_NONE": settings.IMG_NONE,
+                },
+            )
 
         context = {
             "user": request.user,
-            "list_by_type": list_by_type,
-            "current_sort": sort_by,
-            "sort_choices": HomeSortChoices.choices,
+            "home_groups": home_groups,
             "items_limit": items_limit,
             "active_playback_card": live_playback.build_home_playback_card(request.user),
+            "MediaTypes": MediaTypes,
+            "IMG_NONE": settings.IMG_NONE,
         }
         return render(request, "app/home.html", context)
     except OperationalError as error:
@@ -1518,12 +1332,12 @@ def home(request):
         # Return empty state on database error
         context = {
             "user": request.user,
-            "list_by_type": {},
-            "current_sort": request.GET.get("sort", "progress"),
-            "sort_choices": HomeSortChoices.choices,
+            "home_groups": [],
             "items_limit": 14,
             "database_error": True,
             "active_playback_card": None,
+            "MediaTypes": MediaTypes,
+            "IMG_NONE": settings.IMG_NONE,
         }
         return render(request, "app/home.html", context)
 
@@ -2444,6 +2258,10 @@ def media_list(request, media_type):
         MediaTypes.TV.value,
         MediaTypes.ANIME.value,
     }
+    progress_media_types = {
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
     plays_media_types = {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
@@ -2452,6 +2270,11 @@ def media_list(request, media_type):
     runtime_media_types = {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
+    next_episode_air_date_media_types = {
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
         MediaTypes.ANIME.value,
     }
     layout = request.user.update_preference(
@@ -2496,6 +2319,10 @@ def media_list(request, media_type):
         request.user.update_preference(f"{media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
+    elif sort_filter == "next_episode_air_date" and media_type not in next_episode_air_date_media_types:
+        sort_filter = "title"  # Default fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
+        direction_param = None
     elif sort_filter == "author" and media_type not in author_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
@@ -2536,6 +2363,11 @@ def media_list(request, media_type):
     valid_collection_filters = {"all", "collected", "not_collected"}
     if collection_filter not in valid_collection_filters:
         collection_filter = "all"
+
+    progress_filter = (request.GET.get("progress") or "all").strip().lower()
+    valid_progress_filters = {"all", "not_caught_up", "caught_up"}
+    if progress_filter not in valid_progress_filters or media_type not in progress_media_types:
+        progress_filter = "all"
 
     genre_filter = (request.GET.get("genre") or "").strip()
     year_filter = (request.GET.get("year") or "").strip()
@@ -2641,6 +2473,23 @@ def media_list(request, media_type):
                 filtered_items.append(media)
 
         return filtered_items
+
+    def _is_caught_up_media(media):
+        """Return True when the item's watched progress has reached released progress."""
+        return helpers.is_caught_up_media(media)
+
+    def apply_progress_filter(media_items, filter_value, media_type):
+        if filter_value == "all" or media_type not in progress_media_types:
+            return media_items
+
+        if any(getattr(media, "max_progress", None) is None for media in media_items):
+            BasicMedia.objects.annotate_max_progress(media_items, media_type)
+
+        if filter_value == "caught_up":
+            return [media for media in media_items if _is_caught_up_media(media)]
+        if filter_value == "not_caught_up":
+            return [media for media in media_items if not _is_caught_up_media(media)]
+        return media_items
 
     def _normalize_filter_value(value):
         return str(value or "").strip().lower()
@@ -3222,6 +3071,7 @@ def media_list(request, media_type):
     filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
     filter_data["show_formats"] = media_type in author_media_types
     filter_data["show_authors"] = media_type in author_media_types
+    filter_data["show_progress"] = media_type in progress_media_types
     user_tags = list(
         Tag.objects.filter(user=request.user)
         .values_list("name", flat=True)
@@ -3230,6 +3080,7 @@ def media_list(request, media_type):
     filter_data["tags"] = user_tags
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
+    media_list = apply_progress_filter(media_list, progress_filter, media_type)
     if media_type in author_media_types:
         media_list = apply_author_filter(media_list, author_filter)
         media_list = apply_format_filter(media_list, format_filter)
@@ -3293,6 +3144,9 @@ def media_list(request, media_type):
                 if sort_filter == "end_date":
                     end_dt = getattr(media, "aggregated_end_date", None) or getattr(media, "end_date", None)
                     return (_sortable_dt(end_dt), title.lower())
+                if sort_filter == "next_episode_air_date":
+                    next_episode_air_date = getattr(media, "next_episode_air_date", None)
+                    return (_sortable_dt(next_episode_air_date), title.lower())
                 return title.lower()
 
             reverse = direction == "desc"
@@ -3308,6 +3162,7 @@ def media_list(request, media_type):
             search_query,
             direction,
             rating_filter,
+            progress_filter,
             collection_filter,
             genre_filter,
             year_filter,
@@ -3387,6 +3242,7 @@ def media_list(request, media_type):
         "current_status": status_filter,
         "current_rating": rating_filter,
         "current_collection": collection_filter,
+        "current_progress": progress_filter,
         "current_genre": genre_filter,
         "current_year": year_filter,
         "current_release": release_filter,
@@ -3996,6 +3852,12 @@ def update_table_columns(request, media_type):
         MediaTypes.ANIME.value,
     }:
         current_sort = "title"
+    elif current_sort == "next_episode_air_date" and media_type not in {
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.ANIME.value,
+    }:
+        current_sort = "title"
     elif current_sort == "critic_rating" and media_type in {
         MediaTypes.MUSIC.value,
         MediaTypes.PODCAST.value,
@@ -4418,6 +4280,40 @@ def media_details(
             # If we can't find a list owner, list_owner stays None
             pass
 
+    detail_persistence_deferred = False
+
+    def _mark_detail_persistence_deferred(_error=None):
+        nonlocal detail_persistence_deferred
+        detail_persistence_deferred = True
+
+    def _best_effort_detail_db_work(operation, *, fallback=None, operation_name):
+        return run_retryable_db_operation(
+            operation,
+            mode="best_effort",
+            fallback=fallback,
+            operation_name=operation_name,
+            operation_logger=logger,
+            on_deferred=_mark_detail_persistence_deferred,
+        )
+
+    def _best_effort_detail_followup(
+        operation,
+        *,
+        operation_name,
+        fallback=False,
+    ):
+        try:
+            return operation()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Skipping detail follow-up %s for %s due to error",
+                operation_name,
+                request.path,
+                exc_info=True,
+            )
+            _mark_detail_persistence_deferred()
+            return fallback
+
     # For podcast shows (identified by podcast_uuid), show show detail page
     if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
         from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
@@ -4499,53 +4395,50 @@ def media_details(
 
                             # Fetch episodes from RSS feed (fetch all, no limit)
                             try:
+                                import hashlib
+
                                 episodes_data = podcast_rss.fetch_episodes_from_rss(rss_feed_url, limit=None)
+                                seen_uuids = set()
 
                                 for episode_data in episodes_data:
-                                    # Generate episode UUID from GUID or create one
-                                    # Use GUID directly (consistent with _sync_episodes_from_rss logic)
                                     episode_uuid = episode_data.get("guid")
                                     if not episode_uuid:
-                                        # Use a hash of title + published date as fallback UUID
-                                        import hashlib
                                         uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
                                         episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
 
-                                    # Check if episode already exists by UUID, or try to match by title + date
-                                    episode = None
-                                    try:
-                                        episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
-                                    except PodcastEpisode.DoesNotExist:
-                                        # Try to match by title + published date
-                                        if episode_data.get("title") and episode_data.get("published"):
-                                            matching = PodcastEpisode.objects.filter(
-                                                show=show,
-                                                title__iexact=episode_data["title"].strip(),
-                                                published__date=episode_data["published"].date(),
-                                            ).first()
-                                            if matching:
-                                                episode = matching
-                                    except PodcastEpisode.MultipleObjectsReturned:
-                                        # If multiple found, use first one
-                                        episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
+                                    if episode_uuid in seen_uuids:
+                                        continue
 
-                                    if not episode:
-                                        PodcastEpisode.objects.create(
+                                    # Check for existing match within this show by title + date
+                                    exists = False
+                                    if episode_data.get("title") and episode_data.get("published"):
+                                        exists = PodcastEpisode.objects.filter(
                                             show=show,
-                                            episode_uuid=episode_uuid,
-                                            title=episode_data.get("title", "Unknown Episode"),
-                                            published=episode_data.get("published"),
-                                            duration=episode_data.get("duration"),
-                                            audio_url=episode_data.get("audio_url", ""),
-                                            episode_number=episode_data.get("episode_number"),
-                                            season_number=episode_data.get("season_number"),
-                                        )
+                                            title__iexact=episode_data["title"].strip(),
+                                            published__date=episode_data["published"].date(),
+                                        ).exists()
+
+                                    if not exists:
+                                        try:
+                                            PodcastEpisode.objects.create(
+                                                show=show,
+                                                episode_uuid=episode_uuid,
+                                                title=episode_data.get("title", "Unknown Episode"),
+                                                published=episode_data.get("published"),
+                                                duration=episode_data.get("duration"),
+                                                audio_url=episode_data.get("audio_url", ""),
+                                                episode_number=episode_data.get("episode_number"),
+                                                season_number=episode_data.get("season_number"),
+                                            )
+                                            seen_uuids.add(episode_uuid)
+                                        except Exception:
+                                            logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
                             except Exception as e:
                                 logger.warning(
-                                    "Failed to fetch episodes from RSS feed: %s",
+                                    "Failed to fetch episodes from RSS feed for %s: %s",
+                                    show.title,
                                     exception_summary(e),
                                 )
-                                # Continue without episodes
 
                         # Redirect to the new/enriched show
                         from django.utils.text import slugify
@@ -4591,55 +4484,48 @@ def media_details(
                     # Create any missing episodes
                     new_episodes_count = 0
                     for episode_data in episodes_data:
-                        # Generate episode UUID from GUID or create one
-                        # Use GUID directly (consistent with _sync_episodes_from_rss logic)
                         episode_uuid = episode_data.get("guid")
                         if not episode_uuid:
-                            # Use a hash of title + published date as fallback UUID
                             uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
                             episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
 
-                        # Check if episode already exists by UUID, or try to match by title + date
-                        episode = None
-                        try:
-                            episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
-                        except PodcastEpisode.DoesNotExist:
-                            # Try to match by title + published date
-                            if episode_data.get("title") and episode_data.get("published"):
-                                matching = PodcastEpisode.objects.filter(
-                                    show=show,
-                                    title__iexact=episode_data["title"].strip(),
-                                    published__date=episode_data["published"].date(),
-                                ).first()
-                                if matching:
-                                    episode = matching
-                        except PodcastEpisode.MultipleObjectsReturned:
-                            # If multiple found, use first one
-                            episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
+                        if episode_uuid in existing_uuids:
+                            continue
 
-                        # Create episode if it doesn't exist
-                        if not episode and episode_uuid not in existing_uuids:
-                            PodcastEpisode.objects.create(
+                        # Check for a match within this show by title + date
+                        episode = None
+                        if episode_data.get("title") and episode_data.get("published"):
+                            episode = PodcastEpisode.objects.filter(
                                 show=show,
-                                episode_uuid=episode_uuid,
-                                title=episode_data.get("title", "Unknown Episode"),
-                                published=episode_data.get("published"),
-                                duration=episode_data.get("duration"),
-                                audio_url=episode_data.get("audio_url", ""),
-                                episode_number=episode_data.get("episode_number"),
-                                season_number=episode_data.get("season_number"),
-                            )
-                            new_episodes_count += 1
-                            existing_uuids.add(episode_uuid)
+                                title__iexact=episode_data["title"].strip(),
+                                published__date=episode_data["published"].date(),
+                            ).first()
+
+                        if not episode:
+                            try:
+                                PodcastEpisode.objects.create(
+                                    show=show,
+                                    episode_uuid=episode_uuid,
+                                    title=episode_data.get("title", "Unknown Episode"),
+                                    published=episode_data.get("published"),
+                                    duration=episode_data.get("duration"),
+                                    audio_url=episode_data.get("audio_url", ""),
+                                    episode_number=episode_data.get("episode_number"),
+                                    season_number=episode_data.get("season_number"),
+                                )
+                                new_episodes_count += 1
+                                existing_uuids.add(episode_uuid)
+                            except Exception:
+                                logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
 
                     if new_episodes_count > 0:
                         logger.info("Fetched %d additional episodes for show %s (ID: %d)", new_episodes_count, show.title, show.id)
                 except Exception as e:
-                    logger.debug(
-                        "Failed to refresh episode list from RSS feed: %s",
+                    logger.warning(
+                        "Failed to refresh episode list from RSS feed for show %s: %s",
+                        show.title,
                         exception_summary(e),
                     )
-                    # Continue with existing episodes
 
             # Get all episodes for this show, ordered by published date (newest first)
             # Use Coalesce to handle None published dates (put them at the end)
@@ -5006,30 +4892,55 @@ def media_details(
         and media_type == MediaTypes.GAME.value
         and isinstance(media_metadata, dict)
     ):
-        detail_item, _ = Item.objects.get_or_create(
-            media_id=media_id,
-            source=source,
-            media_type=media_type,
-            defaults={
-                **Item.title_fields_from_metadata(media_metadata),
-                "image": media_metadata.get("image") or settings.IMG_NONE,
-            },
+        detail_item_outcome = _best_effort_detail_db_work(
+            lambda: Item.objects.get_or_create(
+                media_id=media_id,
+                source=source,
+                media_type=media_type,
+                defaults={
+                    **Item.title_fields_from_metadata(media_metadata),
+                    "image": media_metadata.get("image") or settings.IMG_NONE,
+                },
+            ),
+            fallback=lambda: (None, False),
+            operation_name="IGDB detail item create",
         )
+        detail_item, _ = detail_item_outcome.value
 
     # When the user prefers original titles, aggressively refresh stale TMDB cache
     # if we don't yet have an original title. This lets details-page opens backfill
     # better title variants that can then propagate across the UI.
+    tmdb_detail_cache_key = f"{Sources.TMDB.value}_{tracking_media_type}_{media_id}"
     should_refresh_tmdb_titles = (
         request.user.is_authenticated
         and source == Sources.TMDB.value
-        and tracking_media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        and tracking_media_type in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+        )
         and getattr(request.user, "title_display_preference", "localized") == "original"
         and isinstance(media_metadata, dict)
         and not media_metadata.get("original_title")
     )
     if should_refresh_tmdb_titles:
-        cache.delete(f"{Sources.TMDB.value}_{tracking_media_type}_{media_id}")
+        cache.delete(tmdb_detail_cache_key)
         media_metadata = services.get_media_metadata(media_type, media_id, source)
+        if isinstance(media_metadata, dict):
+            media_metadata.update(Item.title_fields_from_metadata(media_metadata))
+
+    should_refresh_tmdb_tv_credits = (
+        source == Sources.TMDB.value
+        and tracking_media_type in (MediaTypes.TV.value, MediaTypes.SEASON.value)
+        and isinstance(media_metadata, dict)
+        and not media_metadata.get("cast")
+        and not media_metadata.get("crew")
+    )
+    if should_refresh_tmdb_tv_credits:
+        cache.delete(tmdb_detail_cache_key)
+        media_metadata = services.get_media_metadata(media_type, media_id, source)
+        if isinstance(media_metadata, dict):
+            media_metadata.update(Item.title_fields_from_metadata(media_metadata))
 
     identity_media_metadata = media_metadata
 
@@ -5055,7 +4966,10 @@ def media_details(
                 setattr(detail_item, field_name, desired_value)
                 update_fields.append(field_name)
         if update_fields:
-            detail_item.save(update_fields=update_fields)
+            _best_effort_detail_db_work(
+                lambda: detail_item.save(update_fields=update_fields),
+                operation_name="detail item title sync",
+            )
 
     # Persist series info for books if available
     if media_type == MediaTypes.BOOK.value and isinstance(media_metadata, dict):
@@ -5074,9 +4988,19 @@ def media_details(
                 update_fields.append("series_position")
             
             if update_fields:
-                item.save(update_fields=update_fields)
+                _best_effort_detail_db_work(
+                    lambda: item.save(update_fields=update_fields),
+                    operation_name="detail book-series sync",
+                )
         except Item.DoesNotExist:
             pass
+
+    igdb_game_studios_missing = (
+        source == Sources.IGDB.value
+        and tracking_media_type == MediaTypes.GAME.value
+        and isinstance(media_metadata, dict)
+        and "studios_full" not in media_metadata
+    )
 
     if isinstance(media_metadata, dict):
         media_metadata.setdefault("cast", [])
@@ -5100,6 +5024,8 @@ def media_details(
             media_id=media_id,
             source=source,
             base_metadata=media_metadata,
+            persistence_mode="best_effort",
+            on_persistence_deferred=_mark_detail_persistence_deferred,
         )
         media_metadata = metadata_resolution_result.header_metadata
         media_metadata.update(
@@ -5117,7 +5043,11 @@ def media_details(
 
     if (
         source == Sources.TMDB.value
-        and tracking_media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        and tracking_media_type in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+        )
         and isinstance(media_metadata, dict)
     ):
         if detail_item:
@@ -5128,11 +5058,62 @@ def media_details(
             if metadata_update_fields:
                 detail_item.metadata_fetched_at = timezone.now()
                 metadata_update_fields.append("metadata_fetched_at")
-                detail_item.save(update_fields=metadata_update_fields)
+                _best_effort_detail_db_work(
+                    lambda: detail_item.save(update_fields=metadata_update_fields),
+                    operation_name="TMDB detail metadata sync",
+                )
             missing_people = not detail_item.person_credits.exists()
             missing_studios = not detail_item.studio_credits.exists()
             if missing_people or missing_studios:
-                credits.sync_item_credits_from_metadata(detail_item, media_metadata)
+                _best_effort_detail_db_work(
+                    lambda: credits.sync_item_credits_from_metadata(
+                        detail_item,
+                        media_metadata,
+                    ),
+                    operation_name="TMDB detail credits sync",
+                )
+
+    should_refresh_igdb_game_studios = (
+        source == Sources.IGDB.value
+        and tracking_media_type == MediaTypes.GAME.value
+        and detail_item is not None
+        and igdb_game_studios_missing
+    )
+    if should_refresh_igdb_game_studios:
+        cache.delete(f"{source}_{tracking_media_type}_{media_id}")
+        media_metadata = services.get_media_metadata(media_type, media_id, source)
+        if isinstance(media_metadata, dict):
+            media_metadata.update(Item.title_fields_from_metadata(media_metadata))
+
+    if (
+        detail_item
+        and source == Sources.IGDB.value
+        and tracking_media_type == MediaTypes.GAME.value
+        and isinstance(media_metadata, dict)
+        and media_metadata.get("studios_full")
+    ):
+        existing_studio_ids = {
+            str(studio_credit.studio.source_studio_id)
+            for studio_credit in detail_item.studio_credits.select_related("studio")
+            if studio_credit.studio and studio_credit.studio.source_studio_id is not None
+        }
+        incoming_studio_ids = {
+            str(studio.get("studio_id") or studio.get("id"))
+            for studio in media_metadata.get("studios_full", [])
+            if isinstance(studio, dict) and (studio.get("studio_id") or studio.get("id"))
+        }
+        if existing_studio_ids != incoming_studio_ids:
+            _best_effort_detail_db_work(
+                lambda: credits.sync_item_credits_from_metadata(
+                    detail_item,
+                    {
+                        "studios_full": media_metadata.get("studios_full", []),
+                    },
+                ),
+                operation_name="IGDB detail studio sync",
+            )
+
+    identity_media_metadata = media_metadata
 
     if (
         source == Sources.IGDB.value
@@ -5147,7 +5128,10 @@ def media_details(
         if metadata_update_fields:
             detail_item.metadata_fetched_at = timezone.now()
             metadata_update_fields.append("metadata_fetched_at")
-            detail_item.save(update_fields=metadata_update_fields)
+            _best_effort_detail_db_work(
+                lambda: detail_item.save(update_fields=metadata_update_fields),
+                operation_name="IGDB detail metadata sync",
+            )
 
     _apply_cached_hltb_link(media_metadata, detail_item)
 
@@ -5175,10 +5159,14 @@ def media_details(
             is not None
         )
         if not game_lengths_refresh_pending:
-            game_lengths_fetch_queued = _queue_game_lengths_refresh(
-                detail_item,
-                force=False,
-                fetch_hltb=True,
+            game_lengths_fetch_queued = _best_effort_detail_followup(
+                lambda: _queue_game_lengths_refresh(
+                    detail_item,
+                    force=False,
+                    fetch_hltb=True,
+                ),
+                operation_name="game lengths refresh enqueue",
+                fallback=False,
             )
             game_lengths_refresh_pending = game_lengths_fetch_queued or (
                 _get_game_lengths_refresh_lock(
@@ -5240,7 +5228,10 @@ def media_details(
 
         authors_full = media_metadata.get("authors_full")
         if detail_item and isinstance(authors_full, list):
-            credits.sync_item_author_credits(detail_item, authors_full)
+            _best_effort_detail_db_work(
+                lambda: credits.sync_item_author_credits(detail_item, authors_full),
+                operation_name="detail author-credit sync",
+            )
 
         authors_linked = _collect_authors_linked(media_metadata)
 
@@ -5266,8 +5257,57 @@ def media_details(
                 media_metadata.setdefault("studios_full", [])
                 refreshed_authors_full = media_metadata.get("authors_full")
                 if detail_item and isinstance(refreshed_authors_full, list):
-                    credits.sync_item_author_credits(detail_item, refreshed_authors_full)
+                    _best_effort_detail_db_work(
+                        lambda: credits.sync_item_author_credits(
+                            detail_item,
+                            refreshed_authors_full,
+                        ),
+                        operation_name="refreshed detail author-credit sync",
+                    )
                 authors_linked = _collect_authors_linked(media_metadata)
+
+    studio_detail_keys = ("studios", "companies")
+    studios_linked = []
+
+    def _collect_studios_linked(metadata_payload):
+        linked = []
+
+        if detail_item:
+            studio_credits = (
+                detail_item.studio_credits.select_related("studio")
+                .order_by("sort_order", "studio__name")
+            )
+            for studio_credit in studio_credits:
+                studio = studio_credit.studio
+                linked.append(
+                    {
+                        "source": studio.source,
+                        "studio_id": studio.source_studio_id,
+                        "name": studio.name,
+                        "logo": studio.logo,
+                    },
+                )
+
+        studios_full_payload = metadata_payload.get("studios_full")
+        if not linked and isinstance(studios_full_payload, list):
+            for studio in studios_full_payload:
+                studio_id = studio.get("studio_id") or studio.get("id")
+                name = (studio.get("name") or "").strip()
+                if studio_id is None or not name:
+                    continue
+                linked.append(
+                    {
+                        "source": source,
+                        "studio_id": str(studio_id),
+                        "name": name,
+                        "logo": (studio.get("logo") or "").strip(),
+                    },
+                )
+
+        return linked
+
+    if isinstance(media_metadata, dict):
+        studios_linked = _collect_studios_linked(media_metadata)
 
     # Prefer a stored poster/cover override when the tracked item has one.
     if (
@@ -5496,8 +5536,12 @@ def media_details(
         if item:
             if metadata_genres and metadata_genres != item.genres:
                 item.genres = metadata_genres
-                item.save(update_fields=["genres"])
-                genres_updated = True
+                genre_save_outcome = _best_effort_detail_db_work(
+                    lambda: item.save(update_fields=["genres"]),
+                    operation_name="detail genre sync",
+                )
+                genres_updated = not genre_save_outcome.deferred
+                media_metadata["genres"] = metadata_genres
             elif item.genres:
                 media_metadata["genres"] = item.genres
         if genres_updated and media_type in (
@@ -5789,6 +5833,7 @@ def media_details(
             media_id=media_id,
             base_metadata=media_metadata,
             metadata_resolution_result=metadata_resolution_result,
+            on_persistence_deferred=_mark_detail_persistence_deferred,
         )
         if flat_anime_episode_preview:
             media_metadata["episodes"] = flat_anime_episode_preview
@@ -5820,11 +5865,27 @@ def media_details(
                 if plex_account and plex_account.plex_token:
                     from integrations.tasks import fetch_collection_metadata_for_item
                     # Trigger background task to fetch collection data
-                    fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=item.id)
-                    # Use module-level logger directly to avoid UnboundLocalError
-                    logging.getLogger(__name__).info("Triggered background collection fetch for %s - %s (item_id=%s)", request.user.username, item.title, item.id)
-                    fetching_collection_data = True
-                    item_id_for_polling = item.id
+                    followup_started = _best_effort_detail_followup(
+                        lambda: fetch_collection_metadata_for_item.delay(
+                            user_id=request.user.id,
+                            item_id=item.id,
+                        ),
+                        operation_name="collection metadata auto-fetch",
+                        fallback=None,
+                    )
+                    if followup_started is not None:
+                        # Use module-level logger directly to avoid UnboundLocalError
+                        logging.getLogger(__name__).info(
+                            "Triggered background collection fetch for %s - %s (item_id=%s)",
+                            request.user.username,
+                            item.title,
+                            item.id,
+                        )
+                        # TODO(issue-166): Re-enable a user-facing collection-fetching banner only after
+                        # the background task reliably self-resolves for empty collections; remove this
+                        # reminder once that task/UX overhaul is complete.
+                        fetching_collection_data = True
+                        item_id_for_polling = item.id
         except Item.DoesNotExist:
             pass
 
@@ -5841,6 +5902,8 @@ def media_details(
                 detail_item,
                 Sources.TMDB.value,
                 route_media_type=media_type,
+                persistence_mode="best_effort",
+                on_deferred=_mark_detail_persistence_deferred,
             )
             if tmdb_media_id:
                 tmdb_metadata = services.get_media_metadata(
@@ -5938,6 +6001,8 @@ def media_details(
         "media_type": media_type,
         "authors_linked": authors_linked,
         "author_detail_keys": author_detail_keys,
+        "studios_linked": studios_linked,
+        "studio_detail_keys": studio_detail_keys,
         "user_medias": user_medias,
         "current_instance": current_instance,
         "music_artist": music_artist,
@@ -5987,6 +6052,7 @@ def media_details(
         "migrated_grouped_item": migrated_grouped_item,
         "migrated_grouped_title": migrated_grouped_title,
         "episode_load_more": episode_load_more,
+        "detail_persistence_deferred": detail_persistence_deferred,
     }
     return render(request, "app/media_details.html", context)
 
@@ -6243,10 +6309,14 @@ def _build_missing_season_metadata(
     source,
     season_number,
     episodes_in_db,
+    *,
+    season_item=None,
+    show_item=None,
 ):
     """Build minimal season metadata from local items when provider data is missing."""
     tv_metadata = tv_metadata or {}
     episodes_by_number = defaultdict(list)
+    episode_item_by_number = {}
 
     for episode in episodes_in_db:
         item = getattr(episode, "item", None)
@@ -6254,31 +6324,36 @@ def _build_missing_season_metadata(
         if episode_number is None:
             continue
         episodes_by_number[episode_number].append(episode)
+        if item is not None:
+            episode_item_by_number.setdefault(episode_number, item)
 
-    episode_numbers = sorted(episodes_by_number)
+    for episode_item in Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.EPISODE.value,
+        season_number=season_number,
+    ).order_by("episode_number", "id"):
+        if episode_item.episode_number is None:
+            continue
+        episode_item_by_number.setdefault(episode_item.episode_number, episode_item)
+
+    episode_numbers = sorted(set(episodes_by_number) | set(episode_item_by_number))
     fallback_episodes = []
-    tv_image = tv_metadata.get("image") or settings.IMG_NONE
-    show_title = tv_metadata.get("title", "")
-    episode_backdrop = None
-    tvdb_episode_images = {}
-
-    if source == Sources.TMDB.value:
-        episode_backdrop = helpers.get_tmdb_backdrop_image(
-            MediaTypes.TV.value,
-            media_id,
-        )
-        tvdb_episode_images = tmdb.get_tvdb_episode_image_map(
-            tv_metadata.get("tvdb_id"),
-            season_number,
-            tmdb_media_id=media_id,
-        )
+    tv_image = helpers.first_real_image(
+        getattr(show_item, "image", None),
+        tv_metadata.get("image"),
+        getattr(season_item, "image", None),
+        default=settings.IMG_NONE,
+    )
+    show_title = (
+        tv_metadata.get("title")
+        or getattr(show_item, "title", "")
+        or getattr(season_item, "title", "")
+    )
 
     for episode_number in episode_numbers:
-        history_entries = episodes_by_number[episode_number]
-        episode_item = next(
-            (entry.item for entry in history_entries if entry.item),
-            None,
-        )
+        history_entries = episodes_by_number.get(episode_number, [])
+        episode_item = episode_item_by_number.get(episode_number)
         air_date = None
         runtime = None
         title = f"Episode {episode_number}"
@@ -6302,17 +6377,10 @@ def _build_missing_season_metadata(
             if episode_item.title and episode_item.title != show_title:
                 title = episode_item.title
 
-        if source == Sources.TMDB.value:
-            episode_image, image_source = helpers.resolve_image_with_fallback(
-                primary_image,
-                tvdb_episode_images.get(str(episode_number)),
-                episode_backdrop,
-            )
-        else:
-            episode_image, image_source = helpers.resolve_image_with_fallback(
-                primary_image,
-                tv_image,
-            )
+        episode_image, image_source = helpers.resolve_image_with_fallback(
+            primary_image,
+            tv_image,
+        )
 
         fallback_episodes.append(
             {
@@ -6346,16 +6414,24 @@ def _build_missing_season_metadata(
     if source == Sources.TMDB.value:
         source_url = f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
 
+    synopsis = tv_metadata.get("synopsis") or ""
+    if not synopsis and show_item is not None:
+        synopsis = (show_item.manual_metadata or {}).get("synopsis") or ""
+
     return {
         "media_id": media_id,
         "source": source,
         "media_type": MediaTypes.SEASON.value,
-        "title": tv_metadata.get("title", ""),
+        "title": show_title,
         "season_title": f"Season {season_number}",
-        "image": tv_image,
+        "image": helpers.first_real_image(
+            getattr(season_item, "image", None),
+            tv_image,
+            default=settings.IMG_NONE,
+        ),
         "season_number": season_number,
-        "synopsis": tv_metadata.get("synopsis") or "No synopsis available.",
-        "genres": tv_metadata.get("genres") or [],
+        "synopsis": synopsis or "No synopsis available.",
+        "genres": tv_metadata.get("genres") or getattr(show_item, "genres", []) or [],
         "max_progress": max_episode_number,
         "score": None,
         "score_count": None,
@@ -6366,6 +6442,183 @@ def _build_missing_season_metadata(
         "tvdb_id": tv_metadata.get("tvdb_id"),
         "external_links": tv_metadata.get("external_links"),
     }
+
+
+def _get_local_show_item(media_id, source):
+    """Return the locally stored show item for a season route, if available."""
+    show_item = Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.TV.value,
+    ).first()
+    if show_item is not None:
+        return show_item
+    return Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.ANIME.value,
+    ).first()
+
+
+def _build_local_related_seasons(media_id, source, show_title, show_image):
+    """Return locally persisted season rows for the season dropdown."""
+    episode_stats = {
+        row["season_number"]: row
+        for row in Item.objects.filter(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number__isnull=False,
+        )
+        .values("season_number")
+        .annotate(
+            max_progress=Max("episode_number"),
+            first_air_date=Min("release_datetime"),
+        )
+    }
+
+    related_seasons = []
+    for season_item in Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.SEASON.value,
+        season_number__isnull=False,
+    ).order_by("season_number", "id"):
+        season_number = season_item.season_number
+        if season_number is None:
+            continue
+
+        season_title = "Specials" if season_number == 0 else f"Season {season_number}"
+        season_stats = episode_stats.get(season_number, {})
+        related_seasons.append(
+            {
+                "source": source,
+                "media_type": MediaTypes.SEASON.value,
+                "media_id": media_id,
+                "title": show_title,
+                "season_title": season_title,
+                "season_header_title": season_title,
+                "season_number": season_number,
+                "image": helpers.first_real_image(
+                    season_item.image,
+                    show_image,
+                    default=settings.IMG_NONE,
+                ),
+                "max_progress": season_stats.get("max_progress") or 0,
+                "first_air_date": season_stats.get("first_air_date"),
+            },
+        )
+
+    return related_seasons
+
+
+def _build_local_tv_with_seasons_metadata(
+    media_id,
+    source,
+    *,
+    tv_metadata=None,
+    show_item=None,
+    season_item=None,
+):
+    """Return TV metadata enriched with locally persisted season rows."""
+    tv_metadata = dict(tv_metadata or {})
+    show_item = show_item or _get_local_show_item(media_id, source)
+    show_title = (
+        tv_metadata.get("title")
+        or getattr(show_item, "title", "")
+        or getattr(season_item, "title", "")
+    )
+    show_image = helpers.first_real_image(
+        getattr(show_item, "image", None),
+        tv_metadata.get("image"),
+        getattr(season_item, "image", None),
+        default=settings.IMG_NONE,
+    )
+
+    related = dict(tv_metadata.get("related") or {})
+    provider_related_seasons = []
+    seen_season_numbers = set()
+    for season in related.get("seasons") or []:
+        if not isinstance(season, dict):
+            continue
+        season_copy = dict(season)
+        raw_season_number = season_copy.get("season_number")
+        try:
+            normalized_season_number = (
+                int(raw_season_number) if raw_season_number is not None else None
+            )
+        except (TypeError, ValueError):
+            normalized_season_number = None
+        season_copy["season_number"] = normalized_season_number
+        if normalized_season_number is not None:
+            season_title = (
+                "Specials"
+                if normalized_season_number == 0
+                else f"Season {normalized_season_number}"
+            )
+            season_copy.setdefault("title", show_title)
+            season_copy.setdefault("season_title", season_title)
+            season_copy.setdefault("season_header_title", season_title)
+            season_copy.setdefault("media_id", media_id)
+            season_copy.setdefault("media_type", MediaTypes.SEASON.value)
+            season_copy.setdefault("source", source)
+            season_copy.setdefault("image", show_image)
+        provider_related_seasons.append(season_copy)
+        seen_season_numbers.add(normalized_season_number)
+
+    local_related_seasons = _build_local_related_seasons(
+        media_id,
+        source,
+        show_title,
+        show_image,
+    )
+    for local_season in local_related_seasons:
+        if local_season["season_number"] not in seen_season_numbers:
+            provider_related_seasons.append(local_season)
+
+    provider_related_seasons.sort(
+        key=lambda season: (
+            season.get("season_number") is None,
+            season.get("season_number")
+            if season.get("season_number") is not None
+            else 999999,
+        ),
+    )
+    related["seasons"] = provider_related_seasons
+
+    provider_external_ids = getattr(show_item, "provider_external_ids", {}) or {}
+    tv_metadata.update(
+        {
+            "media_id": media_id,
+            "source": source,
+            "media_type": MediaTypes.TV.value,
+            "title": show_title,
+            "image": show_image,
+            "synopsis": tv_metadata.get("synopsis")
+            or ((show_item.manual_metadata or {}).get("synopsis") if show_item else "")
+            or "",
+            "genres": tv_metadata.get("genres")
+            or getattr(show_item, "genres", [])
+            or [],
+            "related": related,
+            "tvdb_id": (
+                tv_metadata.get("tvdb_id")
+                or provider_external_ids.get("tvdb_id")
+            ),
+        },
+    )
+    tv_metadata.setdefault("source_url", "")
+    tv_metadata.setdefault("external_links", {})
+    return tv_metadata
+
+
+def _save_provider_metadata_status(item, status):
+    """Persist provider metadata status when it changes."""
+    if item is None or item.provider_metadata_status == status:
+        return item
+    item.provider_metadata_status = status
+    item.save(update_fields=["provider_metadata_status"])
+    return item
 
 
 def _flat_anime_episode_preview_candidates(user, metadata_resolution_result=None):
@@ -6559,6 +6812,7 @@ def _build_flat_anime_episode_preview(
     media_id,
     base_metadata,
     metadata_resolution_result=None,
+    on_persistence_deferred=None,
 ):
     """Return a read-only mapped episode slice for flat MAL anime details."""
     if not isinstance(base_metadata, dict):
@@ -6605,6 +6859,8 @@ def _build_flat_anime_episode_preview(
                     detail_item,
                     candidate,
                     route_media_type=MediaTypes.ANIME.value,
+                    persistence_mode="best_effort",
+                    on_deferred=on_persistence_deferred,
                 )
                 if detail_item is not None
                 else anime_mapping.resolve_provider_series_id(media_id, candidate)
@@ -6873,53 +7129,95 @@ def season_details(
             # If we can't find a list owner, list_owner stays None
             pass
 
-    tv_with_seasons_metadata = services.get_media_metadata(
-        "tv_with_seasons",
-        media_id,
-        source,
-        [season_number],
-    )
-    season_key = f"season/{season_number}"
-    season_metadata = tv_with_seasons_metadata.get(season_key)
     season_item = Item.objects.filter(
         media_id=media_id,
         source=source,
         media_type=MediaTypes.SEASON.value,
         season_number=season_number,
     ).first()
+    show_item = _get_local_show_item(media_id, source)
+    season_key = f"season/{season_number}"
+    season_item_is_local_only = (
+        season_item is not None
+        and season_item.provider_metadata_status
+        == ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+    )
 
     # For public views, we don't need user media data
     if public_view:
         user_medias = []
         current_instance = None
     else:
-        user_medias = BasicMedia.objects.filter_media_prefetch(
-            request.user,
-            media_id,
-            MediaTypes.SEASON.value,
-            source,
-            season_number=season_number,
-        )
+        if season_item_is_local_only:
+            user_medias = list(
+                Season.objects.filter(
+                    item__media_id=media_id,
+                    item__media_type=MediaTypes.SEASON.value,
+                    item__source=source,
+                    item__season_number=season_number,
+                    user=request.user,
+                )
+                .select_related("item", "related_tv", "related_tv__item")
+                .prefetch_related("episodes", "episodes__item")
+            )
+        else:
+            user_medias = BasicMedia.objects.filter_media_prefetch(
+                request.user,
+                media_id,
+                MediaTypes.SEASON.value,
+                source,
+                season_number=season_number,
+            )
         current_instance = user_medias[0] if user_medias else None
 
     episodes_in_db = current_instance.episodes.all() if current_instance else []
-
-    season_metadata_missing = season_metadata is None
-    if season_metadata_missing:
+    if season_item_is_local_only:
+        tv_with_seasons_metadata = _build_local_tv_with_seasons_metadata(
+            media_id,
+            source,
+            show_item=show_item,
+            season_item=season_item,
+        )
         season_metadata = _build_missing_season_metadata(
             tv_with_seasons_metadata,
             media_id,
             source,
             season_number,
             episodes_in_db,
+            season_item=season_item,
+            show_item=show_item,
         )
-        if not public_view:
-            messages.warning(
-                request,
-                "Season metadata was not found for this show. Showing local activity only.",
+        season_metadata_missing = True
+    else:
+        tv_with_seasons_metadata = services.get_media_metadata(
+            "tv_with_seasons",
+            media_id,
+            source,
+            [season_number],
+        )
+        season_metadata = tv_with_seasons_metadata.get(season_key)
+        season_metadata_missing = season_metadata is None
+        if season_metadata_missing:
+            tv_with_seasons_metadata = _build_local_tv_with_seasons_metadata(
+                media_id,
+                source,
+                tv_metadata=tv_with_seasons_metadata,
+                show_item=show_item,
+                season_item=season_item,
+            )
+            season_metadata = _build_missing_season_metadata(
+                tv_with_seasons_metadata,
+                media_id,
+                source,
+                season_number,
+                episodes_in_db,
+                season_item=season_item,
+                show_item=show_item,
             )
 
-    default_season_title = "Specials" if season_number == 0 else f"Season {season_number}"
+    default_season_title = (
+        "Specials" if season_number == 0 else f"Season {season_number}"
+    )
     anime_show_item = Item.objects.filter(
         media_id=media_id,
         source=source,
@@ -6927,7 +7225,10 @@ def season_details(
         library_media_type=MediaTypes.ANIME.value,
     ).first()
     if isinstance(season_metadata, dict):
-        season_metadata.setdefault("season_header_title", season_metadata.get("season_title") or default_season_title)
+        season_metadata.setdefault(
+            "season_header_title",
+            season_metadata.get("season_title") or default_season_title,
+        )
         season_metadata.setdefault("season_alternative_title", None)
         if anime_show_item:
             provider_season_title = (season_metadata.get("season_title") or "").strip()
@@ -6973,6 +7274,11 @@ def season_details(
                 else settings.IMG_NONE
             )
             or settings.IMG_NONE,
+            "provider_metadata_status": (
+                ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+                if season_metadata_missing and season_number > 0
+                else ""
+            ),
         }
         season_item, _ = Item.objects.get_or_create(
             media_id=media_id,
@@ -6980,6 +7286,11 @@ def season_details(
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
             defaults=season_defaults,
+        )
+    elif season_metadata_missing and season_number > 0:
+        season_item = _save_provider_metadata_status(
+            season_item,
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
         )
 
     # Save episode runtimes from raw metadata before processing for display
@@ -7007,23 +7318,37 @@ def season_details(
                 media_type=MediaTypes.EPISODE.value,
                 season_number=season_number,
                 episode_number=episode_number,
-                defaults={"title": season_metadata.get("title", ""), "image": settings.IMG_NONE},
+                defaults={
+                    "title": season_metadata.get("title", ""),
+                    "image": settings.IMG_NONE,
+                },
             )
             
             # Extract runtime from raw episode data (TMDB returns integer minutes)
             runtime_minutes = None
             if episode.get("runtime") is not None:
-                runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
+                runtime_minutes = (
+                    int(episode["runtime"])
+                    if episode["runtime"] > 0
+                    else None
+                )
             elif episode.get("air_date"):
                 # Check if episode has aired
                 try:
                     if isinstance(episode["air_date"], str):
                         date_obj = datetime.strptime(episode["air_date"], "%Y-%m-%d")
-                        air_date_dt = timezone.make_aware(date_obj, timezone.get_current_timezone())
+                        air_date_dt = timezone.make_aware(
+                            date_obj,
+                            timezone.get_current_timezone(),
+                        )
                     else:
                         air_date_dt = episode["air_date"]
                     
-                    if air_date_dt and air_date_dt.year > 1900 and air_date_dt <= current_datetime:
+                    if (
+                        air_date_dt
+                        and air_date_dt.year > 1900
+                        and air_date_dt <= current_datetime
+                    ):
                         # Episode has aired but no runtime - mark as unknown (use 999998)
                         runtime_minutes = 999998
                 except (ValueError, TypeError):
@@ -7035,7 +7360,11 @@ def season_details(
                 episodes_to_update.append(episode_item)
         
         if episodes_to_update:
-            Item.objects.bulk_update(episodes_to_update, ["runtime_minutes"], batch_size=100)
+            Item.objects.bulk_update(
+                episodes_to_update,
+                ["runtime_minutes"],
+                batch_size=100,
+            )
             # Invalidate time_left cache for all users (runtime affects time calculations)
             from app.cache_utils import clear_time_left_cache_for_user
             # Get all users who track this show
@@ -7067,12 +7396,21 @@ def season_details(
     ):
         season_metadata["image"] = season_item.image
 
+    season_provider_metadata_status = (
+        season_item.provider_metadata_status if season_item is not None else ""
+    )
+    if isinstance(season_metadata, dict):
+        season_metadata["provider_metadata_status"] = season_provider_metadata_status
+
     # Add collection_entry data to each episode (if not public view)
     if not public_view and season_metadata.get("episodes"):
         from app.models import Item as ItemModel, CollectionEntry
         
         # Get all episode items for this season
-        episode_numbers = [ep.get("episode_number") for ep in season_metadata["episodes"]]
+        episode_numbers = [
+            ep.get("episode_number")
+            for ep in season_metadata["episodes"]
+        ]
         episode_items = ItemModel.objects.filter(
             media_id=media_id,
             source=source,
@@ -7087,7 +7425,10 @@ def season_details(
             for item in episode_items
             if item.episode_number is not None
         }
-        episode_item_ids = list(item_by_episode_number[ep_num].id for ep_num in item_by_episode_number)
+        episode_item_ids = [
+            item_by_episode_number[ep_num].id
+            for ep_num in item_by_episode_number
+        ]
         collection_entries = {}
         if episode_item_ids:
             collection_entries_qs = (
@@ -7131,7 +7472,11 @@ def season_details(
     fetching_collection_data = False
     item_id_for_polling = None
     if not public_view:
-        from app.helpers import get_item_collection_entries, get_season_collection_stats, get_season_collection_metadata
+        from app.helpers import (
+            get_item_collection_entries,
+            get_season_collection_metadata,
+            get_season_collection_stats,
+        )
         from app.models import Item as ItemModel  # Use alias to avoid any potential shadowing
         
         # Get the season item
@@ -7166,6 +7511,9 @@ def season_details(
                             result = fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=show_item.id)
                             logger.info("Triggered background collection fetch for show %s - %s (item_id=%s) from season page (task_id=%s)", 
                                        request.user.username, show_item.title, show_item.id, result.id if result else "None")
+                            # TODO(issue-166): Re-enable a user-facing collection-fetching banner only
+                            # after the background task reliably self-resolves for empty collections;
+                            # remove this reminder once that task/UX overhaul is complete.
                             fetching_collection_data = True
                             item_id_for_polling = show_item.id
                         except Exception as task_exc:
@@ -7226,6 +7574,8 @@ def season_details(
         season_item
         and current_instance
         and season_number > 0
+        and season_item.provider_metadata_status
+        != ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
         and trakt_popularity_service.trakt_provider.is_configured()
         and trakt_popularity_service.needs_refresh(season_item)
     ):
@@ -7270,9 +7620,11 @@ def season_details(
         "public_view": public_view,
         "collection_entry": collection_entry,
         "collection_entries": collection_entries,
-        "collection_stats": season_collection_stats,  # For season, this is episode stats
+        "collection_stats": season_collection_stats,
         "has_collection_data": has_collection_data,
-        "fetching_collection_data": fetching_collection_data if not public_view else False,
+        "fetching_collection_data": (
+            fetching_collection_data if not public_view else False
+        ),
         "item_id_for_polling": item_id_for_polling if not public_view else None,
         "trakt_score": trakt_score,
         "watch_providers": tmdb.filter_providers(
@@ -7296,6 +7648,12 @@ def season_details(
         "display_provider": source,
         "identity_provider": source,
         "episode_load_more": episode_load_more,
+        "season_provider_metadata_status": season_provider_metadata_status,
+        "season_provider_metadata_banner": LOCAL_ONLY_MISSING_SEASON_BANNER,
+        "season_provider_metadata_is_local_only": (
+            season_provider_metadata_status
+            == ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+        ),
     }
     return render(request, "app/media_details.html", context)
 
@@ -7661,6 +8019,7 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         if source == Sources.TMDB.value and tracking_media_type in (
             MediaTypes.MOVIE.value,
             MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
         ):
             credits.sync_item_credits_from_metadata(item, metadata)
 
@@ -8133,6 +8492,62 @@ def _track_modal_field_groups(form, *, hidden_field_names, metadata_field_names=
     }
 
 
+def _track_modal_release_date_shortcut(*candidates):
+    """Return an ISO release-date string for the shared track modal shortcut."""
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if isinstance(candidate, dict):
+            candidate = helpers.extract_release_datetime(candidate)
+        elif isinstance(candidate, str):
+            candidate = parse_date(candidate[:10])
+
+        if not candidate:
+            continue
+        if isinstance(candidate, datetime):
+            if timezone.is_aware(candidate):
+                candidate = timezone.localtime(candidate)
+            return candidate.date().isoformat()
+        if isinstance(candidate, date):
+            return candidate.isoformat()
+    return ""
+
+
+def _track_modal_release_runtime_minutes(media_type, *candidates):
+    """Return a trusted runtime in minutes for release-date start-date backfill."""
+    if media_type != MediaTypes.MOVIE.value:
+        return ""
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        runtime_minutes = None
+        if isinstance(candidate, dict):
+            runtime_minutes = candidate.get("runtime_minutes")
+            if runtime_minutes is None:
+                runtime_minutes = (candidate.get("details") or {}).get("runtime")
+        else:
+            runtime_minutes = getattr(candidate, "runtime_minutes", None)
+            if runtime_minutes is None:
+                runtime_minutes = getattr(candidate, "runtime", None)
+
+        if isinstance(runtime_minutes, str):
+            stripped_runtime = runtime_minutes.strip()
+            runtime_minutes = (
+                int(stripped_runtime)
+                if stripped_runtime.isdigit()
+                else stats.parse_runtime_to_minutes(stripped_runtime)
+            )
+        elif isinstance(runtime_minutes, float):
+            runtime_minutes = int(runtime_minutes)
+
+        if isinstance(runtime_minutes, int) and 0 < runtime_minutes < 999998:
+            return str(runtime_minutes)
+
+    return ""
+
+
 def _render_standard_track_modal(
     request,
     source,
@@ -8433,6 +8848,25 @@ def _render_standard_track_modal(
         episode_plays_form = None
 
     track_form_id = f"track-form-{uuid4().hex}"
+    release_date_shortcut = _track_modal_release_date_shortcut(
+        getattr(metadata_item, "release_datetime", None) if metadata_item else None,
+        (
+            metadata_resolution_result.header_metadata
+            if metadata_resolution_result is not None
+            else None
+        ),
+        base_metadata,
+    )
+    release_date_runtime_minutes = _track_modal_release_runtime_minutes(
+        media_type,
+        metadata_item,
+        (
+            metadata_resolution_result.header_metadata
+            if metadata_resolution_result is not None
+            else None
+        ),
+        base_metadata,
+    )
     context = {
         "user": request.user,
         "title": title,
@@ -8469,6 +8903,8 @@ def _render_standard_track_modal(
             if media and metadata_item and not can_edit_custom_metadata
             else None
         ),
+        "release_date_shortcut": release_date_shortcut,
+        "release_date_runtime_minutes": release_date_runtime_minutes,
         "manual_metadata_form": manual_metadata_form,
         "manual_metadata_formaction": (
             reverse("update_manual_item_metadata", args=[metadata_item.id])
@@ -8580,6 +9016,8 @@ def _render_podcast_show_track_modal(
             "general_existing_instance": tracker,
             "image_field": None,
             "image_save_item_id": None,
+            "release_date_shortcut": "",
+            "release_date_runtime_minutes": "",
             "track_form_id": track_form_id,
             "initial_active_tab": initial_active_tab,
             "episode_plays_tab_available": episode_plays_tab_available,
@@ -8993,6 +9431,16 @@ def episode_save(request):
     episode_number = int(request.POST["episode_number"])
     source = request.POST["source"]
     library_media_type = (request.POST.get("library_media_type") or "").strip()
+
+    next_path = request.GET.get("next") or ""
+    if source == Sources.TMDB.value and next_path:
+        parsed_next_path = urlparse(next_path).path
+        path_parts = [segment for segment in parsed_next_path.split("/") if segment]
+        if len(path_parts) >= 2 and path_parts[0] == "details":
+            route_source = path_parts[1]
+            if route_source in {choice[0] for choice in Sources.choices}:
+                source = route_source
+
     discover_tab_cache.mark_active_from_request(
         request,
         fallback_media_type=MediaTypes.TV.value,
@@ -9286,6 +9734,11 @@ def music_bulk_save(request):
             form=tracker_form,
             save_url=save_url,
             delete_url=delete_url,
+            release_date_shortcut=(
+                _track_modal_release_date_shortcut(album.release_date)
+                if album is not None
+                else ""
+            ),
             bulk_domain=bulk_domain,
             bulk_form_override=bulk_form,
             initial_active_tab="episode-plays",
@@ -10103,18 +10556,6 @@ _MONTH_CACHE_UNSUPPORTED_FILTER_KEYS = frozenset(
         "tv",
     },
 )
-_MONTH_CACHE_DIRECT_ITEM_MEDIA_TYPES = frozenset(
-    {
-        MediaTypes.BOOK.value,
-        MediaTypes.BOARDGAME.value,
-        MediaTypes.COMIC.value,
-        MediaTypes.GAME.value,
-        MediaTypes.MANGA.value,
-        MediaTypes.MOVIE.value,
-        MediaTypes.MUSIC.value,
-        MediaTypes.PODCAST.value,
-    },
-)
 
 
 def _can_use_cached_month_history(
@@ -10130,15 +10571,8 @@ def _can_use_cached_month_history(
         return False
     if any(key in filters for key in _MONTH_CACHE_UNSUPPORTED_FILTER_KEYS):
         return False
-
-    target_media_id = filters.get("media_id")
-    target_source = filters.get("source")
-    media_type_filter = filters.get("media_type")
-    if target_media_id or target_source:
-        if not target_media_id or not target_source:
-            return False
-        if media_type_filter not in _MONTH_CACHE_DIRECT_ITEM_MEDIA_TYPES:
-            return False
+    if filters.get("media_id") or filters.get("source"):
+        return False
 
     return True
 
@@ -10921,6 +11355,128 @@ def person_detail(request, source, person_id, name):
     return render(request, "app/person_detail.html", context)
 
 
+def studio_detail(request, source, studio_id, name):
+    """Render a provider-backed studio/company profile page."""
+    del name  # URL slug is cosmetic; studio_id is canonical.
+
+    studio = get_object_or_404(
+        Studio,
+        source=source,
+        source_studio_id=str(studio_id),
+    )
+
+    studio_profile = (
+        igdb.company_profile(studio_id)
+        if source == Sources.IGDB.value
+        else None
+    )
+
+    local_titles = []
+    studio_credits = studio.item_credits.select_related("item").order_by(
+        "sort_order",
+        "item__title",
+    )
+    for index, studio_credit in enumerate(studio_credits):
+        item = studio_credit.item
+        if not item:
+            continue
+        local_titles.append(
+            {
+                "media_id": str(item.media_id),
+                "source": item.source,
+                "media_type": item.media_type,
+                "title": item.title,
+                "image": item.image or settings.IMG_NONE,
+                "year": item.release_datetime.year if item.release_datetime else None,
+                "role": "",
+                "department": "",
+                "credit_type": item.media_type,
+                "sort_order": (
+                    studio_credit.sort_order
+                    if studio_credit.sort_order is not None
+                    else index
+                ),
+                "tracked_item": item,
+            },
+        )
+
+    credited_titles = []
+    if studio_profile:
+        credited_titles = [
+            dict(entry)
+            for entry in studio_profile.get("games") or []
+            if isinstance(entry, dict)
+        ]
+
+    if credited_titles:
+        existing_keys = {
+            (entry.get("media_type"), str(entry.get("media_id")))
+            for entry in credited_titles
+        }
+        for entry in local_titles:
+            media_key = (entry.get("media_type"), str(entry.get("media_id")))
+            if media_key not in existing_keys:
+                credited_titles.append(entry)
+    else:
+        credited_titles = local_titles
+
+    if credited_titles:
+        game_ids = {
+            str(entry.get("media_id"))
+            for entry in credited_titles
+            if entry.get("media_id") is not None
+        }
+        tracked_items = Item.objects.filter(
+            source=source,
+            media_type=MediaTypes.GAME.value,
+            media_id__in=game_ids,
+        )
+        tracked_item_map = {
+            (item.media_type, str(item.media_id)): item for item in tracked_items
+        }
+        for entry in credited_titles:
+            media_key = (entry.get("media_type"), str(entry.get("media_id")))
+            entry["tracked_item"] = tracked_item_map.get(media_key)
+
+        credited_titles.sort(
+            key=lambda row: (
+                row.get("year") is None,
+                -(row.get("year") or 0),
+                row.get("title", "").lower(),
+            ),
+        )
+        for index, entry in enumerate(credited_titles):
+            entry["sort_order"] = index
+
+    studio_description = "Studio profile generated from local credits."
+    studio_source_url = ""
+    studio_founded = None
+    studio_developed_count = None
+    studio_published_count = None
+    if studio_profile:
+        studio_description = studio_profile.get("description") or studio_description
+        studio_source_url = studio_profile.get("source_url") or ""
+        studio_details = studio_profile.get("details") or {}
+        studio_founded = studio_details.get("founded")
+        studio_developed_count = studio_details.get("developed_count")
+        studio_published_count = studio_details.get("published_count")
+
+    context = {
+        "user": request.user,
+        "studio": studio,
+        "source": source,
+        "credited_titles": credited_titles,
+        "studio_description": studio_description,
+        "studio_source_url": studio_source_url,
+        "studio_founded": studio_founded,
+        "studio_developed_count": studio_developed_count,
+        "studio_published_count": studio_published_count,
+        "studio_games_count": len(credited_titles),
+        "IMG_NONE": settings.IMG_NONE,
+    }
+    return render(request, "app/studio_detail.html", context)
+
+
 def _music_artist_detail_url(artist):
     """Return the canonical shared media-details URL for a music artist."""
     return app_tags.music_artist_url(artist)
@@ -11033,6 +11589,7 @@ def _render_music_tracker_modal(
     form,
     save_url,
     delete_url,
+    release_date_shortcut="",
     bulk_domain=None,
     bulk_form_override=None,
     initial_active_tab="general",
@@ -11082,6 +11639,8 @@ def _render_music_tracker_modal(
             "general_existing_instance": tracker,
             "image_field": None,
             "image_save_item_id": None,
+            "release_date_shortcut": release_date_shortcut,
+            "release_date_runtime_minutes": "",
             "track_form_id": track_form_id,
             "initial_active_tab": initial_active_tab,
             "episode_plays_tab_available": episode_plays_tab_available,
@@ -12342,9 +12901,11 @@ def podcast_show_delete(request):
 
 @require_POST
 def podcast_mark_all_played(request, show_id):
-    """Mark all unplayed episodes for a podcast show as completed on their release date."""
-    import hashlib
+    """Mark all episodes of this podcast currently in the library as completed on their release date.
 
+    Episodes not yet imported from Pocket Casts are not included — run a Pocket Casts
+    import first to fetch the full episode list.
+    """
     from django.conf import settings
     from django.shortcuts import get_object_or_404
     from django.utils import timezone
@@ -12361,7 +12922,6 @@ def podcast_mark_all_played(request, show_id):
         Sources,
         Status,
     )
-    from integrations import podcast_rss
 
     show = get_object_or_404(PodcastShow, id=show_id)
 
@@ -12378,51 +12938,48 @@ def podcast_mark_all_played(request, show_id):
             # Fetch ALL episodes (no limit) from RSS feed
             episodes_data = podcast_rss.fetch_episodes_from_rss(show.rss_feed_url, limit=None)
 
+            seen_uuids = set(
+                PodcastEpisode.objects.filter(show=show).values_list("episode_uuid", flat=True)
+            )
             for episode_data in episodes_data:
-                # Generate episode UUID from GUID or create one
-                # Use GUID directly (consistent with _sync_episodes_from_rss logic)
                 episode_uuid = episode_data.get("guid")
                 if not episode_uuid:
-                    # Use a hash of title + published date as fallback UUID
-                    import hashlib
                     uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
                     episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
 
-                # Check if episode already exists by UUID, or try to match by title + date
-                episode = None
-                try:
-                    episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
-                except PodcastEpisode.DoesNotExist:
-                    # Try to match by title + published date
-                    if episode_data.get("title") and episode_data.get("published"):
-                        matching = PodcastEpisode.objects.filter(
-                            show=show,
-                            title__iexact=episode_data["title"].strip(),
-                            published__date=episode_data["published"].date(),
-                        ).first()
-                        if matching:
-                            episode = matching
-                except PodcastEpisode.MultipleObjectsReturned:
-                    # If multiple found, use first one
-                    episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
+                if episode_uuid in seen_uuids:
+                    continue
 
-                if not episode:
-                    PodcastEpisode.objects.create(
+                # Check for existing match within this show by title + date
+                exists = False
+                if episode_data.get("title") and episode_data.get("published"):
+                    exists = PodcastEpisode.objects.filter(
                         show=show,
-                        episode_uuid=episode_uuid,
-                        title=episode_data.get("title", "Unknown Episode"),
-                        published=episode_data.get("published"),
-                        duration=episode_data.get("duration"),
-                        audio_url=episode_data.get("audio_url", ""),
-                        episode_number=episode_data.get("episode_number"),
-                        season_number=episode_data.get("season_number"),
-                    )
+                        title__iexact=episode_data["title"].strip(),
+                        published__date=episode_data["published"].date(),
+                    ).exists()
+
+                if not exists:
+                    try:
+                        PodcastEpisode.objects.create(
+                            show=show,
+                            episode_uuid=episode_uuid,
+                            title=episode_data.get("title", "Unknown Episode"),
+                            published=episode_data.get("published"),
+                            duration=episode_data.get("duration"),
+                            audio_url=episode_data.get("audio_url", ""),
+                            episode_number=episode_data.get("episode_number"),
+                            season_number=episode_data.get("season_number"),
+                        )
+                        seen_uuids.add(episode_uuid)
+                    except Exception:
+                        logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
         except Exception as e:
             logger.warning(
-                "Failed to fetch full episode list from RSS feed: %s",
+                "Failed to fetch full episode list from RSS feed for %s: %s",
+                show.title,
                 exception_summary(e),
             )
-            # Continue with existing episodes in database
 
     # Get all episodes for this show (now including any newly fetched ones)
     all_episodes = PodcastEpisode.objects.filter(show=show)
@@ -12535,6 +13092,7 @@ def album_track_modal(request, album_id):
         form=form,
         save_url=reverse("album_save"),
         delete_url=reverse("album_delete"),
+        release_date_shortcut=_track_modal_release_date_shortcut(album.release_date),
         bulk_domain=bulk_music_tracking.build_album_play_domain(request.user, album),
     )
 
@@ -13182,6 +13740,24 @@ def _resolve_statistics_comparison_range(start_date, end_date, compare_mode):
     )
 
 
+def _resolve_statistics_range_inputs(range_name, start_date_str, end_date_str):
+    """Resolve statistics UI date inputs into aware datetimes."""
+    if range_name in statistics_cache.PREDEFINED_RANGES:
+        return statistics_cache._get_predefined_range_dates(range_name)
+
+    if start_date_str == "all" and end_date_str == "all":
+        return None, None
+
+    start_date = None
+    end_date = None
+    if start_date_str and start_date_str != "all":
+        start_date = _statistics_day_boundary(parse_date(start_date_str))
+    if end_date_str and end_date_str != "all":
+        end_date = _statistics_day_boundary(parse_date(end_date_str), end_of_day=True)
+
+    return start_date, end_date
+
+
 def _parse_statistics_total_display_to_minutes(value):
     if isinstance(value, (int, float)):
         return float(value)
@@ -13404,9 +13980,9 @@ def statistics(request):
             comparison_start_date,
             comparison_end_date,
         )
-        comparison_statistics_data = {}
+        comparison_minutes_by_type = {}
         if comparison_start_date and comparison_end_date:
-            comparison_statistics_data = statistics_cache.get_statistics_data(
+            comparison_minutes_by_type = statistics_cache.get_statistics_minutes_by_type(
                 request.user,
                 comparison_start_date,
                 comparison_end_date,
@@ -13437,7 +14013,7 @@ def statistics(request):
         )
         hours_per_media_type_comparison = _build_hours_per_media_type_comparison(
             _get_statistics_minutes_by_type(statistics_data),
-            _get_statistics_minutes_by_type(comparison_statistics_data),
+            comparison_minutes_by_type,
             selected_compare_mode,
             comparison_card_suffix,
             current_tooltip_label,
@@ -13642,6 +14218,8 @@ def update_top_talent_sort(request):
     """Autosave top talent sort preference from statistics page controls."""
     sort_by = request.POST.get("sort_by")
     range_name = request.POST.get("range_name")
+    start_date_str = request.POST.get("start_date")
+    end_date_str = request.POST.get("end_date")
 
     valid_sort_values = list(TopTalentSortChoices.values)
     if sort_by not in valid_sort_values:
@@ -13657,6 +14235,7 @@ def update_top_talent_sort(request):
     updated_sort = request.user.update_preference("top_talent_sort_by", sort_by)
     changed = previous_sort != updated_sort
     requires_reload = False
+    grid_html = ""
 
     if range_name in statistics_cache.PREDEFINED_RANGES:
         try:
@@ -13672,12 +14251,40 @@ def update_top_talent_sort(request):
                 exc,
             )
 
+    if not requires_reload:
+        start_date, end_date = _resolve_statistics_range_inputs(
+            range_name,
+            start_date_str,
+            end_date_str,
+        )
+        top_talent = statistics_cache.get_top_talent_data(
+            request.user,
+            start_date,
+            end_date,
+            range_name=range_name,
+        )
+        selected_talent = top_talent
+        by_sort = top_talent.get("by_sort") if isinstance(top_talent, dict) else None
+        if isinstance(by_sort, dict):
+            selected_talent = by_sort.get(updated_sort) or {}
+
+        grid_html = render_to_string(
+            "app/components/top_talent_grid.html",
+            {
+                "talent": selected_talent,
+                "talent_sort": updated_sort,
+                "IMG_NONE": settings.IMG_NONE,
+            },
+            request=request,
+        )
+
     return JsonResponse(
         {
             "success": True,
             "sort_by": updated_sort,
             "changed": changed,
             "requires_reload": requires_reload,
+            "grid_html": grid_html,
         },
     )
 
@@ -14332,6 +14939,12 @@ def _identify_predefined_range(start_date, end_date):
     if local_start == yesterday and local_end == yesterday:
         return "Yesterday"
 
+    month_start = today.replace(day=1)
+    if local_start == month_start and local_end == today:
+        return "This Month"
+    if local_start == month_start and local_end == today - timedelta(days=1):
+        return "This Month"
+
     monday = today - timedelta(days=today.weekday())
     if local_start == monday and local_end == today:
         return "This Week"
@@ -14340,12 +14953,6 @@ def _identify_predefined_range(start_date, end_date):
 
     if local_start == today - timedelta(days=6) and local_end == today:
         return "Last 7 Days"
-
-    month_start = today.replace(day=1)
-    if local_start == month_start and local_end == today:
-        return "This Month"
-    if local_start == month_start and local_end == today - timedelta(days=1):
-        return "This Month"
 
     if local_start == today - timedelta(days=29) and local_end == today:
         return "Last 30 Days"
@@ -14559,6 +15166,310 @@ def collection_remove(request, entry_id):
     return _collection_redirect(request)
 
 
+@require_POST
+def collection_remove_season(request, season_item_id):
+    """Remove Sonarr-backed collected episode rows for a season summary chip."""
+    season_item = get_object_or_404(
+        Item,
+        id=season_item_id,
+        media_type=MediaTypes.SEASON.value,
+    )
+    season_title = (
+        "Specials"
+        if season_item.season_number == 0
+        else f"Season {season_item.season_number}"
+    )
+    deleted_count, _deleted_objects = CollectionEntry.objects.filter(
+        user=request.user,
+        item__media_id=season_item.media_id,
+        item__source=season_item.source,
+        item__media_type=MediaTypes.EPISODE.value,
+        item__season_number=season_item.season_number,
+        item__source_states__user=request.user,
+        item__source_states__source="sonarr",
+    ).delete()
+
+    if deleted_count:
+        messages.success(request, f"Removed {season_title} from collection")
+    else:
+        messages.error(request, f"No collected episodes found for {season_title}")
+
+    if request.headers.get("HX-Request"):
+        message = (
+            f"Removed {season_title} from collection"
+            if deleted_count
+            else f"No collected episodes found for {season_title}"
+        )
+        return JsonResponse(
+            {
+                "success": bool(deleted_count),
+                "message": message,
+            },
+            status=200 if deleted_count else 404,
+        )
+    return _collection_redirect(request)
+
+
+def _collection_source_labels_by_item_id(user, item_ids):
+    """Return source labels grouped by item id for collection auditing."""
+    if not item_ids:
+        return {}
+
+    source_labels = dict(CollectionSourceState.SOURCE_CHOICES)
+    source_labels_by_item_id = defaultdict(list)
+    for state in CollectionSourceState.objects.filter(
+        user=user,
+        item_id__in=item_ids,
+    ).order_by("source"):
+        label = source_labels.get(state.source, state.source.title())
+        if label not in source_labels_by_item_id[state.item_id]:
+            source_labels_by_item_id[state.item_id].append(label)
+    return source_labels_by_item_id
+
+
+def _collection_quality_labels_by_item_id(user, item_ids, *, source=None):
+    """Return reported quality labels grouped by item id."""
+    if not item_ids:
+        return {}
+
+    source_states = CollectionSourceState.objects.filter(
+        user=user,
+        item_id__in=item_ids,
+    ).exclude(quality_label="")
+    if source:
+        source_states = source_states.filter(source=source)
+
+    quality_labels_by_item_id = {}
+    for state in source_states.order_by(
+        "source",
+        "-last_source_updated_at",
+        "-last_synced_at",
+        "-id",
+    ):
+        quality_labels_by_item_id.setdefault(state.item_id, state.quality_label)
+    return quality_labels_by_item_id
+
+
+def _most_common_quality_label(labels):
+    """Return the most common non-empty quality label."""
+    normalized_labels = [
+        str(label).strip()
+        for label in labels
+        if str(label or "").strip()
+    ]
+    if not normalized_labels:
+        return ""
+    return Counter(normalized_labels).most_common(1)[0][0]
+
+
+def _format_collection_progress(label, collected_count, total_count):
+    """Render a consistent progress label for modal audit rows."""
+    progress = f"{label}: {collected_count}/{total_count}"
+    if total_count > 0:
+        progress += f" • {math.floor((collected_count / total_count) * 100)}%"
+    return progress
+
+
+def _format_collection_progress_value(collected_count, total_count):
+    """Render a progress value without the leading label."""
+    progress = f"{collected_count}/{total_count}"
+    if total_count > 0:
+        progress += f" • {math.floor((collected_count / total_count) * 100)}%"
+    return progress
+
+
+def _sonarr_episode_collection_entries(user, item, *, season_number=None):
+    """Return episode collection rows that are backed by Sonarr source state."""
+    episode_entries = CollectionEntry.objects.filter(
+        user=user,
+        item__media_id=item.media_id,
+        item__source=item.source,
+        item__media_type=MediaTypes.EPISODE.value,
+        item__source_states__user=user,
+        item__source_states__source="sonarr",
+    )
+    if season_number is not None:
+        episode_entries = episode_entries.filter(item__season_number=season_number)
+
+    return list(
+        episode_entries.select_related("item").order_by(
+            "item__season_number",
+            "item__episode_number",
+            "-collected_at",
+            "-id",
+        ),
+    )
+
+
+def _item_has_collection_source_state(user, item, *, source=None):
+    """Return True when the current item still has sync-owned source state."""
+    source_states = CollectionSourceState.objects.filter(
+        user=user,
+        item=item,
+    )
+    if source:
+        source_states = source_states.filter(source=source)
+    return source_states.exists()
+
+
+def _build_collection_season_audit_entries(user, item):
+    """Return season-level Sonarr summaries for TV/anime show modal auditing."""
+    supported_media_types = {
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
+    if item.media_type not in supported_media_types:
+        return []
+
+    season_items = list(
+        Item.objects.filter(
+            media_id=item.media_id,
+            source=item.source,
+            media_type=MediaTypes.SEASON.value,
+        )
+        .exclude(season_number=0)
+        .order_by("season_number", "id"),
+    )
+    if not season_items:
+        return []
+
+    episode_items = list(
+        Item.objects.filter(
+            media_id=item.media_id,
+            source=item.source,
+            media_type=MediaTypes.EPISODE.value,
+        )
+        .exclude(season_number=0)
+        .order_by("season_number", "episode_number", "id"),
+    )
+    sonarr_episode_entries = _sonarr_episode_collection_entries(user, item)
+    if not sonarr_episode_entries:
+        return []
+
+    season_item_ids = [season_item.id for season_item in season_items]
+    sonarr_episode_item_ids = [entry.item_id for entry in sonarr_episode_entries]
+    source_labels_by_item_id = _collection_source_labels_by_item_id(
+        user,
+        season_item_ids + sonarr_episode_item_ids,
+    )
+    quality_labels_by_item_id = _collection_quality_labels_by_item_id(
+        user,
+        sonarr_episode_item_ids,
+        source="sonarr",
+    )
+
+    episode_item_ids_by_season_number = defaultdict(set)
+    for episode_item in episode_items:
+        if episode_item.season_number is None:
+            continue
+        episode_item_ids_by_season_number[episode_item.season_number].add(episode_item.id)
+
+    collected_episode_ids_by_season_number = defaultdict(set)
+    for episode_entry in sonarr_episode_entries:
+        season_number = episode_entry.item.season_number
+        if season_number is None:
+            continue
+        collected_episode_ids_by_season_number[season_number].add(episode_entry.item_id)
+
+    season_audit_entries = []
+    for season_item in season_items:
+        season_number = season_item.season_number
+        if season_number is None:
+            continue
+
+        total_episodes = len(episode_item_ids_by_season_number.get(season_number, set()))
+        collected_episode_ids = collected_episode_ids_by_season_number.get(season_number, set())
+        collected_count = min(total_episodes, len(collected_episode_ids))
+        if collected_count == 0:
+            continue
+
+        source_labels = []
+        for episode_item_id in sorted(collected_episode_ids):
+            for label in source_labels_by_item_id.get(episode_item_id, []):
+                if label not in source_labels:
+                    source_labels.append(label)
+        if not source_labels:
+            source_labels = ["Sonarr"]
+
+        collection_entry = helpers.get_season_collection_metadata(user, season_item) or {
+            "resolution": "",
+            "hdr": "",
+            "audio_codec": "",
+            "audio_channels": "",
+            "bitrate": None,
+            "media_type": "",
+            "is_3d": False,
+            "collected_at": None,
+        }
+        season_title = "Specials" if season_number == 0 else f"Season {season_number}"
+        progress_value = _format_collection_progress_value(
+            collected_count,
+            total_episodes,
+        )
+        quality_label = _most_common_quality_label(
+            [
+                quality_labels_by_item_id.get(episode_item_id, "")
+                for episode_item_id in sorted(collected_episode_ids)
+            ],
+        )
+        season_audit_entries.append(
+            {
+                "collection_entry": collection_entry,
+                "season_item_id": season_item.id,
+                "title": season_title,
+                "display_title": f"{season_title}: {progress_value}",
+                "progress_label": _format_collection_progress(
+                    "Collected Episodes",
+                    collected_count,
+                    total_episodes,
+                ),
+                "source_labels": source_labels,
+                "quality_label": quality_label,
+            },
+        )
+
+    return season_audit_entries
+
+
+def _build_collection_episode_audit_entries(user, item):
+    """Return episode-level Sonarr rows for season modal auditing."""
+    if item.media_type != MediaTypes.SEASON.value:
+        return []
+
+    episode_entries = _sonarr_episode_collection_entries(
+        user,
+        item,
+        season_number=item.season_number,
+    )
+    if not episode_entries:
+        return []
+
+    item_ids = {entry.item_id for entry in episode_entries}
+    source_labels_by_item_id = _collection_source_labels_by_item_id(user, item_ids)
+    quality_labels_by_item_id = _collection_quality_labels_by_item_id(
+        user,
+        item_ids,
+        source="sonarr",
+    )
+
+    audit_entries = []
+    for entry in episode_entries:
+        episode_item = entry.item
+        season_number = episode_item.season_number or 0
+        episode_number = episode_item.episode_number or 0
+        title = episode_item.title or f"Episode {episode_item.episode_number or 0}"
+        audit_entries.append(
+            {
+                "entry": entry,
+                "title": f"S{season_number:02d}E{episode_number:02d} - {title}",
+                "source_labels": source_labels_by_item_id.get(entry.item_id) or ["Manual"],
+                "quality_label": quality_labels_by_item_id.get(entry.item_id, ""),
+            },
+        )
+
+    return audit_entries
+
+
 @never_cache
 @require_GET
 def collection_modal(request, source, media_type, media_id):
@@ -14670,6 +15581,14 @@ def collection_modal(request, source, media_type, media_id):
 
     existing_entries = helpers.get_item_collection_entries(request.user, item)
     existing_entry = existing_entries.first()
+    season_audit_entries = _build_collection_season_audit_entries(request.user, item)
+    episode_audit_entries = _build_collection_episode_audit_entries(request.user, item)
+    visible_existing_entries = list(existing_entries)
+    if (
+        (season_audit_entries or episode_audit_entries)
+        and _item_has_collection_source_state(request.user, item, source="sonarr")
+    ):
+        visible_existing_entries = []
     form = CollectionEntryForm(
         user=request.user,
         collection_media_type=item.media_type,
@@ -14687,6 +15606,9 @@ def collection_modal(request, source, media_type, media_id):
             "item": item,
             "entry": existing_entry,
             "existing_entries": existing_entries,
+            "visible_existing_entries": visible_existing_entries,
+            "season_audit_entries": season_audit_entries,
+            "episode_audit_entries": episode_audit_entries,
             "form": form,
             "return_url": return_url,
             "collection_fields": collection_fields,
@@ -14766,33 +15688,18 @@ def tags_modal(
             image=metadata["image"],
         )
 
-    from django.db import models as db_models
-
     preview_genres = _parse_detail_tag_preview_genres(
         request.GET.get("preview_genres_json"),
     )
     if not preview_genres:
         preview_genres = _resolve_detail_tag_genres({}, item)
 
-    user_tags = (
-        Tag.objects.filter(user=request.user)
-        .annotate(
-            has_tag=db_models.Exists(
-                ItemTag.objects.filter(
-                    tag_id=db_models.OuterRef("id"),
-                    item=item,
-                ),
-            ),
-        )
-        .order_by("name")
-    )
-
     return render(
         request,
         "app/components/fill_tags.html",
         {
             "item": item,
-            "user_tags": user_tags,
+            "user_tags": _user_tags_for_item(request.user, item),
             "preview_genres_json": json.dumps(preview_genres),
         },
     )
@@ -14851,8 +15758,6 @@ def tag_item_toggle(request):
 @require_POST
 def tag_create(request):
     """Create a new tag for the user and optionally apply it to an item."""
-    from django.template.loader import render_to_string
-
     name = (request.POST.get("name") or "").strip()
     item_id = request.POST.get("item_id")
 
@@ -14878,48 +15783,35 @@ def tag_create(request):
         except Item.DoesNotExist:
             return HttpResponseBadRequest("Item not found.")
 
-        from django.db import models as db_models
+        preview_genres = _parse_detail_tag_preview_genres(
+            request.POST.get("preview_genres_json"),
+        )
+        return _render_tag_modal_response(request, item, preview_genres)
+
+    return HttpResponse(status=204)
+
+
+@require_POST
+def tag_delete(request):
+    """Delete a tag owned by the current user and refresh the tag modal."""
+    tag_id = request.POST.get("tag_id")
+    item_id = request.POST.get("item_id")
+
+    if not tag_id:
+        return HttpResponseBadRequest("Tag is required.")
+
+    tag = get_object_or_404(Tag, id=tag_id, user=request.user)
+    tag.delete()
+
+    if item_id:
+        try:
+            item = Item.objects.get(id=item_id)
+        except Item.DoesNotExist:
+            return HttpResponseBadRequest("Item not found.")
 
         preview_genres = _parse_detail_tag_preview_genres(
             request.POST.get("preview_genres_json"),
         )
-
-        user_tags = (
-            Tag.objects.filter(user=request.user)
-            .annotate(
-                has_tag=db_models.Exists(
-                    ItemTag.objects.filter(
-                        tag_id=db_models.OuterRef("id"),
-                        item=item,
-                    ),
-                ),
-            )
-            .order_by("name")
-        )
-
-        modal_html = render_to_string(
-            "app/components/fill_tags.html",
-            {
-                "item": item,
-                "user_tags": user_tags,
-                "preview_genres_json": json.dumps(preview_genres),
-            },
-            request=request,
-        )
-        preview_html = render_to_string(
-            "app/components/detail_tag_preview.html",
-            {
-                "preview_id": app_tags.component_id("tag-preview", item),
-                "detail_tag_sections": _build_detail_tag_sections(
-                    {},
-                    item,
-                    request.user,
-                    fallback_genres=preview_genres,
-                ),
-                "swap_oob": True,
-            },
-            request=request,
-        )
-        return HttpResponse(modal_html + preview_html)
+        return _render_tag_modal_response(request, item, preview_genres)
 
     return HttpResponse(status=204)

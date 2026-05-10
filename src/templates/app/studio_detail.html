@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% load app_tags %}
+{% load user_tags %}
+
+{% block title %}
+  {{ studio.name }} - Yamtrack
+{% endblock title %}
+
+{% block content %}
+  <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-10 md:mb-8">
+    <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
+      <img
+        src="{{ studio.logo|default:IMG_NONE }}"
+        alt="{{ studio.name }}"
+        class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover">
+
+      {% if studio_source_url %}
+        <div class="mt-4 p-3 bg-[#2a2f35] rounded-lg">
+          <a
+            href="{{ studio_source_url }}"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="w-full inline-flex items-center justify-center rounded-md bg-indigo-600 px-3 py-2 text-sm text-white transition-colors hover:bg-indigo-700">
+            Visit Website
+          </a>
+        </div>
+      {% endif %}
+
+      <div class="mt-4 p-3 bg-[#2a2f35] rounded-lg">
+        <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Source</h3>
+        <p class="text-sm text-gray-200 mt-1">{{ source|source_readable }}</p>
+      </div>
+    </div>
+
+    <div class="w-full md:w-3/4">
+      <h1 class="text-3xl font-bold mb-4 text-center md:text-start">{{ studio.name }}</h1>
+
+      <div class="flex flex-wrap gap-2 mb-4">
+        <span class="px-3 py-1 bg-indigo-600 text-white rounded-full text-sm">
+          {{ studio_games_count }} game{{ studio_games_count|pluralize }}
+        </span>
+        {% if studio_developed_count is not None %}
+          <span class="px-3 py-1 bg-[#2a2f35] text-gray-200 rounded-full text-sm">
+            {{ studio_developed_count }} developed
+          </span>
+        {% endif %}
+        {% if studio_published_count is not None %}
+          <span class="px-3 py-1 bg-[#2a2f35] text-gray-200 rounded-full text-sm">
+            {{ studio_published_count }} published
+          </span>
+        {% endif %}
+      </div>
+
+      <div
+        class="bg-[#2a2f35] p-4 rounded-lg mb-6"
+        x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.bioText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+        x-init="$nextTick(() => checkClamp())">
+        <p
+          x-ref="bioText"
+          :class="isExpanded ? '' : 'line-clamp-5'"
+          class="text-gray-300 text-pretty">
+          {{ studio_description|linebreaksbr|safe }}
+        </p>
+        <button
+          x-show="isClamped"
+          @click="isExpanded = !isExpanded"
+          class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer">
+          <span x-text="isExpanded ? 'Show less' : 'Show more'"></span>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {% if studio_founded %}
+          <div class="bg-[#2a2f35] rounded-lg p-3">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Founded</h3>
+            <p class="text-sm text-gray-200 mt-1">{{ studio_founded|user_date_format:user }}</p>
+          </div>
+        {% endif %}
+        <div class="bg-[#2a2f35] rounded-lg p-3">
+          <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Games</h3>
+          <p class="text-sm text-gray-200 mt-1">{{ studio_games_count }}</p>
+        </div>
+        {% if studio_developed_count is not None %}
+          <div class="bg-[#2a2f35] rounded-lg p-3">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Developed</h3>
+            <p class="text-sm text-gray-200 mt-1">{{ studio_developed_count }}</p>
+          </div>
+        {% endif %}
+        {% if studio_published_count is not None %}
+          <div class="bg-[#2a2f35] rounded-lg p-3">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Published</h3>
+            <p class="text-sm text-gray-200 mt-1">{{ studio_published_count }}</p>
+          </div>
+        {% endif %}
+        <div class="bg-[#2a2f35] rounded-lg p-3">
+          <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Source</h3>
+          <p class="text-sm text-gray-200 mt-1">{{ source|source_readable }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <div class="flex items-end justify-between gap-3 mb-4">
+      <h2 class="text-xl font-bold">Games</h2>
+      <p class="text-xs text-gray-400">
+        {{ credited_titles|length }} game{{ credited_titles|length|pluralize }}
+      </p>
+    </div>
+    {% if credited_titles %}
+      <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+        {% for entry in credited_titles %}
+          {% include "app/components/person_filmography_card.html" with entry=entry source=source user=user IMG_NONE=IMG_NONE show_watched_runtime_chip=False only %}
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="bg-[#2a2f35] p-6 rounded-lg text-center">
+        <p class="text-gray-400">No games available.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock content %}

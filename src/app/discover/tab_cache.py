@@ -20,6 +20,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES
 from app.discover.schemas import CandidateItem, RowResult
+from app.log_safety import exception_summary
 from app.models import (
     DiscoverApiCache,
     DiscoverRowCache,
@@ -53,9 +54,17 @@ DISCOVER_PRIORITY_REFRESH_COUNTDOWN = 0
 DISCOVER_WARM_SIBLING_DEBOUNCE_SECONDS = 60
 DISCOVER_WARM_SIBLING_COUNTDOWN = 10
 DISCOVER_VISIBLE_ITEMS_PER_ROW = 12
-DISCOVER_TASK_PRIORITY_INTERACTIVE = getattr(settings, "CELERY_TASK_PRIORITY_INTERACTIVE", 9)
+DISCOVER_TASK_PRIORITY_INTERACTIVE = getattr(
+    settings,
+    "CELERY_TASK_PRIORITY_INTERACTIVE",
+    9,
+)
 DISCOVER_TASK_PRIORITY_FOLLOWUP = getattr(settings, "CELERY_TASK_PRIORITY_FOLLOWUP", 7)
-DISCOVER_TASK_PRIORITY_BACKGROUND = getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1)
+DISCOVER_TASK_PRIORITY_BACKGROUND = getattr(
+    settings,
+    "CELERY_TASK_PRIORITY_BACKGROUND",
+    1,
+)
 
 DISCOVER_PROVIDER_BY_MEDIA_TYPE = {
     ALL_MEDIA_KEY: {Sources.TMDB.value},
@@ -92,6 +101,48 @@ def _normalize_media_type(media_type: str | None) -> str:
 
 def _parse_show_more(value) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _log_cache_failure(operation: str, key: str, exc: Exception) -> None:
+    logger.debug(
+        "Discover cache %s failed for %s: %s",
+        operation,
+        key,
+        exception_summary(exc),
+    )
+
+
+def _cache_get(key: str, *, default=None):
+    try:
+        return cache.get(key)
+    except Exception as exc:
+        _log_cache_failure("get", key, exc)
+        return default
+
+
+def _cache_set(key: str, value, *, timeout=None) -> bool:
+    try:
+        cache.set(key, value, timeout=timeout)
+        return True
+    except Exception as exc:
+        _log_cache_failure("set", key, exc)
+        return False
+
+
+def _cache_add(key: str, value, *, timeout=None) -> bool | None:
+    try:
+        return bool(cache.add(key, value, timeout=timeout))
+    except Exception as exc:
+        _log_cache_failure("add", key, exc)
+        return None
+
+
+def _cache_delete(key: str) -> bool:
+    try:
+        return bool(cache.delete(key))
+    except Exception as exc:
+        _log_cache_failure("delete", key, exc)
+        return False
 
 
 def _tab_cache_key(user_id: int, media_type: str, *, show_more: bool) -> str:
@@ -177,7 +228,11 @@ def _should_enqueue_refresh_tasks() -> bool:
     return True
 
 
-def _serialize_rows(rows: list[RowResult], *, include_reserve: bool = False) -> list[dict]:
+def _serialize_rows(
+    rows: list[RowResult],
+    *,
+    include_reserve: bool = False,
+) -> list[dict]:
     return [row.to_dict(include_reserve=include_reserve) for row in rows]
 
 
@@ -187,11 +242,11 @@ def _deserialize_rows(payload_rows) -> list[RowResult]:
 
 def _get_activity_version(user_id: int, media_type: str) -> str:
     key = _activity_version_key(user_id, media_type)
-    version = cache.get(key)
+    version = _cache_get(key)
     if version:
         return str(version)
     version = timezone.now().isoformat()
-    cache.set(key, version, timeout=DISCOVER_TAB_TIMEOUT)
+    _cache_set(key, version, timeout=DISCOVER_TAB_TIMEOUT)
     return version
 
 
@@ -203,7 +258,7 @@ def get_activity_version(user_id: int, media_type: str) -> str:
 def bump_activity_version(user_id: int, media_type: str) -> str:
     """Advance the activity version for a Discover media type."""
     version = timezone.now().isoformat()
-    cache.set(
+    _cache_set(
         _activity_version_key(user_id, media_type),
         version,
         timeout=DISCOVER_TAB_TIMEOUT,
@@ -214,7 +269,9 @@ def bump_activity_version(user_id: int, media_type: str) -> str:
 def get_tab_cache(user_id: int, media_type: str, *, show_more: bool = False):
     """Return cached tab payload and whether it is stale."""
     media_type = _normalize_media_type(media_type)
-    payload = cache.get(_tab_cache_key(user_id, media_type, show_more=show_more))
+    payload = _cache_get(
+        _tab_cache_key(user_id, media_type, show_more=show_more),
+    )
     if not payload:
         return None, False
 
@@ -300,7 +357,7 @@ def set_tab_cache(
         "rows": _serialize_rows(rows, include_reserve=True),
         "optimistic_refreshing": bool(optimistic_refreshing),
     }
-    cache.set(
+    _cache_set(
         _tab_cache_key(user_id, media_type, show_more=show_more),
         payload,
         timeout=DISCOVER_TAB_TIMEOUT,
@@ -352,7 +409,7 @@ def mark_active(
         show_more=bool(show_more),
         activated_at=timezone.now(),
     )
-    cache.set(
+    _cache_set(
         _active_key(user_id),
         {
             "media_type": context.media_type,
@@ -368,7 +425,7 @@ def mark_active(
 
 def get_active_context(user_id: int) -> ActiveDiscoverContext | None:
     """Return the active Discover tab context when one is available."""
-    raw = cache.get(_active_key(user_id))
+    raw = _cache_get(_active_key(user_id))
     if not isinstance(raw, dict):
         return None
     media_type = _normalize_media_type(raw.get("media_type"))
@@ -382,7 +439,7 @@ def get_active_context(user_id: int) -> ActiveDiscoverContext | None:
 
 def clear_active(user_id: int) -> None:
     """Clear any short-lived active Discover context for a user."""
-    cache.delete(_active_key(user_id))
+    _cache_delete(_active_key(user_id))
 
 
 def _discover_context_from_url(
@@ -580,6 +637,59 @@ def _rebalance_rows(rows: list[RowResult]) -> list[RowResult]:
     return rows
 
 
+def _acquire_refresh_lock(
+    lock_key: str,
+    lock_payload: dict,
+    *,
+    debounce_seconds: int,
+) -> bool:
+    if debounce_seconds:
+        added = _cache_add(lock_key, lock_payload, timeout=debounce_seconds)
+        if added is None:
+            return False
+        if not added:
+            existing_lock = _cache_get(lock_key)
+            if not _lock_is_stale(existing_lock):
+                return False
+            _cache_delete(lock_key)
+            if _cache_add(lock_key, lock_payload, timeout=debounce_seconds) is not True:
+                return False
+
+    _cache_set(lock_key, lock_payload, timeout=DISCOVER_TAB_REFRESH_LOCK_TTL)
+    return True
+
+
+def _reserve_scheduled_refresh(
+    user_id: int,
+    media_type: str,
+    *,
+    show_more: bool,
+    force: bool,
+    lock_key: str,
+) -> tuple[bool, str | None]:
+    if force or not DISCOVER_TAB_REFRESH_SCHEDULED_TTL:
+        return True, None
+
+    scheduled_key = _refresh_scheduled_key(
+        user_id,
+        media_type,
+        show_more=show_more,
+        activity_version=_get_activity_version(user_id, media_type),
+    )
+    if (
+        _cache_add(
+            scheduled_key,
+            1,
+            timeout=DISCOVER_TAB_REFRESH_SCHEDULED_TTL,
+        )
+        is not True
+    ):
+        _cache_delete(lock_key)
+        return False, scheduled_key
+
+    return True, scheduled_key
+
+
 def schedule_tab_refresh(
     user_id: int,
     media_type: str,
@@ -601,28 +711,22 @@ def schedule_tab_refresh(
         "force": bool(force),
         "clear_provider_cache": bool(clear_provider_cache),
     }
-    if debounce_seconds and not cache.add(
-        lock_key, lock_payload, timeout=debounce_seconds
+    if not _acquire_refresh_lock(
+        lock_key,
+        lock_payload,
+        debounce_seconds=debounce_seconds,
     ):
-        existing_lock = cache.get(lock_key)
-        if not _lock_is_stale(existing_lock):
-            return False
-        cache.delete(lock_key)
-        if not cache.add(lock_key, lock_payload, timeout=debounce_seconds):
-            return False
-    cache.set(lock_key, lock_payload, timeout=DISCOVER_TAB_REFRESH_LOCK_TTL)
+        return False
 
-    scheduled_key = None
-    if not force and DISCOVER_TAB_REFRESH_SCHEDULED_TTL:
-        scheduled_key = _refresh_scheduled_key(
-            user_id,
-            media_type,
-            show_more=show_more,
-            activity_version=_get_activity_version(user_id, media_type),
-        )
-        if not cache.add(scheduled_key, 1, timeout=DISCOVER_TAB_REFRESH_SCHEDULED_TTL):
-            cache.delete(lock_key)
-            return False
+    reserved, scheduled_key = _reserve_scheduled_refresh(
+        user_id,
+        media_type,
+        show_more=show_more,
+        force=force,
+        lock_key=lock_key,
+    )
+    if not reserved:
+        return False
 
     if not _should_enqueue_refresh_tasks():
         return True
@@ -646,9 +750,9 @@ def schedule_tab_refresh(
         )
         return True
     except Exception as error:  # pragma: no cover - Celery unavailable
-        cache.delete(lock_key)
+        _cache_delete(lock_key)
         if scheduled_key:
-            cache.delete(scheduled_key)
+            _cache_delete(scheduled_key)
         logger.warning(
             "discover_tab_refresh_enqueue_failed user_id=%s media_type=%s "
             "show_more=%s error=%s",
@@ -710,7 +814,7 @@ def refresh_tab_cache(
         )
         return rows
     finally:
-        cache.delete(lock_key)
+        _cache_delete(lock_key)
         if version_drifted:
             schedule_tab_refresh(
                 user.id,
@@ -737,7 +841,7 @@ def _collect_cached_action_payloads(
             if cache_key in seen_keys:
                 continue
             seen_keys.add(cache_key)
-            payload = cache.get(cache_key)
+            payload = _cache_get(cache_key)
             if not payload:
                 continue
             payloads.append(
@@ -871,7 +975,7 @@ def store_undo_snapshot(
         return None
 
     token = uuid4().hex
-    cache.set(
+    _cache_set(
         _action_undo_key(user_id, token),
         {
             "action": action,
@@ -888,7 +992,7 @@ def store_undo_snapshot(
 
 def get_undo_snapshot(user_id: int, token: str) -> dict | None:
     """Return an undo snapshot without restoring cached payloads."""
-    snapshot = cache.get(_action_undo_key(user_id, token))
+    snapshot = _cache_get(_action_undo_key(user_id, token))
     return snapshot if isinstance(snapshot, dict) else None
 
 
@@ -900,12 +1004,11 @@ def update_undo_snapshot(
 ) -> bool:
     """Attach side-effect metadata to an existing undo snapshot."""
     cache_key = _action_undo_key(user_id, token)
-    snapshot = cache.get(cache_key)
+    snapshot = _cache_get(cache_key)
     if not isinstance(snapshot, dict):
         return False
     snapshot["side_effect"] = side_effect
-    cache.set(cache_key, snapshot, timeout=DISCOVER_ACTION_UNDO_TTL)
-    return True
+    return _cache_set(cache_key, snapshot, timeout=DISCOVER_ACTION_UNDO_TTL)
 
 
 def restore_undo_snapshot(
@@ -914,7 +1017,7 @@ def restore_undo_snapshot(
 ) -> dict | None:
     """Restore cached Discover payloads from an undo snapshot."""
     cache_key = _action_undo_key(user_id, token)
-    snapshot = cache.get(cache_key)
+    snapshot = _cache_get(cache_key)
     if not isinstance(snapshot, dict):
         return None
 
@@ -924,14 +1027,14 @@ def restore_undo_snapshot(
         payload = entry.get("payload")
         if not payload:
             continue
-        cache.set(
+        _cache_set(
             _tab_cache_key(user_id, media_type, show_more=show_more),
             payload,
             timeout=DISCOVER_TAB_TIMEOUT,
         )
 
-    cache.delete(cache_key)
-    active_payload = cache.get(
+    _cache_delete(cache_key)
+    active_payload = _cache_get(
         _tab_cache_key(
             user_id,
             snapshot.get("active_media_type"),
@@ -973,7 +1076,7 @@ def get_tab_rows(
             for row in rows:
                 row.is_stale = True
                 row.source_state = "stale"
-            schedule_tab_refresh(
+            refresh_scheduled = schedule_tab_refresh(
                 user.id,
                 media_type,
                 show_more=show_more,
@@ -981,6 +1084,21 @@ def get_tab_rows(
                 countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
                 priority=DISCOVER_TASK_PRIORITY_INTERACTIVE,
             )
+            if allow_inline_bootstrap and not refresh_scheduled:
+                rows = get_discover_rows(
+                    user,
+                    media_type,
+                    show_more=show_more,
+                    include_debug=False,
+                    defer_artwork=defer_artwork,
+                )
+                set_tab_cache(
+                    user.id,
+                    media_type,
+                    rows,
+                    show_more=show_more,
+                    activity_version=_get_activity_version(user.id, media_type),
+                )
         return rows
 
     schedule_tab_refresh(
@@ -1016,9 +1134,9 @@ def get_tab_status(user_id: int, media_type: str, *, show_more: bool = False) ->
     media_type = _normalize_media_type(media_type)
     payload, is_stale = get_tab_cache(user_id, media_type, show_more=show_more)
     lock_key = _refresh_lock_key(user_id, media_type, show_more=show_more)
-    refresh_lock = cache.get(lock_key)
+    refresh_lock = _cache_get(lock_key)
     if refresh_lock and _lock_is_stale(refresh_lock):
-        cache.delete(lock_key)
+        _cache_delete(lock_key)
         refresh_lock = None
 
     built_at = _parse_cached_datetime((payload or {}).get("built_at"))
@@ -1030,7 +1148,7 @@ def get_tab_status(user_id: int, media_type: str, *, show_more: bool = False) ->
 
     refresh_scheduled = False
     if payload and not is_stale and refresh_lock:
-        cache.delete(lock_key)
+        _cache_delete(lock_key)
         refresh_lock = None
     elif payload and is_stale and refresh_lock is None:
         refresh_scheduled = schedule_tab_refresh(
@@ -1041,7 +1159,7 @@ def get_tab_status(user_id: int, media_type: str, *, show_more: bool = False) ->
             countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
             priority=DISCOVER_TASK_PRIORITY_INTERACTIVE,
         )
-        refresh_lock = cache.get(lock_key) if refresh_scheduled else refresh_lock
+        refresh_lock = _cache_get(lock_key) if refresh_scheduled else refresh_lock
 
     return {
         "exists": bool(payload),
@@ -1130,12 +1248,14 @@ def maybe_schedule_user_warmup(
     if not user_id:
         return 0
 
-    if throttle_seconds and not cache.add(
-        _request_warmup_key(user_id),
-        1,
-        timeout=throttle_seconds,
-    ):
-        return 0
+    if throttle_seconds:
+        warmed = _cache_add(
+            _request_warmup_key(user_id),
+            1,
+            timeout=throttle_seconds,
+        )
+        if warmed is not True:
+            return 0
 
     return schedule_user_tab_warmup(
         user,

@@ -3,7 +3,9 @@
           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
           hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}"}'
           hx-swap="outerHTML"
-          class="px-3 py-1 rounded transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-opacity-50 bg-violet-600 hover:bg-violet-700">
+          class="inline-flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-violet-300 hover:bg-violet-500/10 hover:text-violet-200 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500/50 cursor-pointer"
+          title="Remove tag from this item"
+          aria-label="Remove {{ tag.name }} from this item">
     Remove
   </button>
 {% else %}
@@ -11,7 +13,9 @@
           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
           hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}"}'
           hx-swap="outerHTML"
-          class="px-3 py-1 rounded transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-opacity-50 bg-gray-500 hover:bg-gray-600">
+          class="inline-flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-gray-200 hover:bg-white/10 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/50 cursor-pointer"
+          title="Add tag to this item"
+          aria-label="Add {{ tag.name }} to this item">
     Add
   </button>
 {% endif %}

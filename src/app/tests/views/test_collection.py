@@ -3,6 +3,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from app.models import CollectionEntry, Game, Item, MediaTypes, Sources, Status
+from integrations.models import CollectionSourceState
 
 
 class CollectionListViewTest(TestCase):
@@ -428,6 +429,72 @@ class CollectionRemoveViewTest(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, next_url)
 
+    def test_collection_remove_season_deletes_only_sonarr_backed_episode_rows(self):
+        """Season chip delete should remove collected Sonarr episode rows for that season."""
+        self.client.login(**self.credentials)
+
+        season_item = Item.objects.create(
+            media_id="show-collection-remove",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Season 1",
+            image="http://example.com/season.jpg",
+        )
+        season_one_episode = Item.objects.create(
+            media_id="show-collection-remove",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Pilot",
+            image="http://example.com/pilot.jpg",
+        )
+        season_two_episode = Item.objects.create(
+            media_id="show-collection-remove",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=2,
+            episode_number=1,
+            title="Return",
+            image="http://example.com/return.jpg",
+        )
+        season_one_entry = CollectionEntry.objects.create(
+            user=self.user,
+            item=season_one_episode,
+        )
+        season_two_entry = CollectionEntry.objects.create(
+            user=self.user,
+            item=season_two_episode,
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=season_one_episode,
+            source="sonarr",
+            quality_label="WebDL-1080p",
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=season_two_episode,
+            source="sonarr",
+            quality_label="WebDL-1080p",
+        )
+
+        response = self.client.post(
+            reverse(
+                "collection_remove_season",
+                kwargs={"season_item_id": season_item.id},
+            ),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            CollectionEntry.objects.filter(id=season_one_entry.id).exists(),
+        )
+        self.assertTrue(
+            CollectionEntry.objects.filter(id=season_two_entry.id).exists(),
+        )
+
 
 class CollectionModalViewTest(TestCase):
     """Test collection modal view."""
@@ -527,3 +594,319 @@ class CollectionModalViewTest(TestCase):
         self.assertContains(response, "Super Nintendo Entertainment System")
         self.assertContains(response, "Sega Mega Drive/Genesis")
         self.assertTrue(CollectionEntry.objects.filter(id=first_entry.id).exists())
+
+    def test_collection_modal_show_displays_season_audit_entries_with_sources(self):
+        """TV modal should summarize collected episodes by season."""
+        self.client.login(**self.credentials)
+
+        show_item = Item.objects.create(
+            media_id="tv-1234",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test Show",
+            image="http://example.com/show.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=show_item,
+            media_type="digital",
+            audio_codec="AAC",
+            audio_channels="5.1",
+            bitrate=1653,
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=show_item,
+            source="sonarr",
+        )
+        Item.objects.create(
+            media_id="tv-1234",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Season 1",
+            image="http://example.com/season1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-1234",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=2,
+            title="Season 2",
+            image="http://example.com/season2.jpg",
+        )
+        first_episode = Item.objects.create(
+            media_id="tv-1234",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=3,
+            title="Third Episode",
+            image="http://example.com/episode3.jpg",
+        )
+        second_episode = Item.objects.create(
+            media_id="tv-1234",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=4,
+            title="Fourth Episode",
+            image="http://example.com/episode4.jpg",
+        )
+        season_two_episode = Item.objects.create(
+            media_id="tv-1234",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=2,
+            episode_number=1,
+            title="Season Two Premiere",
+            image="http://example.com/season2-ep1.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=first_episode,
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=second_episode,
+            media_type="digital",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=season_two_episode,
+            media_type="bluray",
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=first_episode,
+            source="sonarr",
+            quality_label="WebDL-1080p",
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=second_episode,
+            source="plex",
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=season_two_episode,
+            source="sonarr",
+        )
+
+        response = self.client.get(
+            reverse(
+                "collection_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "tv-1234",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["item"], show_item)
+        self.assertEqual(response.context["visible_existing_entries"], [])
+        self.assertEqual(len(response.context["season_audit_entries"]), 2)
+        self.assertEqual(
+            response.context["season_audit_entries"][0]["title"],
+            "Season 1",
+        )
+        self.assertEqual(
+            response.context["season_audit_entries"][0]["display_title"],
+            "Season 1: 1/2 • 50%",
+        )
+        self.assertEqual(
+            response.context["season_audit_entries"][0]["progress_label"],
+            "Collected Episodes: 1/2 • 50%",
+        )
+        self.assertEqual(
+            response.context["season_audit_entries"][0]["source_labels"],
+            ["Sonarr"],
+        )
+        self.assertEqual(
+            response.context["season_audit_entries"][0]["quality_label"],
+            "WebDL-1080p",
+        )
+        self.assertEqual(
+            response.context["season_audit_entries"][1]["title"],
+            "Season 2",
+        )
+        self.assertEqual(
+            response.context["season_audit_entries"][1]["progress_label"],
+            "Collected Episodes: 1/1 • 100%",
+        )
+        self.assertContains(response, "Collected Seasons")
+        self.assertContains(response, "Season 1: 1/2 • 50%")
+        self.assertNotContains(response, "Collected Episodes: 1/2 • 50%")
+        self.assertContains(response, "WebDL-1080p")
+        self.assertContains(response, "Sonarr")
+        self.assertContains(response, "Add Another Copy")
+        self.assertContains(
+            response,
+            reverse(
+                "collection_remove_season",
+                kwargs={
+                    "season_item_id": response.context["season_audit_entries"][0]["season_item_id"],
+                },
+            ),
+        )
+        self.assertContains(response, 'aria-label="Remove collection entry"', count=2)
+        self.assertNotContains(response, "Existing Entries")
+        self.assertNotContains(response, "Delete")
+        self.assertNotContains(response, "Plex")
+        self.assertNotContains(response, "S01E03 - Third Episode")
+
+    def test_collection_modal_season_limits_episode_audit_entries_to_the_season(self):
+        """Season modal should only show collected episode rows for that season."""
+        self.client.login(**self.credentials)
+
+        Item.objects.create(
+            media_id="tv-5678",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Seasoned Show",
+            image="http://example.com/show2.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-5678",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Season 1",
+            image="http://example.com/season1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-5678",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=2,
+            title="Season 2",
+            image="http://example.com/season2.jpg",
+        )
+        season_one_episode = Item.objects.create(
+            media_id="tv-5678",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Season One Episode",
+            image="http://example.com/season1-ep1.jpg",
+        )
+        season_two_episode = Item.objects.create(
+            media_id="tv-5678",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=2,
+            episode_number=1,
+            title="Season Two Episode",
+            image="http://example.com/season2-ep1.jpg",
+        )
+        CollectionEntry.objects.create(user=self.user, item=season_one_episode)
+        CollectionEntry.objects.create(user=self.user, item=season_two_episode)
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=season_one_episode,
+            source="sonarr",
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=season_two_episode,
+            source="sonarr",
+        )
+
+        response = self.client.get(
+            reverse(
+                "collection_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.SEASON.value,
+                    "media_id": "tv-5678",
+                },
+            ),
+            {
+                "season_number": 1,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["episode_audit_entries"]), 1)
+        self.assertEqual(
+            response.context["episode_audit_entries"][0]["title"],
+            "S01E01 - Season One Episode",
+        )
+        self.assertContains(response, "S01E01 - Season One Episode")
+        self.assertNotContains(response, "S02E01 - Season Two Episode")
+
+    def test_collection_modal_season_keeps_manual_entries_visible_with_sonarr_audit_rows(self):
+        """Manual season copies should stay visible alongside Sonarr episode rows."""
+        self.client.login(**self.credentials)
+
+        Item.objects.create(
+            media_id="tv-9012",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Hybrid Show",
+            image="http://example.com/show3.jpg",
+        )
+        season_item = Item.objects.create(
+            media_id="tv-9012",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Season 1",
+            image="http://example.com/season1.jpg",
+        )
+        season_episode = Item.objects.create(
+            media_id="tv-9012",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Pilot",
+            image="http://example.com/pilot.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=season_item,
+            media_type="digital",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=season_episode,
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=season_episode,
+            source="sonarr",
+            quality_label="WebDL-1080p",
+        )
+
+        response = self.client.get(
+            reverse(
+                "collection_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.SEASON.value,
+                    "media_id": "tv-9012",
+                },
+            ),
+            {
+                "season_number": 1,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["episode_audit_entries"]), 1)
+        self.assertEqual(len(response.context["visible_existing_entries"]), 1)
+        self.assertContains(response, "Existing Entries")
+        self.assertContains(response, "Digital")
+        self.assertContains(response, "S01E01 - Pilot")
+        self.assertContains(response, "Source: Sonarr")
+        self.assertContains(response, "WebDL-1080p")
+        self.assertContains(
+            response,
+            reverse("collection_remove", kwargs={"entry_id": response.context["episode_audit_entries"][0]["entry"].id}),
+        )
+        self.assertContains(response, 'aria-label="Remove collection entry"', count=2)
+        self.assertNotContains(response, ">Collection Entry<", html=True)

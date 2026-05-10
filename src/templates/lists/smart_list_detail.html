@@ -279,82 +279,86 @@
     $watch('isOrderEditing', v => v ? initListSortable(layout) : destroyListSortable());
   ">
 
-    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+    <div class="mb-6">
       <div class="w-full min-w-0">
-        <div class="flex flex-wrap items-center gap-3 mb-2">
+        <div class="mb-2 flex flex-wrap items-center gap-3">
           <h1 class="text-3xl font-bold">{{ custom_list.name }}</h1>
         </div>
-        {% if custom_list.description %}<p class="text-gray-400 mb-2">{{ custom_list.description }}</p>{% endif %}
-        <div class="flex flex-wrap items-center gap-4 w-full min-w-0">
-          <div class="flex flex-wrap items-center gap-2 min-w-0">
-            <div class="flex w-full sm:w-auto flex-nowrap sm:flex-wrap items-center gap-2 text-sm overflow-x-auto sm:overflow-visible pb-1 sm:pb-0 pr-2 sm:pr-0">
-              <span class="text-sm bg-indigo-600/20 text-indigo-300 rounded-md inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5">
-                {% include "app/icons/horizontal-sliders.svg" with classes="w-3 h-3" %}
-                Smart List
-              </span>
-              {% if is_public_view %}
-                <a href="{% url 'user_profile' custom_list.owner.username %}"
-                   class="inline-flex shrink-0 items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors">
-                  <span>View Profile</span>
-                </a>
-              {% endif %}
-              {% if custom_list.visibility == "public" %}
-                <span class="text-sm bg-green-600/20 text-green-400 rounded-md inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5">
-                  {% include "app/icons/globe.svg" with classes="w-3 h-3" %}
-                  Public
-                </span>
-                <div class="relative inline-flex shrink-0" x-data="{ open: false }">
-                  <button type="button"
-                          class="text-sm bg-[#39404b] text-gray-200 rounded-md inline-flex items-center gap-1 px-1.5 py-0.5 hover:bg-[#454d5a] transition-colors"
-                          @click="open = !open"
-                          aria-label="List links">
-                    {% include "app/icons/link.svg" with classes="w-3 h-3" %}
-                    Links
-                    {% include "app/icons/chevron-down.svg" with classes="w-3 h-3" %}
-                  </button>
-                  <div class="absolute left-0 top-full mt-2 py-1 w-40 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
-                       x-cloak
-                       x-show="open"
-                       @click.outside="open = false"
-                       x-transition:enter="transition ease-out duration-100"
-                       x-transition:enter-start="transform opacity-0 scale-95"
-                       x-transition:enter-end="transform opacity-100 scale-100"
-                       x-transition:leave="transition ease-in duration-75"
-                       x-transition:leave-start="transform opacity-100 scale-100"
-                       x-transition:leave-end="transform opacity-0 scale-95">
-                    <a href="{% url 'list_rss' custom_list.public_reference %}"
-                       class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
-                       aria-label="RSS feed">
-                      RSS
-                    </a>
-                    <a href="{% url 'list_json' custom_list.public_reference %}?arr=radarr"
-                       class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
-                       aria-label="Radarr export">
-                      Radarr
-                    </a>
-                    <a href="{% url 'list_json' custom_list.public_reference %}?arr=sonarr"
-                       class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
-                       aria-label="Sonarr export">
-                      Sonarr
-                    </a>
-                  </div>
-                </div>
-              {% endif %}
-              {% if collaborators_count > 1 %}
-                <span class="inline-flex shrink-0 items-center gap-1 bg-[#39404b] text-gray-200 rounded-md px-1.5 py-0.5">
-                  <span>{{ collaborators_count }} collaborators</span>
-                </span>
-              {% endif %}
-              <span class="inline-flex shrink-0 items-center gap-1 bg-[#39404b] text-gray-200 rounded-md px-1.5 py-0.5">
-                <span x-text="itemsCountLabel()"></span>
-              </span>
-            </div>
+        <div class="mb-3 text-sm font-medium text-gray-400">
+          <div class="flex flex-wrap items-center gap-y-1">
+            <span x-text="itemsCountLabel()">{{ items_count }} item{{ items_count|pluralize }}</span>
+            {% if is_public_view %}
+              <span class="mx-2 text-gray-600">•</span>
+              <a href="{% url 'user_profile' custom_list.owner.username %}"
+                 class="inline-flex items-center text-gray-400 transition-colors hover:text-indigo-300">
+                {{ custom_list.owner.username }}
+              </a>
+            {% endif %}
           </div>
+        </div>
+        <div class="mb-5 flex w-full flex-nowrap items-center gap-2 overflow-x-auto pb-1 pr-2 text-sm sm:flex-wrap sm:overflow-visible sm:pb-0 sm:pr-0">
+          <span class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-indigo-400/18 bg-indigo-500/[0.07] pl-0 pr-2.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+            <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-indigo-400/28 bg-indigo-500/14 sm:h-8 sm:w-8">
+              {% include "app/icons/horizontal-sliders.svg" with classes="w-3 h-3 text-indigo-300" %}
+            </span>
+            <span class="text-[12px] font-medium text-gray-200 sm:text-sm">Smart List</span>
+          </span>
+          {% if custom_list.visibility == "public" %}
+            <span class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-green-400/18 bg-green-500/[0.07] pl-0 pr-2.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+              <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-green-400/28 bg-green-500/14 sm:h-8 sm:w-8">
+                {% include "app/icons/globe.svg" with classes="w-3 h-3 text-green-400" %}
+              </span>
+              <span class="text-[12px] font-medium text-gray-200 sm:text-sm">Public</span>
+            </span>
+            <div class="relative inline-flex shrink-0" x-data="{ open: false }">
+              <button type="button"
+                      class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-gray-400/18 bg-gray-500/[0.07] pl-0 pr-2.5 text-[12px] text-white shadow-sm transition-colors hover:border-gray-300/28 hover:bg-gray-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm"
+                      @click="open = !open"
+                      aria-label="List links">
+                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-gray-400/28 bg-gray-500/14 sm:h-8 sm:w-8">
+                  {% include "app/icons/link.svg" with classes="w-3 h-3 text-gray-300" %}
+                </span>
+                <span class="text-[12px] font-medium text-gray-200 sm:text-sm">Links</span>
+                {% include "app/icons/chevron-down.svg" with classes="w-3 h-3 text-gray-400" %}
+              </button>
+              <div class="absolute left-0 top-full mt-2 w-40 overflow-hidden rounded-md border border-gray-700 bg-[#39404b] py-1 shadow-lg z-10"
+                   x-cloak
+                   x-show="open"
+                   @click.outside="open = false"
+                   x-transition:enter="transition ease-out duration-100"
+                   x-transition:enter-start="transform opacity-0 scale-95"
+                   x-transition:enter-end="transform opacity-100 scale-100"
+                   x-transition:leave="transition ease-in duration-75"
+                   x-transition:leave-start="transform opacity-100 scale-100"
+                   x-transition:leave-end="transform opacity-0 scale-95">
+                <a href="{% url 'list_rss' custom_list.public_reference %}"
+                   class="block px-3 py-2 text-sm text-gray-200 transition-colors hover:bg-[#454d5a] hover:text-white"
+                   aria-label="RSS feed">
+                  RSS
+                </a>
+                <a href="{% url 'list_json' custom_list.public_reference %}?arr=radarr"
+                   class="block px-3 py-2 text-sm text-gray-200 transition-colors hover:bg-[#454d5a] hover:text-white"
+                   aria-label="Radarr export">
+                  Radarr
+                </a>
+                <a href="{% url 'list_json' custom_list.public_reference %}?arr=sonarr"
+                   class="block px-3 py-2 text-sm text-gray-200 transition-colors hover:bg-[#454d5a] hover:text-white"
+                   aria-label="Sonarr export">
+                  Sonarr
+                </a>
+              </div>
+            </div>
+          {% endif %}
+          {% if collaborators_count > 1 %}
+            <span class="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#39404b] px-1.5 py-0.5 text-gray-200">
+              <span>{{ collaborators_count }} collaborators</span>
+            </span>
+          {% endif %}
         </div>
       </div>
 
       {% if can_edit %}
-        <div class="hidden sm:flex shrink-0 items-center gap-2">
+        <div class="hidden sm:flex mb-4 items-center gap-2">
           <div class="relative inline-flex" x-data="{ open: false }" @click.outside="open = false">
             {% if smart_edit_mode %}
               <a href="{% url 'list_detail' custom_list.public_reference %}"
@@ -414,7 +418,7 @@
           </div>
         </div>
       {% elif custom_list.can_recommend %}
-        <div class="hidden sm:flex shrink-0 items-center gap-2">
+        <div class="hidden sm:flex mb-4 items-center gap-2">
           <div class="relative inline-flex" x-data="{ open: false }" @click.outside="open = false">
             {% if recommendation_count > 0 %}
               <a href="{% url 'list_recommendations' custom_list.id %}"
@@ -466,7 +470,7 @@
     </div>
 
     {% if can_edit %}
-      <div class="sm:hidden mb-6">
+      <div class="mb-4 sm:hidden">
         <div class="relative inline-flex w-full" x-data="{ open: false }" @click.outside="open = false">
           {% if smart_edit_mode %}
             <a href="{% url 'list_detail' custom_list.public_reference %}"
@@ -526,7 +530,7 @@
         </div>
       </div>
     {% elif custom_list.can_recommend %}
-      <div class="sm:hidden mb-6">
+      <div class="mb-4 sm:hidden">
         <div class="relative inline-flex w-full" x-data="{ open: false }" @click.outside="open = false">
           {% if recommendation_count > 0 %}
             <a href="{% url 'list_recommendations' custom_list.id %}"
@@ -575,15 +579,7 @@
         </div>
       </div>
     {% endif %}
-
-    {% if is_public_view %}
-      <div class="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 mb-6">
-        <div class="flex items-center gap-2 text-blue-400">
-          {% include "app/icons/info.svg" with classes="w-5 h-5" %}
-          <span class="text-sm">You're viewing a public list. <a href="{% url 'account_login' %}" class="underline hover:text-blue-300">Log in</a> to track your own media.</span>
-        </div>
-      </div>
-    {% endif %}
+    {% if custom_list.description %}<p class="mb-6 text-gray-400">{{ custom_list.description }}</p>{% endif %}
 
     {% if can_edit %}
       {% include "lists/components/list_form.html" %}
@@ -593,7 +589,9 @@
       <p class="text-sm text-indigo-300 mb-3">Editing smart rules updates this list automatically.</p>
     {% endif %}
 
-    {% include "lists/components/smart_rules_summary.html" %}
+    {% if can_edit %}
+      {% include "lists/components/smart_rules_summary.html" %}
+    {% endif %}
 
     {% if can_edit or is_public_view %}
       {% include "lists/components/smart_rules_builder.html" %}

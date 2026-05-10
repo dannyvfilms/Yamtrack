@@ -449,6 +449,7 @@ def ensure_item_metadata(
     if source == Sources.TMDB.value and tracking_media_type in (
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
     ):
         credits.sync_item_credits_from_metadata(item, metadata)
 

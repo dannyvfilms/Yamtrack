@@ -140,6 +140,11 @@ urlpatterns = [
         name="person_detail",
     ),
     path(
+        "studio/<source:source>/<str:studio_id>/<slug:name>",
+        views.studio_detail,
+        name="studio_detail",
+    ),
+    path(
         "api/active-playback/",
         views.active_playback_fragment,
         name="active_playback_fragment",
@@ -286,6 +291,11 @@ urlpatterns = [
         name="collection_remove",
     ),
     path(
+        "collection/season/<int:season_item_id>/remove/",
+        views.collection_remove_season,
+        name="collection_remove_season",
+    ),
+    path(
         "collection/modal/<source:source>/<media_type:media_type>/<path:media_id>/",
         views.collection_modal,
         name="collection_modal",
@@ -313,4 +323,5 @@ urlpatterns = [
     ),
     path("tag_item_toggle", views.tag_item_toggle, name="tag_item_toggle"),
     path("tag_create", views.tag_create, name="tag_create"),
+    path("tag_delete", views.tag_delete, name="tag_delete"),
 ]

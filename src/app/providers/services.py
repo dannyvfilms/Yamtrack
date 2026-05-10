@@ -30,6 +30,15 @@ from app.providers import (
 )
 
 logger = logging.getLogger(__name__)
+TRANSIENT_HTTP_STATUS_CODES = frozenset(
+    {
+        requests.codes.internal_server_error,
+        requests.codes.bad_gateway,
+        requests.codes.service_unavailable,
+        requests.codes.gateway_timeout,
+    },
+)
+TRANSIENT_HTTP_MAX_RETRIES = 2
 
 
 def _audiobookshelf_book(media_id):
@@ -241,6 +250,7 @@ def api_request(
     data=None,
     headers=None,
     response_format="json",
+    _retry_attempt=0,
 ):
     """Make a request to the API and return the response.
 
@@ -296,6 +306,35 @@ def api_request(
                 data=data,
                 headers=headers,
                 response_format=response_format,
+                _retry_attempt=_retry_attempt,
+            )
+
+        if (
+            status_code in TRANSIENT_HTTP_STATUS_CODES
+            and _retry_attempt < TRANSIENT_HTTP_MAX_RETRIES
+        ):
+            seconds_to_wait = _retry_attempt + 1
+            logger.warning(
+                (
+                    "%s api transient error status=%s, retrying in %s seconds "
+                    "(attempt %s/%s)"
+                ),
+                provider,
+                status_code,
+                seconds_to_wait,
+                _retry_attempt + 1,
+                TRANSIENT_HTTP_MAX_RETRIES,
+            )
+            time.sleep(seconds_to_wait)
+            return api_request(
+                provider,
+                method,
+                url,
+                params=params,
+                data=data,
+                headers=headers,
+                response_format=response_format,
+                _retry_attempt=_retry_attempt + 1,
             )
 
         raise error from None

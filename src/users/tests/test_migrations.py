@@ -11,6 +11,9 @@ migration_0043 = import_module(
 migration_0067 = import_module(
     "users.migrations.0067_remove_user_tv_sort_valid_and_more",
 )
+migration_0090 = import_module(
+    "users.migrations.0090_homescreenrow",
+)
 
 
 class _FakeCursor:
@@ -167,3 +170,77 @@ class Migration0043NormalizationTests(SimpleTestCase):
                 ),
             ],
         )
+
+
+class _FakeHomeScreenRow:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+class Migration0090HomeScreenSeedTests(SimpleTestCase):
+    """Regression tests for home screen seed defaults."""
+
+    def test_enabled_media_types_for_user_respects_sidebar_flags(self):
+        user = SimpleNamespace(
+            tv_enabled=True,
+            season_enabled=True,
+            movie_enabled=False,
+            anime_enabled=True,
+        )
+
+        enabled = migration_0090._enabled_media_types_for_user(user)
+
+        self.assertEqual(enabled[:3], ["tv", "season", "anime"])
+        self.assertNotIn("movie", enabled)
+
+    def test_default_rows_include_planning_when_legacy_preference_was_enabled(self):
+        user = SimpleNamespace(
+            id=7,
+            season_enabled=True,
+            home_sort="completion",
+            show_planned_on_home="combined",
+        )
+
+        rows = migration_0090._default_rows_for_user(user, _FakeHomeScreenRow)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row.position for row in rows], [0, 1])
+        self.assertEqual([row.row_type for row in rows], ["library_query", "library_query"])
+        self.assertEqual(rows[0].filters["status"], "In progress")
+        self.assertEqual(rows[0].sort_by, "completion")
+        self.assertEqual(rows[0].direction, "desc")
+        self.assertEqual(rows[1].filters["status"], "Planning")
+        self.assertEqual(rows[1].sort_by, "completion")
+        self.assertEqual(rows[1].direction, "desc")
+
+    def test_default_rows_skip_planning_when_legacy_preference_was_disabled(self):
+        user = SimpleNamespace(
+            id=9,
+            movie_enabled=True,
+            home_sort="title",
+            show_planned_on_home="disabled",
+        )
+
+        rows = migration_0090._default_rows_for_user(user, _FakeHomeScreenRow)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual([row.row_type for row in rows], ["library_query"])
+        self.assertEqual(rows[0].direction, "asc")
+
+    def test_default_rows_translate_legacy_upcoming_to_old_home_shape(self):
+        user = SimpleNamespace(
+            id=11,
+            tv_enabled=True,
+            season_enabled=True,
+            movie_enabled=True,
+            home_sort="upcoming",
+            show_planned_on_home="disabled",
+        )
+
+        rows = migration_0090._default_rows_for_user(user, _FakeHomeScreenRow)
+
+        self.assertEqual([row.media_type for row in rows], ["season", "movie"])
+        self.assertEqual(rows[0].sort_by, "upcoming")
+        self.assertEqual(rows[0].direction, "asc")
+        self.assertEqual(rows[1].sort_by, "recent")
+        self.assertEqual(rows[1].direction, "desc")

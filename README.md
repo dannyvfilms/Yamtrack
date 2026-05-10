@@ -278,6 +278,7 @@ The only universally required variable is `SECRET` for Django's secret key. For 
 - `HARDCOVER_API` - Hardcover book metadata/imports
 - `COMICVINE_API` - comic metadata
 - `LASTFM_API_KEY` - Last.fm integration and scrobble polling
+- `TRAKT_API` / `TRAKT_API_SECRET` - Trakt private-profile OAuth imports
 - `URLS` - your public URL if using a reverse proxy, for example `https://yamtrack.mydomain.com`
 - `ADMIN_ENABLED` - set to `True` to enable the Django admin interface at `/admin/` (see the [Admin Guide](wiki/6.-Admin-and-Operations.md#admin-guide))
 
@@ -308,6 +309,19 @@ SECRET=SECRET
 DEBUG=True
 ```
 
+#### Trakt private profile import (OAuth)
+
+If you import from a private Trakt profile, configure OAuth first:
+
+1. Create an app in [Trakt API Apps](https://trakt.tv/oauth/applications).
+2. Add this Redirect URI in the Trakt app:
+   - `https://your_domain.com/import/trakt/private`
+3. Set these environment variables in Yamtrack:
+   - `TRAKT_API` = your Trakt client ID
+   - `TRAKT_API_SECRET` = your Trakt client secret
+
+If you run Yamtrack behind a reverse proxy, set `URLS=https://your_domain.com` so Yamtrack generates the correct external callback URL.
+
 
 ### Troubleshooting: I Updated and My Login Is Gone
 
@@ -328,6 +342,13 @@ environment:
 ```
 
 Multiple origins can be specified with commas, for example `https://yamtrack.mydomain.com,https://yamtrack-alt.mydomain.com`.
+
+If Yamtrack does not generate the correct callback URLs for authenticating with Anilist and other imports, add this to your environment variables:
+
+```yaml
+environment:
+  - USE_X_FORWARDED=True
+```
 
 ### Docker Image Tags
 

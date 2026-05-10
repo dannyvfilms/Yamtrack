@@ -24,6 +24,7 @@ SMART_FILTER_KEYS = (
     "platform",
     "origin",
     "format",
+    "author",
     "tag",
     "tag_exclude",
 )
@@ -42,6 +43,7 @@ SMART_FILTER_DEFAULTS = {
     "platform": "",
     "origin": "",
     "format": "",
+    "author": "",
     "tag": "",
     "tag_exclude": "",
 }
@@ -64,6 +66,7 @@ COUNTRY_MEDIA_TYPES = LANGUAGE_MEDIA_TYPES
 PLATFORM_MEDIA_TYPES = {MediaTypes.GAME.value}
 ORIGIN_MEDIA_TYPES = {MediaTypes.MUSIC.value}
 FORMAT_MEDIA_TYPES = {MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value}
+AUTHOR_MEDIA_TYPES = FORMAT_MEDIA_TYPES
 
 
 def _normalize_filter_value(value) -> str:
@@ -120,6 +123,27 @@ def _extract_platforms(item: Item) -> list[str]:
         return [str(value).strip() for value in platforms if str(value).strip()]
     platform_value = str(platforms).strip()
     return [platform_value] if platform_value else []
+
+
+def _extract_authors(item: Item) -> list[str]:
+    authors = getattr(item, "authors", None) or []
+    if not isinstance(authors, list):
+        authors = [authors]
+
+    normalized: list[str] = []
+    for raw_author in authors:
+        if isinstance(raw_author, dict):
+            author_name = (
+                raw_author.get("name")
+                or raw_author.get("person")
+                or raw_author.get("author")
+            )
+        else:
+            author_name = raw_author
+        author_value = str(author_name).strip() if author_name else ""
+        if author_value:
+            normalized.append(author_value)
+    return normalized
 
 
 def _payload_get(payload, key: str, default=""):
@@ -234,6 +258,7 @@ def normalize_rule_payload(payload, owner):
         "platform": str(_payload_get(payload, "platform", "") or "").strip(),
         "origin": str(_payload_get(payload, "origin", "") or "").strip(),
         "format": str(_payload_get(payload, "format", "") or "").strip(),
+        "author": str(_payload_get(payload, "author", "") or "").strip(),
         "tag": str(_payload_get(payload, "tag", "") or "").strip(),
         "tag_exclude": str(_payload_get(payload, "tag_exclude", "") or "").strip(),
     }
@@ -356,7 +381,43 @@ def _matches_item_filters(item: Item, rules: dict, today) -> bool:
         if item_format != format_filter:
             return False
 
+    author_filter = _normalize_filter_value(rules.get("author"))
+    if author_filter:
+        authors = _extract_authors(item)
+        if not any(_normalize_filter_value(author) == author_filter for author in authors):
+            return False
+
     return True
+
+
+def _rules_require_item_scan(normalized_rules: dict) -> bool:
+    """Return whether matching requires per-item inspection beyond the base queryset."""
+    if _normalize_filter_value(normalized_rules.get("release") or "all") != "all":
+        return True
+
+    if normalized_rules.get("collection", "all") != "all":
+        return True
+
+    if normalized_rules.get("rating", "all") != "all":
+        return True
+
+    for key in (
+        "genre",
+        "year",
+        "source",
+        "language",
+        "country",
+        "platform",
+        "origin",
+        "format",
+        "author",
+        "tag",
+        "tag_exclude",
+    ):
+        if _normalize_filter_value(normalized_rules.get(key)):
+            return True
+
+    return False
 
 
 def _matches_collection_filter(
@@ -434,8 +495,12 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
     collection_filter = normalized_rules.get("collection", "all")
     rating_filter = normalized_rules.get("rating", "all")
     today = timezone.localdate()
+    item_scan_required = _rules_require_item_scan(normalized_rules)
 
-    collected_item_ids, collected_episode_pairs = _collection_filter_context(owner)
+    collected_item_ids: set[int] = set()
+    collected_episode_pairs: set[tuple[str, str]] = set()
+    if collection_filter != "all":
+        collected_item_ids, collected_episode_pairs = _collection_filter_context(owner)
 
     tag_filter = _normalize_filter_value(normalized_rules.get("tag"))
     tag_exclude = _normalize_filter_value(normalized_rules.get("tag_exclude"))
@@ -465,16 +530,20 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
             search_query=normalized_rules.get("search", ""),
         )
 
-        candidate_item_ids = _filter_item_ids_by_rating(
-            owner,
-            media_type,
-            queryset.values_list("item_id", flat=True),
-            rating_filter,
-        )
-        if not candidate_item_ids:
+        if not item_scan_required:
+            matched_ids.update(queryset.values_list("item_id", flat=True))
             continue
 
-        queryset = queryset.filter(item_id__in=candidate_item_ids)
+        if rating_filter != "all":
+            candidate_item_ids = _filter_item_ids_by_rating(
+                owner,
+                media_type,
+                queryset.values_list("item_id", flat=True),
+                rating_filter,
+            )
+            if not candidate_item_ids:
+                continue
+            queryset = queryset.filter(item_id__in=candidate_item_ids)
 
         for entry in queryset.iterator():
             item = getattr(entry, "item", None)
@@ -484,7 +553,7 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
             if not _matches_item_filters(item, normalized_rules, today):
                 continue
 
-            if not _matches_collection_filter(
+            if collection_filter != "all" and not _matches_collection_filter(
                 entry=entry,
                 media_type=media_type,
                 collection_filter=collection_filter,
@@ -688,6 +757,7 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
     platforms_set = set()
     origins_set = set()
     formats_set = set()
+    authors_set = set()
     has_unknown_year = False
 
     for item in items:
@@ -717,6 +787,7 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
         format_value = str(getattr(item, "format", "") or "").strip()
         if format_value:
             formats_set.add(format_value)
+        authors_set.update(_extract_authors(item))
 
     source_labels = dict(Sources.choices)
     filter_data = {
@@ -763,6 +834,11 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
             for value in sorted(formats_set, key=lambda val: val.lower())
         ],
         "show_formats": any(media_type in FORMAT_MEDIA_TYPES for media_type in target_media_types),
+        "authors": [
+            {"value": value, "label": value}
+            for value in sorted(authors_set, key=lambda value: value.lower())
+        ],
+        "show_authors": any(media_type in AUTHOR_MEDIA_TYPES for media_type in target_media_types),
     }
 
     if has_unknown_year:

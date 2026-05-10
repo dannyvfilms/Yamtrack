@@ -111,6 +111,10 @@ class MusicScrobbleServiceTests(TestCase):
         self.assertTrue(
             AlbumTracker.objects.filter(user=self.user, album=music.album).exists(),
         )
+        history_rows = list(music.history.order_by("history_date"))
+        self.assertEqual(len(history_rows), 1)
+        self.assertEqual(history_rows[0].progress, 1)
+        self.assertEqual(history_rows[0].history_user, self.user)
 
     @patch("app.services.music_scrobble.sync_artist_discography")
     @patch("app.services.music_scrobble.musicbrainz.get_artist")
@@ -693,3 +697,45 @@ class MusicScrobbleServiceTests(TestCase):
         self.assertEqual(Album.objects.filter(artist=artist, title="Blues Walk").count(), 1)
         self.assertEqual(music.album.id, rich.id)
         self.assertEqual(music.track.album.id, rich.id)
+
+    @patch("app.services.music_scrobble.musicbrainz.search")
+    @patch("app.services.music_scrobble.musicbrainz.search_artists")
+    def test_scrobble_uses_surviving_album_after_pre_track_dedupe(
+        self,
+        mock_search_artists,
+        mock_search_tracks,
+    ):
+        """Track creation should use the canonical album chosen during dedupe."""
+        mock_search_tracks.return_value = {"results": [], "total_results": 0, "page": 1}
+        mock_search_artists.return_value = {"results": [], "total_results": 0, "page": 1}
+        artist = Artist.objects.create(name="Test Artist")
+        poor = Album.objects.create(title="Blues Walk", artist=artist)
+        rich = Album.objects.create(
+            title="Blues Walk",
+            artist=artist,
+            musicbrainz_release_id="rel-1",
+            image="http://img/rich.jpg",
+            tracks_populated=True,
+        )
+        rich_track = rich.tracklist.create(title="Track A", track_number=1)
+
+        event = MusicPlaybackEvent(
+            user=self.user,
+            artist_name="Test Artist",
+            album_title="Blues Walk",
+            track_title="Track A",
+            track_number=1,
+            duration_ms=None,
+            plex_rating_key="plex-rich",
+            external_ids={},
+            completed=True,
+            played_at=timezone.now().replace(second=0, microsecond=0),
+        )
+
+        music = record_music_playback(event)
+
+        self.assertEqual(Album.objects.filter(artist=artist, title="Blues Walk").count(), 1)
+        self.assertFalse(Album.objects.filter(id=poor.id).exists())
+        self.assertEqual(music.album.id, rich.id)
+        self.assertEqual(music.track.id, rich_track.id)
+        self.assertEqual(music.track.album_id, rich.id)

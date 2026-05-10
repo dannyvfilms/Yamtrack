@@ -3,9 +3,9 @@
 from datetime import timedelta
 from unittest.mock import call, patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.conf import settings
 from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
 
@@ -109,6 +109,36 @@ class DiscoverTabCacheTests(TestCase):
             debounce_seconds=tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
             countdown=tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
             priority=tab_cache.DISCOVER_TASK_PRIORITY_INTERACTIVE,
+        )
+
+    @patch("app.discover.service.get_discover_rows")
+    def test_get_tab_rows_inline_bootstrap_ignores_cache_write_failures(
+        self,
+        mock_get_discover_rows,
+    ):
+        mock_get_discover_rows.return_value = [self._row(title="Live Movie")]
+        cache_error = RuntimeError("MISCONF Redis writes disabled")
+
+        with (
+            patch("app.discover.tab_cache.cache.set", side_effect=cache_error),
+            patch("app.discover.tab_cache.cache.add", side_effect=cache_error),
+            patch("app.discover.tab_cache.cache.delete", side_effect=cache_error),
+        ):
+            rows = tab_cache.get_tab_rows(
+                self.user,
+                "movie",
+                show_more=False,
+                allow_inline_bootstrap=True,
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].items[0].title, "Live Movie")
+        mock_get_discover_rows.assert_called_once_with(
+            self.user,
+            "movie",
+            show_more=False,
+            include_debug=False,
+            defer_artwork=True,
         )
 
     @patch("app.discover.service.get_discover_rows")
@@ -628,6 +658,20 @@ class DiscoverTabCacheTests(TestCase):
                 ),
             ],
         )
+
+    def test_warm_sibling_tabs_ignores_cache_write_failures(self):
+        cache_error = RuntimeError("MISCONF Redis writes disabled")
+
+        with (
+            patch(
+                "app.discover.tab_cache.get_user_tab_targets",
+                return_value=["movie", "tv"],
+            ),
+            patch("app.discover.tab_cache.cache.set", side_effect=cache_error),
+            patch("app.discover.tab_cache.cache.add", side_effect=cache_error),
+            patch("app.discover.tab_cache.cache.delete", side_effect=cache_error),
+        ):
+            self.assertIsNone(tab_cache.warm_sibling_tabs(self.user, "movie"))
 
     @patch("app.discover.tab_cache.schedule_user_tab_warmup", return_value=2)
     def test_maybe_schedule_user_warmup_is_throttled(self, mock_schedule_warmup):

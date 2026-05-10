@@ -1,3 +1,112 @@
+function trackModalCurrentTimeSegment(input) {
+  if (input?.value && input.value.includes("T")) {
+    return input.value.split("T")[1].slice(0, 5);
+  }
+
+  return new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(11, 16);
+}
+
+function trackModalDispatchInputEvents(input) {
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function trackModalClearAutoFilledField(form, fieldName) {
+  if (!form || !window.Alpine) {
+    return;
+  }
+
+  try {
+    const data = Alpine.$data(form);
+    if (data?.autoFilled && fieldName in data.autoFilled) {
+      data.autoFilled[fieldName] = false;
+    }
+  } catch {
+    // Ignore Alpine lookup failures and still update the DOM field value.
+  }
+}
+
+function trackModalFormatLocalDateTime(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function trackModalParseLocalDateTime(value) {
+  if (!value || !value.includes("T")) {
+    return null;
+  }
+
+  const [datePart, timePart] = value.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hours, minutes] = timePart.split(":").map(Number);
+
+  if ([year, month, day, hours, minutes].some(Number.isNaN)) {
+    return null;
+  }
+
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+}
+
+window.applyTrackModalReleaseDate = function applyTrackModalReleaseDate(
+  button,
+  releaseDate,
+  fieldName,
+  runtimeMinutes,
+) {
+  if (!button || !releaseDate) {
+    return;
+  }
+
+  const container = button.parentElement;
+  const input =
+    container?.querySelector(`[name="${fieldName}"]`) ||
+    container?.querySelector("input");
+  if (!input) {
+    return;
+  }
+
+  input.value =
+    input.type === "datetime-local"
+      ? `${releaseDate}T${trackModalCurrentTimeSegment(input)}`
+      : releaseDate;
+
+  const form = button.closest("form");
+  trackModalClearAutoFilledField(form, fieldName);
+  trackModalDispatchInputEvents(input);
+
+  const parsedRuntimeMinutes = Number.parseInt(runtimeMinutes, 10);
+  const startDateInput = form?.querySelector('[name="start_date"]');
+  if (
+    fieldName !== "end_date" ||
+    !Number.isFinite(parsedRuntimeMinutes) ||
+    parsedRuntimeMinutes <= 0 ||
+    !startDateInput ||
+    startDateInput === input ||
+    input.type !== "datetime-local" ||
+    startDateInput.type !== "datetime-local"
+  ) {
+    return;
+  }
+
+  const endDateTime = trackModalParseLocalDateTime(input.value);
+  if (!endDateTime) {
+    return;
+  }
+
+  startDateInput.value = trackModalFormatLocalDateTime(
+    new Date(endDateTime.getTime() - parsedRuntimeMinutes * 60000),
+  );
+  trackModalClearAutoFilledField(form, "start_date");
+  trackModalDispatchInputEvents(startDateInput);
+};
+
 document.addEventListener("alpine:init", () => {
   Alpine.data("mediaForm", () => ({
     autoFilled: {
@@ -29,42 +138,43 @@ document.addEventListener("alpine:init", () => {
 
       // Disable HTML5 validation on the form to prevent browser from blocking submission
       // We'll rely on Django backend validation instead
-      const form = this.$el.tagName === 'FORM' ? this.$el : this.$el.closest('form');
+      const form = this.$el.tagName === "FORM" ? this.$el : this.$el.closest("form");
       if (form) {
         // Set novalidate attribute (Safari sometimes needs both the attribute and property)
-        form.setAttribute('novalidate', 'novalidate');
+        form.setAttribute("novalidate", "novalidate");
         form.noValidate = true;
-        
+
         // Also explicitly remove required from date fields for Safari compatibility
         if (endDateField) {
-          endDateField.removeAttribute('required');
+          endDateField.removeAttribute("required");
           endDateField.required = false;
         }
         if (startDateField) {
-          startDateField.removeAttribute('required');
+          startDateField.removeAttribute("required");
           startDateField.required = false;
         }
-        
-        // Safari-specific: Also handle form submission to prevent validation
-        form.addEventListener('submit', (e) => {
-          // Ensure novalidate is set right before submission
-          form.setAttribute('novalidate', 'novalidate');
-          form.noValidate = true;
-          
-          // Remove required from date fields one more time
-          if (endDateField) {
-            endDateField.removeAttribute('required');
-            endDateField.required = false;
-          }
-          if (startDateField) {
-            startDateField.removeAttribute('required');
-            startDateField.required = false;
-          }
-        }, { capture: true });
-      }
 
-      // Get the current time in correct format based on input type
-      const now = this.getCurrentDateTime(endDateField);
+        // Safari-specific: Also handle form submission to prevent validation
+        form.addEventListener(
+          "submit",
+          () => {
+            // Ensure novalidate is set right before submission
+            form.setAttribute("novalidate", "novalidate");
+            form.noValidate = true;
+
+            // Remove required from date fields one more time
+            if (endDateField) {
+              endDateField.removeAttribute("required");
+              endDateField.required = false;
+            }
+            if (startDateField) {
+              startDateField.removeAttribute("required");
+              startDateField.required = false;
+            }
+          },
+          { capture: true },
+        );
+      }
 
       // Initial load handling - only auto-fill for new forms
       // For existing records, respect the saved values (even if empty)
@@ -75,7 +185,7 @@ document.addEventListener("alpine:init", () => {
         endDateField &&
         !endDateField.value
       ) {
-        endDateField.value = now;
+        endDateField.value = this.getCurrentDateTime(endDateField);
         this.autoFilled.end_date = true;
       } else if (
         isNewForm &&
@@ -84,7 +194,7 @@ document.addEventListener("alpine:init", () => {
         startDateField &&
         !startDateField.value
       ) {
-        startDateField.value = now;
+        startDateField.value = this.getCurrentDateTime(startDateField);
         this.autoFilled.start_date = true;
       }
 
@@ -122,7 +232,7 @@ document.addEventListener("alpine:init", () => {
             !endDateField.value &&
             !isReturningToOriginalCompleted
           ) {
-            endDateField.value = now;
+            endDateField.value = this.getCurrentDateTime(endDateField);
             this.autoFilled.end_date = true;
           } else if (
             status === "In progress" &&
@@ -130,28 +240,26 @@ document.addEventListener("alpine:init", () => {
             !startDateField.value &&
             !isReturningToOriginalInProgress
           ) {
-            startDateField.value = now;
+            startDateField.value = this.getCurrentDateTime(startDateField);
             this.autoFilled.start_date = true;
           }
         });
       }
-
     },
 
     getCurrentDateTime(field) {
       const date = new Date();
 
-      if (field.type === 'datetime-local') {
+      if (field.type === "datetime-local") {
         return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
           .toISOString()
           .slice(0, 16);
-      } else if (field.type === 'date') {
+      } else if (field.type === "date") {
         return date.toISOString().slice(0, 10);
       }
 
       // Fallback to date format
       return date.toISOString().slice(0, 10);
-    }
+    },
   }));
 });
-

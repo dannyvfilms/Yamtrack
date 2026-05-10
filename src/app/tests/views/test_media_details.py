@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db.utils import OperationalError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -12,37 +14,42 @@ from django.utils.translation import override
 
 from app import statistics_cache
 from app.models import (
+    TV,
     Album,
     AlbumTracker,
+    Anime,
     Artist,
     ArtistTracker,
-    Anime,
     BoardGame,
     Book,
+    CollectionEntry,
     Comic,
     CreditRoleType,
     Episode,
     Game,
     Item,
-    ItemTag,
     ItemPersonCredit,
+    ItemStudioCredit,
+    ItemTag,
     Manga,
-    MetadataProviderPreference,
     MediaTypes,
-    Music,
+    MetadataProviderPreference,
     Movie,
+    Music,
     Person,
     Podcast,
     PodcastEpisode,
     PodcastShow,
     PodcastShowTracker,
+    ProviderMetadataStatus,
     Season,
     Sources,
     Status,
+    Studio,
     Tag,
-    TV,
     Track,
 )
+from app.providers import tmdb
 from app.services import game_lengths as game_length_services
 from app.services.metadata_resolution import MetadataResolutionResult
 from integrations.models import PlexAccount
@@ -863,6 +870,75 @@ class MediaDetailsViewTests(TestCase):
                             "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
                         }
                     ],
+                },
+            ],
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_empty_tag_section_when_item_has_no_tags(
+        self,
+        mock_get_metadata,
+    ):
+        Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+            genres=["Drama", "Mystery"],
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "genres": ["Drama", "Mystery"],
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Genres")
+        self.assertContains(response, "Tags")
+        self.assertContains(response, "Click to add tags")
+        self.assertContains(response, 'x-ref="manageTagsButton"')
+        self.assertContains(response, "$refs.manageTagsButton.click()")
+        self.assertEqual(
+            response.context["detail_tag_sections"],
+            [
+                {
+                    "title": "Genres",
+                    "entries": [
+                        {
+                            "label": "Drama",
+                            "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                        },
+                        {
+                            "label": "Mystery",
+                            "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                        },
+                    ],
+                },
+                {
+                    "title": "Tags",
+                    "entries": [],
+                    "empty_label": "Click to add tags",
                 },
             ],
         )
@@ -3104,15 +3180,15 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Open grouped series")
 
     @patch("app.providers.services.get_media_metadata")
-    def test_game_media_details_renders_cached_hltb_tables(self, mock_get_metadata):
+    def test_game_media_details_renders_cached_iron_meat_hltb_tables(self, mock_get_metadata):
         Item.objects.create(
-            media_id="325609",
+            media_id="129742",
             source=Sources.IGDB.value,
             media_type=MediaTypes.GAME.value,
-            title="Dispatch",
-            image="https://example.com/dispatch.jpg",
+            title="Iron Meat",
+            image="https://example.com/iron_meat.jpg",
             provider_external_ids={
-                "hltb_game_id": 160618,
+                "hltb_game_id": 129742,
                 "steam_app_id": 2592160,
                 "itch_id": 0,
                 "ign_uuid": "84fb8aca-cd19-4ff6-8919-c1b8ef5fa88a",
@@ -3120,8 +3196,8 @@ class MediaDetailsViewTests(TestCase):
             provider_game_lengths={
                 "active_source": "hltb",
                 "hltb": {
-                    "game_id": 160618,
-                    "url": "https://howlongtobeat.com/game/160618",
+                    "game_id": 129742,
+                    "url": "https://howlongtobeat.com/game/129742",
                     "summary": {
                         "main_minutes": 512,
                         "main_plus_minutes": 614,
@@ -3177,22 +3253,22 @@ class MediaDetailsViewTests(TestCase):
             provider_game_lengths_match="steam_verified",
         )
         mock_get_metadata.return_value = {
-            "media_id": "325609",
-            "title": "Dispatch",
+            "media_id": "129742",
+            "title": "Iron Meat",
             "media_type": MediaTypes.GAME.value,
             "source": Sources.IGDB.value,
-            "source_url": "https://www.igdb.com/games/dispatch",
-            "image": "https://example.com/dispatch.jpg",
+            "source_url": "https://www.igdb.com/games/iron-meat",
+            "image": "https://example.com/iron_meat.jpg",
             "synopsis": "Test synopsis",
             "details": {
                 "format": "Main game",
-                "release_date": "2025-10-22",
+                "release_date": "2024-09-26",
                 "platforms": ["PC", "PlayStation 5"],
             },
             "genres": ["Action"],
             "related": {},
             "external_links": {
-                "HowLongToBeat": "https://howlongtobeat.com/?q=Dispatch",
+                "HowLongToBeat": "https://howlongtobeat.com/?q=Iron+Meat",
             },
         }
 
@@ -3202,8 +3278,8 @@ class MediaDetailsViewTests(TestCase):
                 kwargs={
                     "source": Sources.IGDB.value,
                     "media_type": MediaTypes.GAME.value,
-                    "media_id": "325609",
-                    "title": "dispatch",
+                    "media_id": "129742",
+                    "title": "iron-meat",
                 },
             ),
         )
@@ -3212,13 +3288,13 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Time to Beat")
         self.assertContains(response, "How Long to Beat")
         self.assertContains(response, "Main Story")
-        self.assertContains(response, 'href="https://howlongtobeat.com/game/160618"', html=False)
+        self.assertContains(response, 'href="https://howlongtobeat.com/game/129742"', html=False)
         self.assertNotContains(response, "Based on 1,733 submissions.")
         self.assertNotContains(response, "SINGLE-PLAYER")
         self.assertNotContains(response, "Playstyle")
         self.assertEqual(
             response.context["media"]["external_links"]["HowLongToBeat"],
-            "https://howlongtobeat.com/game/160618",
+            "https://howlongtobeat.com/game/129742",
         )
 
     @patch("app.providers.services.get_media_metadata")
@@ -3449,6 +3525,281 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Fetching cached time-to-beat data in the background.")
         mock_queue_game_lengths_refresh.assert_not_called()
 
+    @patch("app.db_retry.time.sleep")
+    @patch("app.views.Item.objects.get_or_create")
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_renders_when_auto_create_hits_retryable_lock(
+        self,
+        mock_get_metadata,
+        mock_get_or_create,
+        _mock_sleep,
+    ):
+        mock_get_or_create.side_effect = OperationalError("database is locked")
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Add to tracker")
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+        self.assertFalse(
+            Item.objects.filter(
+                media_id="325609",
+                source=Sources.IGDB.value,
+                media_type=MediaTypes.GAME.value,
+            ).exists(),
+        )
+
+    @patch("app.db_retry.time.sleep")
+    @patch("app.services.metadata_resolution.ItemProviderLink.objects.update_or_create")
+    @patch("app.providers.services.get_media_metadata")
+    def test_anime_media_details_renders_when_provider_link_upsert_locks(
+        self,
+        mock_get_metadata,
+        mock_update_or_create,
+        _mock_sleep,
+    ):
+        item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+        )
+        mock_update_or_create.side_effect = OperationalError("database is locked")
+        mock_get_metadata.return_value = {
+            "media_id": item.media_id,
+            "title": "Frieren",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/52991",
+            "max_progress": 28,
+            "image": "https://example.com/frieren.jpg",
+            "synopsis": "A mage looks back.",
+            "details": {"episodes": 28},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": item.media_id,
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+
+    def test_game_media_details_renders_when_metadata_save_hits_retryable_lock(self):
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+        base_metadata = {
+            "media_id": item.media_id,
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {},
+        }
+
+        with (
+            patch("app.db_retry.time.sleep"),
+            patch("app.providers.services.get_media_metadata", return_value=base_metadata),
+            patch("app.views.metadata_utils.apply_item_metadata", return_value=["genres"]),
+            patch("app.views.Item.save", side_effect=OperationalError("database is locked")),
+        ):
+            response = self.client.get(
+                reverse(
+                    "media_details",
+                    kwargs={
+                        "source": Sources.IGDB.value,
+                        "media_type": MediaTypes.GAME.value,
+                        "media_id": item.media_id,
+                        "title": "dispatch",
+                    },
+                ),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+
+    @patch("app.db_retry.time.sleep")
+    @patch("app.views.credits.sync_item_credits_from_metadata")
+    @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_renders_when_credit_sync_hits_retryable_lock(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+        _mock_apply_item_metadata,
+        mock_sync_credits,
+        _mock_sleep,
+    ):
+        item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/breaking-bad.jpg",
+        )
+        base_metadata = {
+            "media_id": item.media_id,
+            "title": "Breaking Bad",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/1396",
+            "image": "https://example.com/breaking-bad.jpg",
+            "synopsis": "Chemistry teacher cooks meth.",
+            "details": {"episodes": 62},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        mock_get_metadata.return_value = base_metadata
+        mock_resolve_detail_metadata.return_value = MetadataResolutionResult(
+            display_provider=Sources.TMDB.value,
+            identity_provider=Sources.TMDB.value,
+            mapping_status="identity",
+            header_metadata=base_metadata,
+            grouped_preview=None,
+            provider_media_id=item.media_id,
+        )
+        mock_sync_credits.side_effect = OperationalError("database is locked")
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": item.media_id,
+                    "title": "breaking-bad",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+
+    @patch("app.views._queue_game_lengths_refresh", side_effect=RuntimeError("queue unavailable"))
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_renders_when_refresh_enqueue_raises(
+        self,
+        mock_get_metadata,
+        _mock_queue_game_lengths_refresh,
+    ):
+        Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
     def test_season_details_view(self, mock_process_episodes, mock_get_metadata):
@@ -3517,6 +3868,308 @@ class MediaDetailsViewTests(TestCase):
             Sources.TMDB.value,
             [1],
         )
+
+    @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    @patch("app.providers.services.get_media_metadata")
+    def test_season_details_missing_provider_metadata_marks_local_only_and_skips_fallback_network_calls(
+        self,
+        mock_get_metadata,
+        mock_get_tmdb_backdrop_image,
+        mock_get_tvdb_episode_image_map,
+        mock_refresh_trakt_popularity,
+    ):
+        tv_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+        )
+        related_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+            season_number=16,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            related_tv=related_tv,
+        )
+        episode_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Auditions: Europe (1)",
+            image="http://example.com/episode.jpg",
+            season_number=16,
+            episode_number=1,
+            release_datetime=timezone.make_aware(datetime(2026, 4, 15)),
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.make_aware(datetime(2026, 4, 17)),
+        )
+        mock_get_tmdb_backdrop_image.reset_mock()
+        mock_get_tvdb_episode_image_map.reset_mock()
+        mock_refresh_trakt_popularity.reset_mock()
+        mock_get_metadata.return_value = {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Provider show synopsis.",
+            "genres": ["Reality"],
+            "related": {"seasons": [{"season_number": 15}]},
+        }
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 16,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        season_item.refresh_from_db()
+        self.assertEqual(
+            season_item.provider_metadata_status,
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
+        )
+        self.assertEqual(
+            response.context["media"]["provider_metadata_status"],
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
+        )
+        self.assertTrue(response.context["season_provider_metadata_is_local_only"])
+        self.assertContains(
+            response,
+            (
+                "Season metadata is missing from the provider. "
+                "This page is built from local activity and the linked "
+                "show may be mismatched."
+            ),
+        )
+        self.assertContains(response, "Auditions: Europe (1)")
+        self.assertIn(
+            16,
+            [
+                season_entry["season_number"]
+                for season_entry in response.context["tv"]["related"]["seasons"]
+            ],
+        )
+        mock_get_tmdb_backdrop_image.assert_not_called()
+        mock_get_tvdb_episode_image_map.assert_not_called()
+        mock_refresh_trakt_popularity.assert_not_called()
+
+    @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    @patch("app.providers.services.get_media_metadata")
+    def test_season_details_local_only_flag_skips_provider_metadata_lookup(
+        self,
+        mock_get_metadata,
+        mock_get_tmdb_backdrop_image,
+        mock_get_tvdb_episode_image_map,
+        mock_refresh_trakt_popularity,
+    ):
+        tv_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+        )
+        related_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+            season_number=16,
+            provider_metadata_status=(
+                ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+            ),
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            related_tv=related_tv,
+        )
+        episode_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Auditions: Europe (1)",
+            image="http://example.com/episode.jpg",
+            season_number=16,
+            episode_number=1,
+            release_datetime=timezone.make_aware(datetime(2026, 4, 15)),
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.make_aware(datetime(2026, 4, 17)),
+        )
+        mock_get_metadata.reset_mock()
+        mock_get_tmdb_backdrop_image.reset_mock()
+        mock_get_tvdb_episode_image_map.reset_mock()
+        mock_refresh_trakt_popularity.reset_mock()
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 16,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Season metadata is missing from the provider. This page is built from local activity and the linked show may be mismatched.",
+        )
+        self.assertContains(response, "Auditions: Europe (1)")
+        mock_get_metadata.assert_not_called()
+        mock_get_tmdb_backdrop_image.assert_not_called()
+        mock_get_tvdb_episode_image_map.assert_not_called()
+        mock_refresh_trakt_popularity.assert_not_called()
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_roll_up_season_level_collection_entry_when_no_episode_rows_exist(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        """Season details should treat a manual season entry as the full season."""
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/image.jpg",
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Season 1",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode 1",
+            image="http://example.com/ep1.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode 2",
+            image="http://example.com/ep2.jpg",
+            season_number=1,
+            episode_number=2,
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=season_item,
+            media_type="digital",
+            resolution="1080p",
+        )
+
+        mock_get_metadata.side_effect = lambda *_args, **_kwargs: {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Season 1",
+                "season_title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "episodes": [],
+            },
+        }
+        mock_process_episodes.return_value = [
+            {
+                "media_id": "1668",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "season_number": 1,
+                "episode_number": 1,
+                "name": "Episode 1",
+                "air_date": "2023-01-01",
+                "watched": False,
+            },
+            {
+                "media_id": "1668",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "season_number": 1,
+                "episode_number": 2,
+                "name": "Episode 2",
+                "air_date": "2023-01-08",
+                "watched": False,
+            },
+        ]
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["collection_stats"],
+            {
+                "collected_episodes": 2,
+                "total_episodes": 2,
+            },
+        )
+        self.assertContains(response, "COLLECTED EPISODES")
+        self.assertContains(response, "2/2")
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
@@ -4055,6 +4708,99 @@ class MediaDetailsViewTests(TestCase):
         self.assertIsNone(response.context["item_id_for_polling"])
         mock_fetch_delay.assert_not_called()
 
+    @patch("app.views._should_queue_game_lengths_refresh", return_value=False)
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_details_backfills_studio_credits_and_renders_links(
+        self,
+        mock_get_metadata,
+        _mock_should_queue_game_lengths_refresh,
+    ):
+        """Game details should sync studio credits and render studio detail links."""
+        stale_metadata = {
+            "media_id": "1942",
+            "title": "The Witcher 3: Wild Hunt",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+            "image": "http://example.com/witcher3.jpg",
+            "synopsis": "A test game synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2015-05-19",
+                "companies": "CD Projekt Red",
+            },
+            "related": {},
+        }
+        refreshed_metadata = {
+            **stale_metadata,
+            "studios_full": [
+                {
+                    "studio_id": "1",
+                    "name": "CD Projekt Red",
+                    "logo": "https://images.igdb.com/igdb/image/upload/t_logo_med/logo123.png",
+                },
+            ],
+        }
+        call_count = {"count": 0}
+
+        def _metadata_side_effect(*_args, **_kwargs):
+            call_count["count"] += 1
+            if call_count["count"] == 1:
+                return stale_metadata
+            return refreshed_metadata
+
+        mock_get_metadata.side_effect = _metadata_side_effect
+
+        item = Item.objects.create(
+            media_id="1942",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="The Witcher 3: Wild Hunt",
+            image="http://example.com/witcher3.jpg",
+        )
+
+        cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_1942"
+        cache.set(cache_key, stale_metadata)
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "1942",
+                    "title": "the-witcher-3-wild-hunt",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(call_count["count"], 2)
+        self.assertContains(response, "CD Projekt Red")
+        self.assertContains(
+            response,
+            reverse(
+                "studio_detail",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "studio_id": "1",
+                    "name": "cd-projekt-red",
+                },
+            ),
+        )
+        studio = Studio.objects.get(
+            source=Sources.IGDB.value,
+            source_studio_id="1",
+        )
+        self.assertTrue(
+            ItemStudioCredit.objects.filter(
+                item=item,
+                studio=studio,
+            ).exists(),
+        )
+        self.assertEqual(len(response.context["studios_linked"]), 1)
+        self.assertEqual(response.context["studios_linked"][0]["name"], "CD Projekt Red")
+
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_cast_and_crew_links(self, mock_get_metadata):
         """Movie details should render cast/crew links to person pages."""
@@ -4118,6 +4864,181 @@ class MediaDetailsViewTests(TestCase):
             ),
         )
 
+    @patch("app.providers.tmdb._build_specials_season_from_tvdb", return_value=None)
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_details_keep_cast_and_crew_after_status_saves_and_reopen(
+        self,
+        mock_api_request,
+        mock_build_specials,
+    ):
+        """Saving TV tracking statuses should not remove cast/crew from reopened details."""
+        tmdb.cache.clear()
+        self.client.login(**self.credentials)
+        append_requests = []
+
+        def _mock_api_request(source, _method, url, params=None):
+            self.assertEqual(source, Sources.TMDB.value)
+            path_parts = urlparse(url).path.rstrip("/").split("/")
+            self.assertGreaterEqual(len(path_parts), 3)
+            self.assertEqual(path_parts[-2], "tv")
+            media_id = path_parts[-1]
+
+            append_to_response = params["append_to_response"]
+            append_requests.append(append_to_response)
+            response = {
+                "id": int(media_id),
+                "name": "Breaking Bad",
+                "original_name": "Breaking Bad",
+                "poster_path": "/breaking-bad.jpg",
+                "overview": "A chemistry teacher turns to crime.",
+                "genres": [],
+                "vote_average": 9.5,
+                "vote_count": 1000,
+                "production_companies": [],
+                "production_countries": [],
+                "spoken_languages": [],
+                "recommendations": {"results": []},
+                "external_ids": {"tvdb_id": "81189"},
+                "watch/providers": {"results": {}},
+                "episode_run_time": [47],
+                "first_air_date": "2008-01-20",
+                "last_air_date": "2013-09-29",
+                "status": "Ended",
+                "number_of_seasons": 1,
+                "number_of_episodes": 7,
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "name": "Season 1",
+                        "air_date": "2008-01-20",
+                        "episode_count": 7,
+                        "poster_path": "/season1.jpg",
+                    },
+                ],
+            }
+
+            if "aggregate_credits" in append_to_response:
+                response["aggregate_credits"] = {
+                    "cast": [
+                        {
+                            "id": 10,
+                            "name": "John Actor",
+                            "profile_path": None,
+                            "known_for_department": "Acting",
+                            "gender": 2,
+                            "order": 0,
+                            "roles": [
+                                {
+                                    "character": "Walter White",
+                                    "episode_count": 7,
+                                },
+                            ],
+                        },
+                    ],
+                    "crew": [
+                        {
+                            "id": 11,
+                            "name": "Jane Director",
+                            "profile_path": None,
+                            "known_for_department": "Directing",
+                            "gender": 1,
+                            "department": "Directing",
+                            "order": 0,
+                            "jobs": [{"job": "Director"}],
+                        },
+                    ],
+                }
+
+            if "alternative_titles" in append_to_response:
+                response["alternative_titles"] = {"results": []}
+
+            if "season/1" in append_to_response:
+                response["season/1"] = {
+                    "name": "Season 1",
+                    "overview": "Season overview",
+                    "season_number": 1,
+                    "poster_path": "/season1.jpg",
+                    "air_date": "2008-01-20",
+                    "vote_average": 9.0,
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "name": "Pilot",
+                            "overview": "Episode overview",
+                            "still_path": None,
+                            "runtime": 58,
+                            "vote_count": 100,
+                            "air_date": "2008-01-20",
+                        },
+                    ],
+                }
+                response["season/1/watch/providers"] = {"results": {}}
+
+            return response
+
+        mock_api_request.side_effect = _mock_api_request
+        for index, status in enumerate(Status.values, start=1396):
+            with self.subTest(status=status):
+                media_id = str(index)
+                detail_url = reverse(
+                    "media_details",
+                    kwargs={
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.TV.value,
+                        "media_id": media_id,
+                        "title": "breaking-bad",
+                    },
+                )
+
+                untracked_response = self.client.get(detail_url)
+
+                self.assertEqual(untracked_response.status_code, 200)
+                self.assertContains(untracked_response, "John Actor")
+                self.assertContains(untracked_response, "Jane Director")
+
+                save_response = self.client.post(
+                    f"{reverse('media_save')}?next={detail_url}",
+                    {
+                        "media_id": media_id,
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.TV.value,
+                        "status": status,
+                        "score": "",
+                        "notes": "",
+                    },
+                )
+
+                self.assertEqual(save_response.status_code, 302)
+                self.assertEqual(save_response.url, detail_url)
+                self.assertTrue(
+                    TV.objects.filter(
+                        user=self.user,
+                        item__media_id=media_id,
+                        item__source=Sources.TMDB.value,
+                        status=status,
+                    ).exists(),
+                )
+
+                tracked_response = self.client.get(detail_url)
+                reopened_response = self.client.get(detail_url)
+
+                self.assertEqual(tracked_response.status_code, 200)
+                self.assertContains(tracked_response, "John Actor")
+                self.assertContains(tracked_response, "Jane Director")
+                self.assertEqual(reopened_response.status_code, 200)
+                self.assertContains(reopened_response, "John Actor")
+                self.assertContains(reopened_response, "Jane Director")
+
+        self.assertTrue(any("season/0" in request for request in append_requests))
+        self.assertTrue(
+            all(
+                "aggregate_credits" in request
+                for request in append_requests
+                if "season/0" in request
+            ),
+        )
+        self.assertGreaterEqual(mock_build_specials.call_count, 1)
+
     @patch("app.providers.services.get_media_metadata")
     def test_tv_details_view_adds_specials_from_regular_path(self, mock_get_metadata):
         """TV details should show a specials season when season 0 is enriched."""
@@ -4156,8 +5077,8 @@ class MediaDetailsViewTests(TestCase):
                             },
                         ],
                     },
-                    "cast": [],
-                    "crew": [],
+                    "cast": [{"name": "Denji"}],
+                    "crew": [{"name": "Makima"}],
                     "studios_full": [],
                 }
 
@@ -4736,6 +5657,88 @@ class MediaDetailsViewTests(TestCase):
             ).exists(),
         )
 
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_refreshes_stale_tmdb_tv_credit_cache(
+        self,
+        mock_get_metadata,
+    ):
+        stale_metadata = {
+            "media_id": "1396",
+            "title": "Breaking Bad",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/1396",
+            "image": "http://example.com/breaking-bad.jpg",
+            "synopsis": "A chemistry teacher turns to crime.",
+            "details": {
+                "format": "TV",
+                "status": "Ended",
+                "seasons": 1,
+                "episodes": 7,
+                "runtime": "47m",
+            },
+            "cast": [],
+            "crew": [],
+            "providers": {},
+            "related": {"seasons": [], "recommendations": []},
+        }
+        refreshed_metadata = {
+            **stale_metadata,
+            "cast": [
+                {
+                    "person_id": "10",
+                    "name": "John Actor",
+                    "role": "Walter White",
+                    "image": "http://example.com/john-actor.jpg",
+                },
+            ],
+            "crew": [
+                {
+                    "person_id": "11",
+                    "name": "Jane Director",
+                    "role": "Director",
+                    "department": "Directing",
+                    "image": "http://example.com/jane-director.jpg",
+                },
+            ],
+        }
+        detail_call_count = {"count": 0}
+
+        def _metadata_side_effect(media_type, media_id, source, *args, **kwargs):
+            self.assertEqual(
+                (media_type, media_id, source),
+                (MediaTypes.TV.value, "1396", Sources.TMDB.value),
+            )
+            self.assertFalse(args)
+            self.assertFalse(kwargs)
+            detail_call_count["count"] += 1
+            if detail_call_count["count"] == 1:
+                return stale_metadata
+            return refreshed_metadata
+
+        mock_get_metadata.side_effect = _metadata_side_effect
+
+        cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_1396"
+        cache.set(cache_key, stale_metadata)
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "1396",
+                    "title": "breaking-bad",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(detail_call_count["count"], 2)
+        self.assertContains(response, "John Actor")
+        self.assertContains(response, "Jane Director")
+        self.assertIsNone(cache.get(cache_key))
+
     def test_podcast_media_details_renders_for_show_with_no_user_plays(self):
         """Podcast details should render even when episodes have no play history."""
         show = PodcastShow.objects.create(
@@ -4920,6 +5923,213 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["details"]["runtime"], "53m")
         show_item.refresh_from_db()
         self.assertEqual(show_item.runtime_minutes, 999999)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_roll_up_show_level_collection_entry_when_no_granular_rows_exist(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details should treat a show-level collection entry as a full-show fallback."""
+        show_item = Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Collected Show",
+            image="http://example.com/show.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Collected Show",
+            image="http://example.com/season.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode 1",
+            image="http://example.com/episode1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode 2",
+            image="http://example.com/episode2.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=show_item,
+            media_type="digital",
+            resolution="1080p",
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "tv-collection-rollup",
+            "title": "Collected Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/tv-collection-rollup",
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "TV",
+                "runtime": "53m",
+                "episodes": 2,
+                "seasons": 1,
+            },
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "providers": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "tv-collection-rollup",
+                    "title": "collected-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["collection_stats"],
+            {
+                "collected_seasons": 1,
+                "total_seasons": 1,
+                "collected_episodes": 2,
+                "total_episodes": 2,
+            },
+        )
+        self.assertContains(response, "COLLECTED SEASONS")
+        self.assertContains(response, "1/1")
+        self.assertContains(response, "COLLECTED EPISODES")
+        self.assertContains(response, "2/2")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_count_collected_season_as_collected_show_episodes(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details should count a collected season as all of that season's episodes."""
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Collected Season Show",
+            image="http://example.com/show.jpg",
+        )
+        season_item = Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Collected Season Show",
+            image="http://example.com/season1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=2,
+            title="Collected Season Show",
+            image="http://example.com/season2.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode 1",
+            image="http://example.com/episode1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode 2",
+            image="http://example.com/episode2.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=2,
+            episode_number=1,
+            title="Episode 3",
+            image="http://example.com/episode3.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=season_item,
+            media_type="digital",
+            resolution="1080p",
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "tv-season-rollup",
+            "title": "Collected Season Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/tv-season-rollup",
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "TV",
+                "runtime": "53m",
+                "episodes": 3,
+                "seasons": 2,
+            },
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "providers": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "tv-season-rollup",
+                    "title": "collected-season-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["collection_stats"],
+            {
+                "collected_seasons": 1,
+                "total_seasons": 2,
+                "collected_episodes": 2,
+                "total_episodes": 3,
+            },
+        )
+        self.assertContains(response, "COLLECTED SEASONS")
+        self.assertContains(response, "1/2")
+        self.assertContains(response, "COLLECTED EPISODES")
+        self.assertContains(response, "2/3")
 
     @patch("app.providers.services.get_media_metadata")
     def test_tv_media_details_play_stats_skip_placeholder_episode_runtimes(

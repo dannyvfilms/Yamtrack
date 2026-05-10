@@ -8,7 +8,7 @@ from django.test.client import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
 
-from app.models import Album, Artist, Item, MediaTypes, Sources
+from app.models import Album, Artist, Item, MediaTypes, Sources, Studio
 from app.templatetags import app_tags
 from users.models import DateFormatChoices, TimeFormatChoices
 
@@ -276,6 +276,17 @@ class AppTagsTests(TestCase):
             "not-a-date",
         )
 
+    @patch("app.templatetags.app_tags.date")
+    def test_format_date_range_display_prefers_this_month_over_last_7_days(self, mock_date):
+        """Month-to-date ranges should keep the month label even when they span 7 days."""
+        today = timezone.datetime(2026, 5, 7).date()
+        mock_date.today.return_value = today
+
+        self.assertEqual(
+            app_tags.format_date_range_display(today.replace(day=1), today),
+            "This Month",
+        )
+
     def test_music_artist_url_returns_canonical_details_path(self):
         """Music artists should resolve to the canonical shared details route."""
         artist = Artist.objects.create(name="The Amazing Artist")
@@ -331,6 +342,46 @@ class AppTagsTests(TestCase):
             ),
         )
 
+    def test_studio_url_returns_canonical_details_path(self):
+        """Studio objects should resolve to the canonical shared details route."""
+        studio = Studio.objects.create(
+            source=Sources.IGDB.value,
+            source_studio_id="123",
+            name="CD Projekt Red",
+        )
+
+        self.assertEqual(
+            app_tags.studio_url(studio),
+            reverse(
+                "studio_detail",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "studio_id": studio.source_studio_id,
+                    "name": "cd-projekt-red",
+                },
+            ),
+        )
+
+    def test_studio_url_accepts_metadata_dict(self):
+        """Studio metadata dicts should still resolve canonically."""
+        self.assertEqual(
+            app_tags.studio_url(
+                {
+                    "source": Sources.TMDB.value,
+                    "studio_id": 44,
+                    "name": "Pixar Animation Studios",
+                },
+            ),
+            reverse(
+                "studio_detail",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "studio_id": 44,
+                    "name": "pixar-animation-studios",
+                },
+            ),
+        )
+
     def test_media_card_uses_canonical_music_album_url(self):
         """Music media cards should link through the nested shared album route."""
         artist = Artist.objects.create(name="Card Artist")
@@ -376,6 +427,45 @@ class AppTagsTests(TestCase):
             ),
             content,
         )
+
+    def test_media_card_teleports_alt_title_tooltip(self):
+        """Grid media cards should teleport alternate-title tooltips outside the clipped shell."""
+        item = Item(
+            media_id="tooltip-card-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Attack on Titan",
+            localized_title="Attack on Titan",
+            original_title="Shingeki no Kyojin",
+            image="http://example.com/tooltip-card.jpg",
+        )
+        request = self.request_factory.get("/search")
+        request.user = self.user
+
+        content = render_to_string(
+            "app/components/media_card.html",
+            {
+                "item": item,
+                "media": SimpleNamespace(
+                    album=None,
+                    status=None,
+                    progress=None,
+                    next_event=None,
+                    episodes_left=0,
+                ),
+                "user": self.user,
+                "title": item.title,
+                "from_grid": True,
+                "show_status_chip": False,
+                "show_progress_chip": False,
+            },
+            request=request,
+        )
+
+        self.assertIn("media-card-visual", content)
+        self.assertIn('aria-label="Show alternative title"', content)
+        self.assertIn('x-teleport="body"', content)
+        self.assertIn('x-ref="panel"', content)
 
     def test_history_card_uses_canonical_music_album_url(self):
         """Music history cards should link to the shared nested album route."""
@@ -433,6 +523,55 @@ class AppTagsTests(TestCase):
             ),
             content,
         )
+
+    def test_history_card_teleports_alt_title_tooltip(self):
+        """History cards should teleport alternate-title tooltips outside the clipped shell."""
+        item = Item.objects.create(
+            media_id="tooltip-history-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Attack on Titan",
+            localized_title="Attack on Titan",
+            original_title="Shingeki no Kyojin",
+            image="http://example.com/tooltip-history.jpg",
+        )
+        request = self.request_factory.get("/history")
+        request.user = self.user
+
+        content = render_to_string(
+            "app/components/history_card.html",
+            {
+                "entry": SimpleNamespace(
+                    media_type=MediaTypes.ANIME.value,
+                    album=None,
+                    item=item,
+                    poster=item.image,
+                    status=None,
+                    runtime_display=None,
+                    display_title=item.title,
+                    title=item.title,
+                    played_at_local=timezone.now(),
+                    time_range_display="6:00 PM",
+                    play_count=1,
+                    progress_display=None,
+                    episode_label=None,
+                    episode_code=None,
+                    show=None,
+                    score=None,
+                    entry_key="history-entry-1",
+                    instance_id=1,
+                ),
+                "card_class": "search-result-card",
+                "history_mode": "history",
+                "user": self.user,
+            },
+            request=request,
+        )
+
+        self.assertIn("media-card-visual", content)
+        self.assertIn('aria-label="Show alternative title"', content)
+        self.assertIn('x-teleport="body"', content)
+        self.assertIn('x-ref="panel"', content)
 
     def test_match_percent_clamps_and_rounds(self):
         """match_percent should clamp values to [0,100] and round."""

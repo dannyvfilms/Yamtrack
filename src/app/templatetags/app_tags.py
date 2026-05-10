@@ -62,6 +62,45 @@ def title_preserve_acronyms(value):
     return normalized.title()
 
 
+def _collection_entry_field(collection_entry, field_name):
+    """Read a collection metadata field from models, dicts, or simple namespaces."""
+    if collection_entry is None:
+        return None
+    if isinstance(collection_entry, dict):
+        return collection_entry.get(field_name)
+    return getattr(collection_entry, field_name, None)
+
+
+@register.filter
+def collection_quality_label(collection_entry):
+    """Return a compact display label for collection quality metadata."""
+    if not collection_entry:
+        return ""
+
+    resolution = (_collection_entry_field(collection_entry, "resolution") or "").strip()
+    hdr = (_collection_entry_field(collection_entry, "hdr") or "").strip()
+    media_type = (_collection_entry_field(collection_entry, "media_type") or "").strip()
+
+    parts = []
+    if resolution:
+        parts.append(str(resolution))
+    if hdr:
+        parts.append(str(hdr))
+    if not parts and media_type:
+        parts.append(title_preserve_acronyms(str(media_type)))
+
+    return " • ".join(parts)
+
+
+@register.filter
+def collection_quality_display(collection_entry, explicit_label=""):
+    """Prefer an explicit quality label before falling back to collection metadata."""
+    normalized_label = str(explicit_label or "").strip()
+    if normalized_label:
+        return normalized_label
+    return collection_quality_label(collection_entry)
+
+
 @register.filter
 def slug(arg1):
     """Return the slug of the string.
@@ -413,6 +452,41 @@ def _resolve_music_album_url_target(value):
     return None
 
 
+def _resolve_studio_url_target(value):
+    """Resolve a studio-like value into an object or dict with id/name."""
+    if not value:
+        return None
+
+    if isinstance(value, dict):
+        nested_studio = value.get("studio") or value.get("company")
+        if nested_studio:
+            return _resolve_studio_url_target(nested_studio)
+        if value.get("source_studio_id") is not None and value.get("name"):
+            return value
+        if value.get("studio_id") is not None and value.get("name"):
+            return value
+        if value.get("id") is not None and value.get("name"):
+            return value
+        return None
+
+    nested_studio = getattr(value, "studio", None)
+    if nested_studio is not None and not (
+        getattr(value, "source_studio_id", None) is not None
+        and getattr(value, "name", None)
+    ):
+        return _resolve_studio_url_target(nested_studio)
+
+    if (
+        getattr(value, "source_studio_id", None) is not None
+        and getattr(value, "name", None)
+    ):
+        return value
+    if getattr(value, "studio_id", None) is not None and getattr(value, "name", None):
+        return value
+
+    return None
+
+
 def _music_slug(value, fallback):
     """Return a stable slug with a safe fallback."""
     normalized = slug(value or "")
@@ -479,9 +553,58 @@ def music_album_url(album):
         "music_album_details",
         kwargs={
             "artist_id": artist_id or 0,
-            "artist_slug": _music_slug(artist_name or "Unknown Artist", artist_id or "artist"),
+            "artist_slug": _music_slug(
+                artist_name or "Unknown Artist",
+                artist_id or "artist",
+            ),
             "album_id": album_id,
             "album_slug": _music_slug(album_title, album_id),
+        },
+    )
+
+
+def _studio_slug(value, fallback):
+    """Return a stable slug with a safe fallback for studio links."""
+    normalized = slug(value or "")
+    if normalized:
+        return normalized
+    fallback_value = str(fallback or "item")
+    return slug(fallback_value) or "item"
+
+
+@register.filter
+def studio_url(studio):
+    """Return the canonical shared media-details URL for a studio/company."""
+    resolved_studio = _resolve_studio_url_target(studio)
+    if not resolved_studio:
+        return ""
+
+    if isinstance(resolved_studio, dict):
+        studio_id = (
+            resolved_studio.get("source_studio_id")
+            or resolved_studio.get("studio_id")
+            or resolved_studio.get("id")
+        )
+        studio_name = resolved_studio.get("name")
+        source = resolved_studio.get("source")
+    else:
+        studio_id = (
+            getattr(resolved_studio, "source_studio_id", None)
+            or getattr(resolved_studio, "studio_id", None)
+            or getattr(resolved_studio, "id", None)
+        )
+        studio_name = getattr(resolved_studio, "name", None)
+        source = getattr(resolved_studio, "source", None)
+
+    if studio_id is None or not source:
+        return ""
+
+    return reverse(
+        "studio_detail",
+        kwargs={
+            "source": source,
+            "studio_id": studio_id,
+            "name": _studio_slug(studio_name, studio_id),
         },
     )
 
@@ -938,6 +1061,11 @@ def _check_week_ranges(start_date, end_date, today):
 def _check_month_ranges(start_date, end_date, today):
     """Check for month-based date ranges."""
     days_diff = (end_date - start_date).days
+    month_start = today.replace(day=1)
+    if start_date == month_start and end_date == today:
+        return "This Month"
+    if start_date == month_start and end_date == today - timedelta(days=1):
+        return "This Month"
     if days_diff == 29:  # 30 days including start and end
         if start_date == today - timedelta(days=29):
             return "This Month"
@@ -973,13 +1101,13 @@ def _is_predefined_date_range(start_date, end_date, today):
     if result:
         return result
 
-    # Check week ranges
-    result = _check_week_ranges(start_date, end_date, today)
+    # Check month ranges
+    result = _check_month_ranges(start_date, end_date, today)
     if result:
         return result
 
-    # Check month ranges
-    result = _check_month_ranges(start_date, end_date, today)
+    # Check week ranges
+    result = _check_week_ranges(start_date, end_date, today)
     if result:
         return result
 

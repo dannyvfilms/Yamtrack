@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -16,6 +16,7 @@ from app.models import (
     Item,
     MediaTypes,
     Movie,
+    ProviderMetadataStatus,
     Season,
     Status,
 )
@@ -204,6 +205,13 @@ class PlexWebhookTests(TestCase):
         self.metadata_patcher.stop()
         self.mal_anime_patcher.stop()
 
+    def _post_payload(self, payload):
+        return self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
     def test_invalid_token(self):
         """Test webhook with invalid token returns 401."""
         url = reverse("plex_webhook", kwargs={"token": "invalid-token"})
@@ -310,6 +318,181 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(state["duration_seconds"], 2666)
         self.assertEqual(state["view_offset_seconds"], 1447)
 
+    def test_movie_short_stop_clears_in_progress_row_and_playback_state(self):
+        """Movie stops inside the first minute should be treated as abandoned."""
+        play_payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-1",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+        stop_payload = {
+            "event": "media.stop",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-1",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+
+        play_response = self._post_payload(play_payload)
+        self.assertEqual(play_response.status_code, 200)
+        self.assertTrue(
+            Movie.objects.filter(
+                item__media_id="603",
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
+        )
+
+        stop_response = self._post_payload(stop_payload)
+        self.assertEqual(stop_response.status_code, 200)
+
+        self.assertFalse(
+            Movie.objects.filter(
+                item__media_id="603",
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
+        )
+        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
+
+    def test_short_stop_only_applies_during_the_first_minute_of_playback(self):
+        """A low-progress stop should not be deleted once the start window has aged out."""
+        play_payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-aged-start",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+        stop_payload = {
+            "event": "media.stop",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "ratingKey": "rk-movie-aged-start",
+                "duration": 8100000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "tmdb://603"},
+                ],
+            },
+        }
+
+        play_response = self._post_payload(play_payload)
+        self.assertEqual(play_response.status_code, 200)
+
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(state)
+        state["started_at_ts"] = int(timezone.now().timestamp()) - 61
+        live_playback.set_user_playback_state(self.user.id, state)
+
+        stop_response = self._post_payload(stop_payload)
+        self.assertEqual(stop_response.status_code, 200)
+
+        self.assertTrue(
+            Movie.objects.filter(
+                item__media_id="603",
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
+        )
+        stopped_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(stopped_state)
+        self.assertEqual(stopped_state["status"], live_playback.PLAYBACK_STATUS_STOPPED)
+
+    def test_episode_short_stop_clears_tv_and_season_rows(self):
+        """Episode stops inside the first minute should clear the fresh rows."""
+        play_payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-short",
+                "duration": 2666000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+        stop_payload = {
+            "event": "media.stop",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-short",
+                "duration": 2666000,
+                "viewOffset": 30000,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+
+        play_response = self._post_payload(play_payload)
+        self.assertEqual(play_response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="85987", user=self.user).exists(),
+        )
+        self.assertTrue(
+            Season.objects.filter(
+                item__media_id="85987",
+                item__season_number=1,
+                user=self.user,
+            ).exists(),
+        )
+
+        stop_response = self._post_payload(stop_payload)
+        self.assertEqual(stop_response.status_code, 200)
+
+        self.assertFalse(
+            TV.objects.filter(item__media_id="85987", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Season.objects.filter(
+                item__media_id="85987",
+                item__season_number=1,
+                user=self.user,
+            ).exists(),
+        )
+        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
+
     def test_pause_and_stop_events_update_live_playback_state(self):
         """Pause should keep card state; stop should transition to stopped with grace period."""
         play_payload = {
@@ -401,6 +584,16 @@ class PlexWebhookTests(TestCase):
             stopped_state["status"],
             live_playback.PLAYBACK_STATUS_STOPPED,
         )
+        self.assertTrue(
+            TV.objects.filter(item__media_id="85987", user=self.user).exists(),
+        )
+        self.assertTrue(
+            Season.objects.filter(
+                item__media_id="85987",
+                item__season_number=1,
+                user=self.user,
+            ).exists(),
+        )
 
     @patch(
         "integrations.webhooks.base.BaseWebhookProcessor._queue_collection_metadata_update_for_tv",
@@ -461,6 +654,241 @@ class PlexWebhookTests(TestCase):
                 for season in cached_tv["related"]["seasons"]
             ),
         )
+
+    @patch("app.providers.tmdb.search", return_value={"results": []})
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_missing_season_recovery_reattaches_history_to_resolved_show(
+        self,
+        mock_tv_with_seasons,
+        mock_find,
+        mock_tmdb_search,
+    ):
+        """Missing seasons should recover before creating TV/season rows."""
+
+        def fake_tv_with_seasons(media_id, season_numbers):
+            if str(media_id) == "203934":
+                return {
+                    "title": "MasterChef USA",
+                    "image": "",
+                    "tvdb_id": "wrong-tvdb",
+                    "synopsis": "Wrong show metadata.",
+                    "external_links": {},
+                    "related": {"seasons": [{"season_number": 15}]},
+                }
+            if str(media_id) == "302124":
+                return {
+                    "title": "MasterChef",
+                    "image": "",
+                    "tvdb_id": "397849",
+                    "synopsis": "Recovered show metadata.",
+                    "external_links": {},
+                    "related": {"seasons": [{"season_number": 16}]},
+                    "season/16": {
+                        "image": "",
+                        "episodes": [{"episode_number": 1, "runtime": 42}],
+                    },
+                }
+            raise AssertionError(f"Unexpected TMDB ID requested: {media_id}")
+
+        mock_tv_with_seasons.side_effect = fake_tv_with_seasons
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {
+                    "show_id": 302124,
+                    "season_number": 16,
+                    "episode_number": 1,
+                },
+            ],
+            "tv_results": [],
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "MasterChef",
+                "parentTitle": "Season 16",
+                "title": "Auditions: Europe (1)",
+                "summary": "Recovered episode metadata.",
+                "duration": 2520000,
+                "originallyAvailableAt": "2026-04-15",
+                "index": 1,
+                "parentIndex": 16,
+                "Guid": [
+                    {"id": "imdb://tt1234567"},
+                    {"id": "tmdb://203934"},
+                    {"id": "tvdb://397849"},
+                ],
+            },
+        }
+
+        PlexWebhookProcessor()._handle_tv_episode(
+            "203934",
+            16,
+            1,
+            payload,
+            self.user,
+        )
+
+        self.assertTrue(
+            TV.objects.filter(item__media_id="302124", user=self.user).exists(),
+        )
+        self.assertFalse(
+            TV.objects.filter(item__media_id="203934", user=self.user).exists(),
+        )
+        self.assertTrue(
+            Episode.objects.filter(
+                item__media_id="302124",
+                item__season_number=16,
+                item__episode_number=1,
+            ).exists(),
+        )
+        self.assertFalse(
+            Episode.objects.filter(
+                item__media_id="203934",
+                item__season_number=16,
+                item__episode_number=1,
+            ).exists(),
+        )
+        mock_tmdb_search.assert_not_called()
+
+    @patch("app.providers.tmdb.search", return_value={"results": []})
+    @patch(
+        "app.providers.tmdb.find",
+        return_value={"tv_episode_results": [], "tv_results": []},
+    )
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_missing_non_special_season_persists_local_only_flag(
+        self,
+        mock_tv_with_seasons,
+        _mock_find,
+        _mock_tmdb_search,
+    ):
+        """Unresolved missing seasons should stay visible but flagged as local-only."""
+        mock_tv_with_seasons.return_value = {
+            "title": "MasterChef USA",
+            "image": "",
+            "tvdb_id": "wrong-tvdb",
+            "synopsis": "Wrong show metadata.",
+            "external_links": {},
+            "related": {"seasons": [{"season_number": 15}]},
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "MasterChef",
+                "parentTitle": "Season 16",
+                "title": "Auditions: Europe (1)",
+                "summary": "Fallback episode metadata.",
+                "duration": 2520000,
+                "originallyAvailableAt": "2026-04-15",
+                "index": 1,
+                "parentIndex": 16,
+                "Guid": [
+                    {"id": "imdb://tt1234567"},
+                    {"id": "tmdb://203934"},
+                    {"id": "tvdb://397849"},
+                ],
+            },
+        }
+
+        PlexWebhookProcessor()._handle_tv_episode(
+            "203934",
+            16,
+            1,
+            payload,
+            self.user,
+        )
+
+        season_item = Item.objects.get(
+            media_id="203934",
+            media_type=MediaTypes.SEASON.value,
+            season_number=16,
+        )
+        self.assertEqual(
+            season_item.provider_metadata_status,
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
+        )
+
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_provider_backed_season_webhook_clears_local_only_flag(
+        self,
+        mock_tv_with_seasons,
+    ):
+        """A later provider-backed season fetch should clear the local-only flag."""
+        tv_item = Item.objects.create(
+            media_id="203934",
+            source="tmdb",
+            media_type=MediaTypes.TV.value,
+            title="MasterChef USA",
+            image="",
+        )
+        related_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="203934",
+            source="tmdb",
+            media_type=MediaTypes.SEASON.value,
+            season_number=16,
+            title="MasterChef USA",
+            image="",
+            provider_metadata_status=(
+                ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+            ),
+        )
+        Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=related_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        mock_tv_with_seasons.return_value = {
+            "title": "MasterChef USA",
+            "image": "",
+            "tvdb_id": "397849",
+            "synopsis": "Recovered show metadata.",
+            "external_links": {},
+            "related": {"seasons": [{"season_number": 16}]},
+            "season/16": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 42}],
+            },
+        }
+        payload = {
+            "event": "media.scrobble",
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "MasterChef USA",
+                "parentTitle": "Season 16",
+                "title": "Auditions: Europe (1)",
+                "duration": 2520000,
+                "originallyAvailableAt": "2026-04-15",
+                "index": 1,
+                "parentIndex": 16,
+                "Guid": [
+                    {"id": "imdb://tt1234567"},
+                    {"id": "tmdb://203934"},
+                    {"id": "tvdb://397849"},
+                ],
+            },
+        }
+
+        PlexWebhookProcessor()._handle_tv_episode(
+            "203934",
+            16,
+            1,
+            payload,
+            self.user,
+        )
+
+        season_item.refresh_from_db()
+        self.assertEqual(season_item.provider_metadata_status, "")
 
     @patch("app.providers.tmdb.search", return_value={"results": []})
     @patch("app.providers.tmdb.find")
@@ -803,6 +1231,225 @@ class PlexWebhookTests(TestCase):
             user=self.user,
         )
         self.assertEqual(anime.progress, 1)
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show", return_value="900001")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_routes_to_anime_when_tvdb_confirms_anime(
+        self,
+        mock_tv_with_seasons,
+        mock_resolve_tvdb_id,
+        mock_tvdb_tv,
+    ):
+        """Brand-new TV shows should route to Anime when TVDB classifies them as Anime."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+        mock_tvdb_tv.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "provider_external_ids": {"mal_id": "52991"},
+            "genres": ["Action", "Anime"],
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/900001",
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Anime Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777777"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            Anime.objects.filter(item__media_id="52991", user=self.user).exists(),
+        )
+        self.assertFalse(
+            TV.objects.filter(item__media_id="777777", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_called_once_with("777777", mock_tv_with_seasons.return_value)
+        mock_tvdb_tv.assert_called_once_with("900001")
+
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_stays_tv_when_anime_is_disabled(
+        self,
+        mock_tv_with_seasons,
+        mock_tvdb_tv,
+        mock_resolve_tvdb_id,
+    ):
+        """Anime routing should not run when the user has Anime disabled."""
+        self.user.anime_enabled = False
+        self.user.save(update_fields=["anime_enabled"])
+        mock_tv_with_seasons.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Anime Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777778"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="777778", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Anime.objects.filter(item__media_id="52991", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_not_called()
+        mock_tvdb_tv.assert_not_called()
+
+    @override_settings(TVDB_API_KEY="")
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_stays_tv_when_tvdb_is_disabled(
+        self,
+        mock_tv_with_seasons,
+        mock_tvdb_tv,
+        mock_resolve_tvdb_id,
+    ):
+        """Anime routing should not run when TVDB is not configured."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Anime Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Anime Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777779"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="777779", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Anime.objects.filter(item__media_id="52991", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_not_called()
+        mock_tvdb_tv.assert_not_called()
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tmdb.resolve_tvdb_id_for_tmdb_show", return_value="900002")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_new_tv_episode_stays_tv_when_tvdb_genre_is_not_anime(
+        self,
+        mock_tv_with_seasons,
+        mock_resolve_tvdb_id,
+        mock_tvdb_tv,
+    ):
+        """Anime routing should fall back to TV when TVDB does not confirm Anime."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Drama Candidate",
+            "image": "",
+            "tvdb_id": None,
+            "related": {"seasons": [{"season_number": 1}]},
+            "season/1": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 24}],
+            },
+        }
+        mock_tvdb_tv.return_value = {
+            "title": "Drama Candidate",
+            "image": "",
+            "provider_external_ids": {"mal_id": "52992"},
+            "genres": ["Drama"],
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/900002",
+            },
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Drama Candidate",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://777780"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(item__media_id="777780", user=self.user).exists(),
+        )
+        self.assertFalse(
+            Anime.objects.filter(item__media_id="52992", user=self.user).exists(),
+        )
+        mock_resolve_tvdb_id.assert_called_once_with("777780", mock_tv_with_seasons.return_value)
+        mock_tvdb_tv.assert_called_once_with("900002")
 
     def test_ignored_event_types(self):
         """Test webhook ignores irrelevant event types."""

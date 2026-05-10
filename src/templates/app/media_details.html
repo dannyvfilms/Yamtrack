@@ -16,75 +16,6 @@
   {% elif music_detail_kind == "album" %}
     {% include "app/components/detail_music_album.html" %}
   {% else %}
-  {# Collection data fetching notification banner #}
-  {% if fetching_collection_data and not public_view and item_id_for_polling %}
-  <div x-data="{
-    showBanner: true,
-    itemId: {{ item_id_for_polling }},
-    pollInterval: null,
-    pollCount: 0,
-    maxPolls: 120,
-    init() {
-      // Start polling for collection data
-      this.startPolling();
-    },
-    startPolling() {
-      this.pollInterval = setInterval(() => {
-        this.checkCollectionStatus();
-      }, 2000); // Poll every 2 seconds
-    },
-    async checkCollectionStatus() {
-      if (this.pollCount >= this.maxPolls) {
-        // Stop polling after max attempts (4 minutes)
-        this.stopPolling();
-        return;
-      }
-      
-      this.pollCount++;
-      
-      try {
-        const response = await fetch(`/api/collection-status/${this.itemId}/`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data.has_collection_data) {
-            // Collection data is now available, dismiss banner and reload
-            this.stopPolling();
-            this.showBanner = false;
-            // Reload page after a short delay to show the new data
-            setTimeout(() => {
-              window.location.reload();
-            }, 500);
-          }
-        }
-      } catch (error) {
-        console.error('Error checking collection status:', error);
-      }
-    },
-    stopPolling() {
-      if (this.pollInterval) {
-        clearInterval(this.pollInterval);
-        this.pollInterval = null;
-      }
-    }
-  }"
-       x-show="showBanner"
-       x-cloak
-       x-transition
-       class="fixed top-24 right-0 left-0 {% block messages_sidebar_offset %}lg:left-64{% endblock messages_sidebar_offset %} z-50 flex justify-center pointer-events-none mb-4">
-    <div class="w-full max-w-xl px-4 pointer-events-auto">
-      <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info opacity-0"
-           x-init="setTimeout(() => $el.classList.add('opacity-100', 'transform-none'), 10); $el.classList.add('transition-all', 'duration-300', 'ease-out', 'transform', 'translate-y-[-1rem]')">
-        {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0 animate-pulse" %}
-        <p class="text-sm font-medium flex-1">Fetching collection data in background...</p>
-        <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
-                @click="showBanner = false; stopPolling();">
-          {% include "app/icons/x.svg" with classes="w-4 h-4" %}
-        </button>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-
   {# Top section #}
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
@@ -340,6 +271,17 @@
             from <a href="{{ music_album|music_album_url }}" class="text-indigo-400 hover:text-indigo-300 transition-colors">{{ music_album.title }}</a>
           </p>
         {% endif %}
+      {% endif %}
+
+      {% if season_provider_metadata_is_local_only %}
+        <div class="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          {{ season_provider_metadata_banner }}
+        </div>
+      {% endif %}
+      {% if detail_persistence_deferred %}
+        <div class="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          Some metadata updates were deferred because the database is busy. The page is showing provider data and will catch up on a later refresh.
+        </div>
       {% endif %}
 
       <div class="flex flex-col sm:contents">
@@ -649,6 +591,7 @@
                      name="preview_genres_json"
                      value="{{ detail_tag_preview_genres_json|escape }}">
               <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
+                      x-ref="manageTagsButton"
                       title="Manage tags"
                       hx-get="{% media_view_url 'tags_modal' media %}"
                       hx-include="#{{ detail_tag_preview_genres_id }}"
@@ -1067,18 +1010,20 @@
         {% if media.details.items %}
           {% for key, value in media.details.items %}
             {% if not authors_linked or key not in author_detail_keys %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">{{ key|no_underscore|upper }}</h3>
-                {% if value|is_list %}
-                  {% for item in value %}<p class="text-gray-200">{{ item|iso_date_format:request.user }}</p>{% endfor %}
-                {% else %}
-                  {% if key == 'first_air_date' or key == 'last_air_date' %}
-                    <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
+              {% if not studios_linked or key not in studio_detail_keys %}
+                <div class="mb-4">
+                  <h3 class="text-sm font-semibold text-gray-400">{{ key|no_underscore|upper }}</h3>
+                  {% if value|is_list %}
+                    {% for item in value %}<p class="text-gray-200">{{ item|iso_date_format:request.user }}</p>{% endfor %}
                   {% else %}
-                    <p class="text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
+                    {% if key == 'first_air_date' or key == 'last_air_date' %}
+                      <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
+                    {% else %}
+                      <p class="text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
+                    {% endif %}
                   {% endif %}
-                {% endif %}
-              </div>
+                </div>
+              {% endif %}
             {% endif %}
           {% endfor %}
           {% if authors_linked %}
@@ -1097,14 +1042,17 @@
         {% endif %}
       </div>
 
-      {% if media.source == Sources.TMDB.value and media_type != MediaTypes.PODCAST.value and media.studios_full %}
+      {% if studios_linked %}
         <h2 class="text-xl font-bold mb-4 mt-6">Studios</h2>
         <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
-          {% for studio in media.studios_full|slice:":12" %}
-            <p class="text-gray-200">{{ studio.name|default:"Unknown Studio" }}</p>
-          {% empty %}
-            <p class="text-gray-500">No studio metadata available.</p>
-          {% endfor %}
+          <div class="flex flex-col gap-1">
+            {% for studio in studios_linked|slice:":12" %}
+              <a href="{{ studio|studio_url }}"
+                 class="text-gray-200 hover:text-indigo-500 transition-colors duration-200">
+                {{ studio.name|default:"Unknown Studio" }}
+              </a>
+            {% endfor %}
+          </div>
         </div>
       {% endif %}
 
@@ -1181,7 +1129,7 @@
           {% if collection_entries %}
             <div>
               {% for owned_entry in collection_entries %}
-                {% include "app/components/collection_entry_summary.html" with collection_entry=owned_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=forloop.last %}
+                {% include "app/components/collection_entry_summary.html" with collection_entry=owned_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=forloop.last entry_quality_label="" %}
               {% endfor %}
             </div>
           {% elif collection_entry %}
@@ -1189,7 +1137,7 @@
               {% if media_type == MediaTypes.SEASON.value %}
                 <p class="text-xs uppercase tracking-wide text-gray-400">Aggregated Episode Metadata</p>
               {% endif %}
-              {% include "app/components/collection_entry_summary.html" with collection_entry=collection_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=True %}
+              {% include "app/components/collection_entry_summary.html" with collection_entry=collection_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=True entry_quality_label="" %}
             </div>
           {% elif not collection_stats %}
             <p class="text-gray-400 text-sm">No collection data available</p>

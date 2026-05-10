@@ -4,6 +4,7 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import OperationalError
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.utils import timezone
 
@@ -1202,7 +1203,7 @@ class DiscoverServiceTests(TestCase):
             "key": "comfort_rewatches",
             "title": "Comfort Rewatches",
             "mission": "Comfort",
-            "why": "Favorites you loved, ready for a revisit.",
+            "why": "Past favorites that feel ready to revisit again.",
             "source": "local",
             "items": [
                 CandidateItem(
@@ -2777,6 +2778,444 @@ class DiscoverServiceTests(TestCase):
         mock_related.assert_not_called()
         mock_genre_discovery.assert_not_called()
 
+    @patch("app.discover.service.TMDB_ADAPTER.genre_discovery")
+    @patch("app.discover.service.TMDB_ADAPTER.related")
+    @patch("app.discover.service._planning_candidates")
+    def test_movie_top_picks_excludes_future_release_candidates(
+        self,
+        mock_planning,
+        mock_related,
+        mock_genre_discovery,
+    ):
+        today = timezone.localdate()
+        mock_planning.return_value = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="released-pick",
+                title="Released Pick",
+                genres=["Comedy"],
+                release_date=(today - timedelta(days=14)).isoformat(),
+                popularity=80.0,
+                rating=8.0,
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="future-pick",
+                title="Future Pick",
+                genres=["Comedy"],
+                release_date=(today + timedelta(days=14)).isoformat(),
+                popularity=85.0,
+                rating=8.0,
+            ),
+        ]
+        mock_related.return_value = []
+        mock_genre_discovery.return_value = []
+
+        profile_payload = {
+            "genre_affinity": {"comedy": 1.0},
+            "recent_genre_affinity": {"comedy": 1.0},
+        }
+        candidates = _top_picks_candidates(
+            self.user,
+            MediaTypes.MOVIE.value,
+            "top_picks_for_you",
+            profile_payload,
+        )
+
+        self.assertEqual([item.media_id for item in candidates], ["released-pick"])
+        mock_related.assert_not_called()
+        mock_genre_discovery.assert_not_called()
+
+    def test_movie_top_picks_use_planning_age_not_watch_history_defaults(self):
+        item = Item.objects.create(
+            media_id="movie-plan-debug",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Planning Debug Movie",
+            image="https://example.com/movie-plan-debug.jpg",
+            genres=["Adventure", "Comedy"],
+            provider_keywords=["Family", "Adventure"],
+            provider_certification="PG",
+            provider_collection_name="Weekend Picks",
+            runtime_minutes=101,
+            release_datetime=timezone.now() - timedelta(days=365 * 2),
+            studios=["Universal Pictures"],
+            provider_popularity=80.0,
+            provider_rating=7.9,
+            provider_rating_count=5000,
+        )
+        planning_entry = Movie.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.PLANNING.value,
+        )
+        Movie.objects.filter(pk=planning_entry.pk).update(
+            created_at=timezone.now() - timedelta(days=49),
+        )
+
+        profile_payload = {
+            "phase_keyword_affinity": {"family": 1.0, "adventure": 0.9},
+            "recent_keyword_affinity": {"family": 1.0, "adventure": 0.9},
+            "phase_studio_affinity": {"universal pictures": 1.0},
+            "recent_studio_affinity": {"universal pictures": 0.9},
+            "phase_collection_affinity": {"weekend picks": 1.0},
+            "recent_collection_affinity": {"weekend picks": 0.9},
+            "phase_certification_affinity": {"PG": 1.0},
+            "recent_certification_affinity": {"PG": 1.0},
+            "phase_runtime_bucket_affinity": {"90_109": 1.0},
+            "recent_runtime_bucket_affinity": {"90_109": 1.0},
+            "phase_decade_affinity": {"2020s": 0.8},
+            "recent_decade_affinity": {"2020s": 0.8},
+            "phase_genre_affinity": {"adventure": 1.0, "comedy": 0.9},
+            "recent_genre_affinity": {"adventure": 1.0, "comedy": 0.9},
+            "comfort_library_affinity": {
+                "keywords": {"family": 1.0, "adventure": 0.9},
+                "collections": {"weekend picks": 1.0},
+                "studios": {"universal pictures": 1.0},
+                "genres": {"adventure": 1.0, "comedy": 0.9},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 0.8},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"family": 1.0, "adventure": 0.9},
+                "collections": {"weekend picks": 1.0},
+                "studios": {"universal pictures": 1.0},
+                "genres": {"adventure": 1.0, "comedy": 0.9},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 0.8},
+            },
+        }
+
+        candidates = _top_picks_candidates(
+            self.user,
+            MediaTypes.MOVIE.value,
+            "top_picks_for_you",
+            profile_payload,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertIn("days_since_planned", candidate.score_breakdown)
+        self.assertNotIn("days_since_activity", candidate.score_breakdown)
+        self.assertEqual(candidate.score_breakdown["inactivity_norm"], 0.0)
+        self.assertEqual(candidate.score_breakdown["release_status"], "released")
+        self.assertEqual(candidate.score_breakdown["title_history_present"], 0.0)
+
+    def test_movie_top_picks_debug_template_uses_planning_labels(self):
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="top-picks-debug",
+                title="Top Picks Debug",
+                genres=["Adventure", "Comedy"],
+                keywords=["family", "adventure"],
+                studios=["universal pictures"],
+                collection_name="Weekend Picks",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                release_date=(timezone.localdate() - timedelta(days=30)).isoformat(),
+                popularity=80.0,
+                rating_count=5000,
+                row_key="top_picks_for_you",
+                score_breakdown={
+                    "planning_entry": 1.0,
+                    "days_since_planned": 49.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"family": 1.0, "adventure": 0.9},
+                "recent_keyword_affinity": {"family": 1.0, "adventure": 0.9},
+                "phase_studio_affinity": {"universal pictures": 1.0},
+                "recent_studio_affinity": {"universal pictures": 0.9},
+                "phase_collection_affinity": {"weekend picks": 1.0},
+                "recent_collection_affinity": {"weekend picks": 0.9},
+                "phase_certification_affinity": {"PG": 1.0},
+                "recent_certification_affinity": {"PG": 1.0},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 1.0},
+                "phase_decade_affinity": {"2020s": 0.8},
+                "recent_decade_affinity": {"2020s": 0.8},
+                "phase_genre_affinity": {"adventure": 1.0, "comedy": 0.9},
+                "recent_genre_affinity": {"adventure": 1.0, "comedy": 0.9},
+                "comfort_library_affinity": {
+                    "keywords": {"family": 1.0, "adventure": 0.9},
+                    "collections": {"weekend picks": 1.0},
+                    "studios": {"universal pictures": 1.0},
+                    "genres": {"adventure": 1.0, "comedy": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.8},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"family": 1.0, "adventure": 0.9},
+                    "collections": {"weekend picks": 1.0},
+                    "studios": {"universal pictures": 1.0},
+                    "genres": {"adventure": 1.0, "comedy": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.8},
+                },
+            },
+            use_movie_rewatch_model=True,
+        )
+        row = RowResult(
+            key="top_picks_for_you",
+            title="Top Picks For You",
+            mission="Personal Taste Match",
+            why="New-to-you movies tailored to your taste.",
+            source="local",
+            items=[],
+            debug_payload=_build_comfort_debug_payload(reranked, top_n=1),
+        )
+
+        content = render_to_string(
+            "app/components/discover_row.html",
+            {
+                "row": row,
+                "discover_debug": True,
+                "show_more": False,
+                "selected_media_type": MediaTypes.MOVIE.value,
+                "user": self.user,
+            },
+        )
+
+        self.assertIn("release-status released", content)
+        self.assertIn("planned-days 49.0", content)
+        self.assertIn("title-history no", content)
+        self.assertIn("planning-conf 0.000", content)
+        self.assertIn("matched-history [none]", content)
+        self.assertNotIn("last-watch-days", content)
+
+    def test_movie_top_picks_planning_confidence_prefers_real_history_neighbors(self):
+        for index in range(3):
+            history_item = Item.objects.create(
+                media_id=f"history-rich-{index}",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                title=f"History Rich {index}",
+                image=f"https://example.com/history-rich-{index}.jpg",
+                genres=["Adventure", "Comedy"],
+                provider_keywords=["Family", "Adventure"],
+                provider_certification="PG",
+                provider_collection_name="Weekend Picks",
+                runtime_minutes=101,
+                release_datetime=timezone.now() - timedelta(days=365 * 2),
+                studios=["Universal Pictures"],
+                provider_popularity=75.0,
+                provider_rating=7.8,
+                provider_rating_count=4000,
+            )
+            Movie.objects.create(
+                user=self.user,
+                item=history_item,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=150 - (index * 30)),
+            )
+
+        profile_payload = {
+            "phase_keyword_affinity": {
+                "family": 1.0,
+                "adventure": 0.9,
+                "detective": 1.0,
+                "mystery": 0.9,
+            },
+            "recent_keyword_affinity": {
+                "family": 1.0,
+                "adventure": 0.9,
+                "detective": 1.0,
+                "mystery": 0.9,
+            },
+            "phase_collection_affinity": {
+                "weekend picks": 1.0,
+                "mystery nights": 1.0,
+            },
+            "recent_collection_affinity": {
+                "weekend picks": 1.0,
+                "mystery nights": 1.0,
+            },
+            "phase_studio_affinity": {
+                "universal pictures": 1.0,
+                "focus features": 1.0,
+            },
+            "recent_studio_affinity": {
+                "universal pictures": 1.0,
+                "focus features": 1.0,
+            },
+            "phase_certification_affinity": {"PG": 1.0},
+            "recent_certification_affinity": {"PG": 1.0},
+            "phase_runtime_bucket_affinity": {"90_109": 1.0},
+            "recent_runtime_bucket_affinity": {"90_109": 1.0},
+            "phase_decade_affinity": {"2020s": 1.0},
+            "recent_decade_affinity": {"2020s": 1.0},
+            "phase_genre_affinity": {
+                "adventure": 1.0,
+                "comedy": 0.9,
+                "mystery": 1.0,
+                "drama": 0.9,
+            },
+            "recent_genre_affinity": {
+                "adventure": 1.0,
+                "comedy": 0.9,
+                "mystery": 1.0,
+                "drama": 0.9,
+            },
+            "comfort_library_affinity": {
+                "keywords": {
+                    "family": 1.0,
+                    "adventure": 0.9,
+                    "detective": 1.0,
+                    "mystery": 0.9,
+                },
+                "collections": {
+                    "weekend picks": 1.0,
+                    "mystery nights": 1.0,
+                },
+                "studios": {
+                    "universal pictures": 1.0,
+                    "focus features": 1.0,
+                },
+                "genres": {
+                    "adventure": 1.0,
+                    "comedy": 0.9,
+                    "mystery": 1.0,
+                    "drama": 0.9,
+                },
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {
+                    "family": 1.0,
+                    "adventure": 0.9,
+                    "detective": 1.0,
+                    "mystery": 0.9,
+                },
+                "collections": {
+                    "weekend picks": 1.0,
+                    "mystery nights": 1.0,
+                },
+                "studios": {
+                    "universal pictures": 1.0,
+                    "focus features": 1.0,
+                },
+                "genres": {
+                    "adventure": 1.0,
+                    "comedy": 0.9,
+                    "mystery": 1.0,
+                    "drama": 0.9,
+                },
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+        }
+        candidate_common = {
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "certification": "PG",
+            "runtime_bucket": "90_109",
+            "release_decade": "2020s",
+            "release_date": (timezone.localdate() - timedelta(days=60)).isoformat(),
+            "popularity": 80.0,
+            "rating": 7.8,
+            "rating_count": 5000,
+            "row_key": "top_picks_for_you",
+            "score_breakdown": {
+                "planning_entry": 1.0,
+                "days_since_planned": 81.0,
+                "rewatch_count": 1.0,
+            },
+        }
+        def build_candidate(kind: str) -> CandidateItem:
+            if kind == "rich":
+                return CandidateItem(
+                    media_id="planned-rich",
+                    title="Planned Rich",
+                    image="https://example.com/planned-rich.jpg",
+                    keywords=["family", "adventure"],
+                    collection_name="Weekend Picks",
+                    studios=["Universal Pictures"],
+                    genres=["Adventure", "Comedy"],
+                    score_breakdown=dict(candidate_common["score_breakdown"]),
+                    **{key: value for key, value in candidate_common.items() if key != "score_breakdown"},
+                )
+            return CandidateItem(
+                media_id="planned-sparse",
+                title="Planned Sparse",
+                image="https://example.com/planned-sparse.jpg",
+                keywords=["detective", "mystery"],
+                collection_name="Mystery Nights",
+                studios=["Focus Features"],
+                genres=["Mystery", "Drama"],
+                score_breakdown=dict(candidate_common["score_breakdown"]),
+                **{key: value for key, value in candidate_common.items() if key != "score_breakdown"},
+            )
+
+        without_history = _apply_comfort_confidence(
+            [build_candidate("sparse"), build_candidate("rich")],
+            profile_payload,
+            use_movie_rewatch_model=True,
+            user=None,
+        )
+        without_history_scores = {
+            candidate.media_id: candidate.score_breakdown["planning_confidence"]
+            for candidate in without_history
+        }
+        self.assertEqual(without_history_scores["planned-sparse"], 0.0)
+        self.assertEqual(without_history_scores["planned-rich"], 0.0)
+
+        reranked = _apply_comfort_confidence(
+            [build_candidate("sparse"), build_candidate("rich")],
+            profile_payload,
+            use_movie_rewatch_model=True,
+            user=self.user,
+        )
+
+        self.assertEqual(reranked[0].media_id, "planned-rich")
+        self.assertGreater(
+            reranked[0].score_breakdown["planning_confidence"],
+            reranked[1].score_breakdown["planning_confidence"],
+        )
+        self.assertGreater(reranked[0].score_breakdown["similar_watched_count"], 0)
+        self.assertGreater(
+            reranked[0].score_breakdown["rich_history_family_count"],
+            reranked[1].score_breakdown["rich_history_family_count"],
+        )
+        self.assertIn(
+            "keywords",
+            reranked[0].score_breakdown["matched_history_families"],
+        )
+        self.assertNotIn(
+            "keywords",
+            reranked[1].score_breakdown["matched_history_families"],
+        )
+        payload = _build_comfort_debug_payload(reranked, top_n=2)
+        self.assertGreater(payload["contribution_totals"]["planning_confidence"], 0.0)
+        self.assertIn("planning_confidence", payload["top_candidates"][0])
+
     def test_movie_top_picks_world_quality_debug_shows_before_and_after_titles(self):
         profile_payload = {
             "phase_keyword_affinity": {"cozy": 1.0, "mystery": 0.9},
@@ -3796,6 +4235,53 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("4002", candidate_ids)
         self.assertNotIn("4003", candidate_ids)
 
+    def test_comfort_candidates_exclude_recent_movies_inside_30_day_floor(self):
+        eligible_item = Item.objects.create(
+            media_id="4101",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Eligible Comfort",
+            image="http://example.com/eligible.jpg",
+            genres=["Animation"],
+        )
+        recent_item = Item.objects.create(
+            media_id="4102",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Recent Comfort",
+            image="http://example.com/recent.jpg",
+            genres=["Animation"],
+        )
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=eligible_item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=31),
+            )
+            Movie.objects.create(
+                item=recent_item,
+                user=self.user,
+                score=10,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=29),
+            )
+
+        candidates = _comfort_candidates(
+            self.user,
+            MediaTypes.MOVIE.value,
+            row_key="comfort_rewatches",
+            source_reason="Past favorite",
+            older_than_days=30,
+            min_score=8.0,
+        )
+        candidate_ids = {candidate.media_id for candidate in candidates}
+
+        self.assertIn("4101", candidate_ids)
+        self.assertNotIn("4102", candidate_ids)
+
     def test_comfort_candidates_biases_phase_evidence_with_limited_backfill(self):
         phase_media_ids = {"5001", "5002"}
         with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
@@ -4383,6 +4869,30 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("Signal evidence:", details["explanation"])
         self.assertGreaterEqual(len(details.get("match_signal_label_sources", [])), 1)
 
+    def test_top_picks_match_signal_formats_runtime_bucket_labels_humanly(self):
+        signal, details = _row_match_signal_with_details(
+            "top_picks_for_you",
+            [
+                CandidateItem(
+                    media_type=MediaTypes.MOVIE.value,
+                    source="tmdb",
+                    media_id="runtime-signal",
+                    title="Runtime Signal Movie",
+                    runtime_bucket="90_109",
+                    score_breakdown={"phase_fit": 0.9},
+                    final_score=0.82,
+                ),
+            ],
+            {
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+            },
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertIn("90-109 Minutes", signal or "")
+        self.assertNotIn("90 109", signal or "")
+        self.assertIsNotNone(details)
+
     def test_movie_comfort_debug_payload_exposes_behavior_first_fields(self):
         candidates = [
             CandidateItem(
@@ -4480,6 +4990,11 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("ready_now_score", payload["top_candidates"][0])
         self.assertIn("cooldown_penalty", payload["top_candidates"][0])
         self.assertIn("burst_replay_allowance", payload["top_candidates"][0])
+        self.assertIn("recent_play_count_90d", payload["top_candidates"][0])
+        self.assertIn("recent_play_count_180d", payload["top_candidates"][0])
+        self.assertIn("recent_gap_median_days", payload["top_candidates"][0])
+        self.assertIn("title_saturation_penalty", payload["top_candidates"][0])
+        self.assertIn("saturation_multiplier", payload["top_candidates"][0])
         self.assertIn("active_signal_families", payload["top_candidates"][0])
         self.assertIn("suppressed_signal_families", payload["top_candidates"][0])
         self.assertIn("world_quality", payload["top_candidates"][0])
@@ -4491,6 +5006,92 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("legacy_raw_final_score", payload["top_candidates"][0])
         self.assertIn("world_alignment_sample_size", payload["top_candidates"][0])
         self.assertIn("comparison_summary", payload)
+
+    def test_movie_comfort_debug_template_uses_clarified_time_labels(self):
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="render-debug",
+                title="Render Debug",
+                genres=["Animation"],
+                keywords=["family"],
+                studios=["pixar"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=80.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 120.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+        ]
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"family": 1.0},
+                "recent_keyword_affinity": {"family": 0.9},
+                "phase_studio_affinity": {"pixar": 1.0},
+                "recent_studio_affinity": {"pixar": 0.9},
+                "phase_certification_affinity": {"PG": 1.0},
+                "recent_certification_affinity": {"PG": 0.9},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 0.9},
+                "phase_decade_affinity": {"2020s": 0.8},
+                "recent_decade_affinity": {"2020s": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"family": 1.0},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.8},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"family": 1.0},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.8},
+                },
+            },
+            use_movie_rewatch_model=True,
+        )
+        row = RowResult(
+            key="comfort_rewatches",
+            title="Comfort Rewatches",
+            mission="Comfort",
+            why="Past favorites that feel ready to revisit again.",
+            source="local",
+            items=[],
+            debug_payload=_build_comfort_debug_payload(reranked, top_n=1),
+        )
+
+        content = render_to_string(
+            "app/components/discover_row.html",
+            {
+                "row": row,
+                "discover_debug": True,
+                "show_more": False,
+                "selected_media_type": MediaTypes.MOVIE.value,
+                "user": self.user,
+            },
+        )
+
+        self.assertIn("last-watch-days", content)
+        self.assertIn("median-repeat-gap", content)
+        self.assertIn("recent-90", content)
+        self.assertNotIn("title-days", content)
 
     @patch("app.discover.service._is_holiday_window", return_value=False)
     def test_movie_behavior_first_applies_keyword_holiday_penalty_out_of_season(self, _mock_window):
@@ -4821,7 +5422,7 @@ class DiscoverServiceTests(TestCase):
             encanto.score_breakdown["ready_now_score"],
         )
 
-    def test_movie_comfort_confidence_softens_cooldown_for_bursty_title_repeats(self):
+    def test_movie_comfort_confidence_penalizes_bursty_recent_density_once_titles_are_eligible(self):
         bursty_item = Item.objects.create(
             media_id="burst-title",
             source=Sources.TMDB.value,
@@ -4852,7 +5453,7 @@ class DiscoverServiceTests(TestCase):
         )
 
         with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
-            for days_ago in (4, 11, 20):
+            for days_ago in (35, 50, 70):
                 Movie.objects.create(
                     item=bursty_item,
                     user=self.user,
@@ -4860,7 +5461,7 @@ class DiscoverServiceTests(TestCase):
                     status=Status.COMPLETED.value,
                     end_date=timezone.now() - timedelta(days=days_ago),
                 )
-            for days_ago in (4, 140, 280):
+            for days_ago in (35, 170, 320):
                 Movie.objects.create(
                     item=steady_item,
                     user=self.user,
@@ -4886,7 +5487,7 @@ class DiscoverServiceTests(TestCase):
                 rating_count=5000,
                 score_breakdown={
                     "user_score": 8.0,
-                    "days_since_activity": 4.0,
+                    "days_since_activity": 35.0,
                     "rewatch_count": 3.0,
                 },
             ),
@@ -4906,7 +5507,7 @@ class DiscoverServiceTests(TestCase):
                 rating_count=5000,
                 score_breakdown={
                     "user_score": 8.0,
-                    "days_since_activity": 4.0,
+                    "days_since_activity": 35.0,
                     "rewatch_count": 3.0,
                 },
             ),
@@ -4959,16 +5560,22 @@ class DiscoverServiceTests(TestCase):
         bursty = next(candidate for candidate in reranked if candidate.media_id == "burst-title")
         steady = next(candidate for candidate in reranked if candidate.media_id == "steady-title")
         self.assertGreater(
-            bursty.score_breakdown["burst_replay_allowance"],
-            steady.score_breakdown["burst_replay_allowance"],
+            bursty.score_breakdown["title_saturation_penalty"],
+            steady.score_breakdown["title_saturation_penalty"],
         )
         self.assertLess(
-            bursty.score_breakdown["cooldown_penalty"],
-            steady.score_breakdown["cooldown_penalty"],
+            bursty.score_breakdown["saturation_multiplier"],
+            steady.score_breakdown["saturation_multiplier"],
         )
         self.assertGreater(
-            bursty.score_breakdown["ready_now_score"],
-            steady.score_breakdown["ready_now_score"],
+            bursty.score_breakdown["recent_play_count_90d"],
+            steady.score_breakdown["recent_play_count_90d"],
+        )
+        self.assertEqual(bursty.score_breakdown["burst_replay_allowance"], 0.0)
+        self.assertEqual(steady.score_breakdown["burst_replay_allowance"], 0.0)
+        self.assertLess(
+            bursty.final_score,
+            steady.final_score,
         )
 
     @patch("app.discover.service._is_holiday_window", return_value=False)

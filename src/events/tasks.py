@@ -83,11 +83,6 @@ def reload_calendar(user_id=None, item_ids=None, user=None, items_to_process=Non
 
     if resolved_user is None and normalized_item_ids is None:
         auto_pause.auto_pause_stale_items()
-        # Only refresh podcast feeds during full calendar runs.
-        try:
-            refresh_podcast_episodes()
-        except Exception as e:
-            logger.error("Failed to refresh podcast episodes during calendar reload: %s", e)
 
         # Backfill metadata for items that have never been fetched
         # Use aggressive batch size to complete initial backfill quickly
@@ -153,6 +148,7 @@ def send_daily_digest_notifications():
     logger.info("Starting daily digest task")
 
     return notifications.send_daily_digest()
+
 
 
 @shared_task(name="Refresh podcast episodes")
@@ -281,17 +277,20 @@ def refresh_podcast_episodes():
                     if episode_uuid in existing_episodes:
                         continue
 
-                    PodcastEpisode.objects.create(
-                        show=show,
-                        episode_uuid=episode_uuid,
-                        title=rss_ep.get("title", "Unknown Episode"),
-                        published=rss_ep.get("published"),
-                        duration=rss_ep.get("duration"),
-                        audio_url=rss_ep.get("audio_url", ""),
-                        episode_number=rss_ep.get("episode_number"),
-                        season_number=rss_ep.get("season_number"),
-                    )
-                    created_count += 1
+                    try:
+                        PodcastEpisode.objects.create(
+                            show=show,
+                            episode_uuid=episode_uuid,
+                            title=rss_ep.get("title", "Unknown Episode"),
+                            published=rss_ep.get("published"),
+                            duration=rss_ep.get("duration"),
+                            audio_url=rss_ep.get("audio_url", ""),
+                            episode_number=rss_ep.get("episode_number"),
+                            season_number=rss_ep.get("season_number"),
+                        )
+                        created_count += 1
+                    except Exception:
+                        logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
 
             if created_count > 0 or updated_count_show > 0:
                 logger.info(

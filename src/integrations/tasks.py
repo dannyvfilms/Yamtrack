@@ -12,6 +12,7 @@ import events
 from app.collection_helpers import (
     extract_collection_metadata_from_plex,
 )
+from app import history_cache
 from app.helpers import is_item_collected
 from app.log_safety import exception_summary, safe_url
 from app.mixins import disable_fetch_releases
@@ -30,7 +31,9 @@ from integrations.imports import (
     mal,
     plex,
     pocketcasts,
+    radarr,
     simkl,
+    sonarr,
     steam,
     trakt,
     yamtrack,
@@ -39,6 +42,11 @@ from integrations.plex_watchlist import PlexWatchlistSyncService
 
 logger = logging.getLogger(__name__)
 ERROR_TITLE = "\n\n\n Couldn't import the following media: \n\n"
+GOODREADS_IMPORT_TASK_NAME = "Import from Goodreads"
+LEGACY_GOODREADS_IMPORT_TASK_NAMES = (
+    "Import from GoodReads",
+    "integrations.tasks.import_goodreads",
+)
 
 
 def _is_expected_plex_lookup_error(exc):
@@ -207,6 +215,11 @@ def import_media(importer_func, identifier, user_id, mode, oauth_username=None):
 
     events.tasks.reload_calendar.delay()
 
+    # Importers rely heavily on bulk_create_with_history, which bypasses model signals.
+    # Force-clear history cache so month view index pages don't keep stale "empty month"
+    # payloads after imports (notably reproducible with SIMKL imports).
+    history_cache.invalidate_history_cache(user.id, force=True)
+
     # Queue collection metadata update task for media server imports
     _queue_post_import_collection_update(user_id, importer_func)
 
@@ -290,10 +303,27 @@ def import_imdb(file, user_id, mode):
     return import_media(imdb.importer, _coerce_uploaded_file(file), user_id, mode)
 
 
-@shared_task(name="Import from GoodReads")
-def import_goodreads(file, user_id, mode):
-    """Celery task for importing media data from GoodReads."""
+def _run_goodreads_import(file, user_id, mode):
+    """Execute the Goodreads CSV import for any registered task alias."""
     return import_media(goodreads.importer, _coerce_uploaded_file(file), user_id, mode)
+
+
+@shared_task(name=GOODREADS_IMPORT_TASK_NAME)
+def import_goodreads(file, user_id, mode):
+    """Celery task for importing media data from Goodreads."""
+    return _run_goodreads_import(file, user_id, mode)
+
+
+@shared_task(name=LEGACY_GOODREADS_IMPORT_TASK_NAMES[0])
+def import_goodreads_legacy(file, user_id, mode):
+    """Compatibility alias for the legacy Goodreads task name."""
+    return _run_goodreads_import(file, user_id, mode)
+
+
+@shared_task(name=LEGACY_GOODREADS_IMPORT_TASK_NAMES[1])
+def import_goodreads_dotted(file, user_id, mode):
+    """Compatibility alias for dotted Goodreads task references."""
+    return _run_goodreads_import(file, user_id, mode)
 
 
 @shared_task(name="Import from Hardcover")
@@ -306,6 +336,30 @@ def import_hardcover(file, user_id, mode):
 def import_plex(library, user_id, mode, username=None):  # noqa: ARG001
     """Celery task for importing media data from Plex."""
     return import_media(plex.importer, library, user_id, mode)
+
+
+@shared_task(name="Import from Radarr")
+def import_radarr(user_id, mode="new", username=None):  # noqa: ARG001
+    """Celery task for importing movie collection data from Radarr."""
+    return import_media(radarr.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Radarr (Recurring)")
+def import_radarr_recurring(user_id):
+    """Recurring import task for Radarr."""
+    return import_radarr.delay(user_id=user_id, mode="new")
+
+
+@shared_task(name="Import from Sonarr")
+def import_sonarr(user_id, mode="new", username=None):  # noqa: ARG001
+    """Celery task for importing TV collection data from Sonarr."""
+    return import_media(sonarr.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Sonarr (Recurring)")
+def import_sonarr_recurring(user_id):
+    """Recurring import task for Sonarr."""
+    return import_sonarr.delay(user_id=user_id, mode="new")
 
 
 @shared_task(name="Sync Plex Watchlist")
@@ -361,7 +415,14 @@ def import_audiobookshelf_recurring(user_id):
 @shared_task(name="Import from Pocket Casts")
 def import_pocketcasts(user_id, mode="new"):
     """Celery task for importing podcast history from Pocket Casts."""
-    return import_media(pocketcasts.importer, None, user_id, mode)
+    lock_key = f"pocketcasts_import_lock_{user_id}"
+    if not cache.add(lock_key, "1", timeout=600):
+        logger.info("Pocket Casts import already running for user %s, skipping", user_id)
+        return "Skipped: import already in progress"
+    try:
+        return import_media(pocketcasts.importer, None, user_id, mode)
+    finally:
+        cache.delete(lock_key)
 
 
 @shared_task(name="Import from Pocket Casts (Recurring)")

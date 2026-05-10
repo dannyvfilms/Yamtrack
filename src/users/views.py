@@ -14,6 +14,7 @@ from django.db.models import Q
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_celery_beat.models import PeriodicTask
@@ -33,6 +34,13 @@ from users.forms import (
     PasswordRecoveryForm,
     RegenerateRecoveryCodesForm,
     UserUpdateForm,
+)
+from users.home_screen import (
+    HomeScreenValidationError,
+    save_home_screen_configuration,
+    search_home_screen_lists,
+    serialize_settings_sections,
+    toggle_home_row_direction,
 )
 from users.models import (
     ActivityHistoryViewChoices,
@@ -502,6 +510,67 @@ def sidebar(request):
     return render(request, "users/sidebar.html", context)
 
 
+@require_http_methods(["GET", "POST"])
+def home_screen(request):
+    """Render and persist Home screen row settings."""
+    if request.method == "POST":
+        if request.user.is_demo:
+            messages.error(request, "This section is view-only for demo accounts.")
+            return redirect("home_screen")
+
+        try:
+            save_home_screen_configuration(
+                request.user,
+                request.POST.get("home_screen_sections", "[]"),
+            )
+        except HomeScreenValidationError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Home screen updated successfully.")
+        return redirect("home_screen")
+
+    context = {
+        "home_screen_sections_json": json.dumps(serialize_settings_sections(request.user)),
+        "home_screen_list_search_url": reverse("home_screen_list_search"),
+        "direction_choices_json": json.dumps(
+            [
+                {"value": "asc", "label": "Ascending"},
+                {"value": "desc", "label": "Descending"},
+            ],
+        ),
+    }
+    return render(request, "users/home_screen.html", context)
+
+
+@require_GET
+def home_screen_list_search(request):
+    """Return accessible list suggestions for the Home screen settings page."""
+    return JsonResponse(
+        {
+            "results": search_home_screen_lists(
+                request.user,
+                request.GET.get("q", ""),
+                request.GET.get("media_type", ""),
+            ),
+        },
+    )
+
+
+@login_required
+@require_POST
+def toggle_home_screen_row_direction(request, row_id: int):
+    """Flip a Home screen row direction and return to Home."""
+    if request.user.is_demo:
+        messages.error(request, "This section is view-only for demo accounts.")
+        return redirect("home")
+
+    try:
+        toggle_home_row_direction(request.user, row_id)
+    except HomeScreenValidationError as exc:
+        messages.error(request, str(exc))
+    return redirect("home")
+
+
 @require_GET
 def ui_preferences(request):
     """Redirect to sidebar page (UI preferences renamed to Sidebar)."""
@@ -561,7 +630,6 @@ def preferences(request):
         tv_metadata_source_default = request.POST.get("tv_metadata_source_default")
         anime_metadata_source_default = request.POST.get("anime_metadata_source_default")
         anime_library_mode = request.POST.get("anime_library_mode")
-        progress_bar_raw = request.POST.get("progress_bar")
         hide_completed_recommendations_raw = request.POST.get("hide_completed_recommendations")
         hide_zero_rating_raw = request.POST.get("hide_zero_rating")
         quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
@@ -651,12 +719,6 @@ def preferences(request):
                 fields_to_update.append("rating_scale")
                 rating_scale_changed = True
 
-        if progress_bar_raw is not None:
-            progress_bar = progress_bar_raw == "1"
-            if request.user.progress_bar != progress_bar:
-                request.user.progress_bar = progress_bar
-                fields_to_update.append("progress_bar")
-
         if hide_completed_recommendations_raw is not None:
             hide_completed_recommendations = hide_completed_recommendations_raw == "1"
             if request.user.hide_completed_recommendations != hide_completed_recommendations:
@@ -673,7 +735,7 @@ def preferences(request):
             request.user.quick_season_update_mobile = quick_season_update_mobile
             fields_to_update.append("quick_season_update_mobile")
 
-        show_planned_on_home = request.POST.get("show_planned_on_home", PlannedHomeDisplayChoices.DISABLED)
+        show_planned_on_home = request.POST.get("show_planned_on_home")
 
         if show_planned_on_home in [choice[0] for choice in PlannedHomeDisplayChoices.choices]:
             if request.user.show_planned_on_home != show_planned_on_home:
@@ -843,6 +905,12 @@ def import_data(request):
     lastfm_account = getattr(request.user, "lastfm_account", None)
     if lastfm_account:
         lastfm_account.refresh_from_db()
+    radarr_account = getattr(request.user, "radarr_account", None)
+    if radarr_account:
+        radarr_account.refresh_from_db()
+    sonarr_account = getattr(request.user, "sonarr_account", None)
+    if sonarr_account:
+        sonarr_account.refresh_from_db()
 
     # Get Last.fm periodic task status
     lastfm_periodic_task = None
@@ -886,6 +954,8 @@ def import_data(request):
         "audiobookshelf_account": audiobookshelf_account,
         "pocketcasts_account": pocketcasts_account,
         "lastfm_account": lastfm_account,
+        "radarr_account": radarr_account,
+        "sonarr_account": sonarr_account,
         "lastfm_periodic_task": lastfm_periodic_task,
         "lastfm_poll_interval": lastfm_poll_interval,
         "lastfm_history_status_label": lastfm_history_status_label,

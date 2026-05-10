@@ -91,15 +91,20 @@ class Metadata(TestCase):
         self.assertEqual(tmdb.get_original_title(response), "The Sound of Music")
 
     @patch("app.providers.tvdb.build_specials_season")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
     @patch("app.providers.tmdb.services.api_request")
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     def test_tv_with_seasons_adds_specials_when_tmdb_lacks_season_zero(
         self,
         mock_api_request,
+        mock_get_tvdb_episode_image_map,
         mock_build_specials_season,
     ):
         """TV details should synthesize season 0 only from TVDB-linked fallback data."""
         tmdb.cache.clear()
+        mock_get_tvdb_episode_image_map.return_value = {
+            "1": "https://example.com/s0e1.jpg",
+        }
         mock_build_specials_season.return_value = {
             "source": Sources.TMDB.value,
             "media_type": MediaTypes.SEASON.value,
@@ -132,7 +137,13 @@ class Metadata(TestCase):
             },
         }
 
-        def _mock_api_request(source, _method, url, params=None):  # noqa: ARG001
+        def _mock_api_request(
+            source,
+            _method,
+            url,
+            params=None,
+            headers=None,
+        ):  # noqa: ARG001
             if source == Sources.TMDB.value and url.endswith("/tv/114410"):
                 return {
                     "id": 114410,
@@ -634,6 +645,278 @@ class Metadata(TestCase):
             "468632",
         )
 
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_keeps_cached_show_credits_when_refreshing_seasons(
+        self,
+        mock_api_request,
+    ):
+        """Season fetches should keep cached TMDB show credits intact."""
+        tmdb.cache.clear()
+        tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_1396"
+        tmdb.cache.set(
+            tv_cache_key,
+            {
+                "media_id": "1396",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "title": "Breaking Bad",
+                "original_title": "Breaking Bad",
+                "localized_title": "Breaking Bad",
+                "image": "https://example.com/breaking-bad.jpg",
+                "synopsis": "A chemistry teacher turns to crime.",
+                "genres": [],
+                "details": {"episodes": 62},
+                "cast": [
+                    {
+                        "person_id": "10",
+                        "name": "John Actor",
+                        "role": "Walter White",
+                    },
+                ],
+                "crew": [
+                    {
+                        "person_id": "11",
+                        "name": "Jane Director",
+                        "role": "Director",
+                        "department": "Directing",
+                    },
+                ],
+                "studios_full": [],
+                "related": {"seasons": []},
+                "tvdb_id": "81189",
+                "external_links": {},
+            },
+        )
+
+        def _mock_api_request(source, _method, url, params=None):
+            self.assertEqual(source, Sources.TMDB.value)
+            self.assertEqual(url, "https://api.themoviedb.org/3/tv/1396")
+            self.assertIn("season/1", params["append_to_response"])
+            self.assertIn("season/1/credits", params["append_to_response"])
+
+            response = {
+                "id": 1396,
+                "name": "Breaking Bad",
+                "original_name": "Breaking Bad",
+                "poster_path": "/breaking-bad.jpg",
+                "overview": "A chemistry teacher turns to crime.",
+                "genres": [],
+                "vote_average": 9.5,
+                "vote_count": 1000,
+                "production_companies": [],
+                "production_countries": [],
+                "spoken_languages": [],
+                "recommendations": {"results": []},
+                "external_ids": {"tvdb_id": "81189"},
+                "watch/providers": {"results": {}},
+                "episode_run_time": [47],
+                "first_air_date": "2008-01-20",
+                "last_air_date": "2013-09-29",
+                "status": "Ended",
+                "number_of_seasons": 5,
+                "number_of_episodes": 62,
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "name": "Season 1",
+                        "air_date": "2008-01-20",
+                        "episode_count": 7,
+                        "poster_path": "/season1.jpg",
+                    },
+                ],
+                "season/1": {
+                    "name": "Season 1",
+                    "overview": "Season overview",
+                    "season_number": 1,
+                    "poster_path": "/season1.jpg",
+                    "air_date": "2008-01-20",
+                    "vote_average": 9.0,
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "name": "Pilot",
+                            "overview": "Episode overview",
+                            "still_path": None,
+                            "runtime": 58,
+                            "vote_count": 100,
+                            "air_date": "2008-01-20",
+                        },
+                    ],
+                },
+                "season/1/credits": {
+                    "cast": [
+                        {
+                            "id": 12,
+                            "name": "Season Actor",
+                            "profile_path": None,
+                            "known_for_department": "Acting",
+                            "gender": 2,
+                            "order": 0,
+                            "character": "Season Character",
+                        },
+                    ],
+                    "crew": [
+                        {
+                            "id": 13,
+                            "name": "Season Director",
+                            "profile_path": None,
+                            "known_for_department": "Directing",
+                            "gender": 1,
+                            "department": "Directing",
+                            "order": 0,
+                            "job": "Director",
+                        },
+                    ],
+                },
+                "season/1/watch/providers": {"results": {}},
+            }
+
+            if "aggregate_credits" in params["append_to_response"]:
+                response["aggregate_credits"] = {
+                    "cast": [
+                        {
+                            "id": 10,
+                            "name": "John Actor",
+                            "profile_path": None,
+                            "known_for_department": "Acting",
+                            "gender": 2,
+                            "order": 0,
+                            "roles": [
+                                {
+                                    "character": "Walter White",
+                                    "episode_count": 62,
+                                },
+                            ],
+                        },
+                    ],
+                    "crew": [
+                        {
+                            "id": 11,
+                            "name": "Jane Director",
+                            "profile_path": None,
+                            "known_for_department": "Directing",
+                            "gender": 1,
+                            "department": "Directing",
+                            "order": 0,
+                            "jobs": [{"job": "Director"}],
+                        },
+                    ],
+                }
+
+            if "alternative_titles" in params["append_to_response"]:
+                response["alternative_titles"] = {"results": []}
+
+            return response
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("1396", [1])
+
+        self.assertEqual(result["cast"][0]["name"], "John Actor")
+        self.assertEqual(result["cast"][0]["role"], "Walter White")
+        self.assertEqual(result["crew"][0]["name"], "Jane Director")
+        self.assertEqual(result["crew"][0]["role"], "Director")
+        self.assertEqual(result["season/1"]["cast"][0]["name"], "Season Actor")
+        self.assertEqual(result["season/1"]["cast"][0]["role"], "Season Character")
+        self.assertEqual(result["season/1"]["crew"][0]["name"], "Season Director")
+        self.assertEqual(result["season/1"]["crew"][0]["role"], "Director")
+        self.assertEqual(tmdb.cache.get(tv_cache_key)["cast"][0]["name"], "John Actor")
+        self.assertEqual(
+            tmdb.cache.get(tv_cache_key)["crew"][0]["name"],
+            "Jane Director",
+        )
+
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_batches_requests_within_tmdb_append_limit(
+        self,
+        mock_api_request,
+    ):
+        """Season fetches should split large TV batches before TMDB rejects them."""
+        tmdb.cache.clear()
+
+        def _build_season_payload(season_number):
+            episode_date = f"2024-01-{season_number:02d}"
+            return {
+                "name": f"Season {season_number}",
+                "overview": f"Season {season_number} overview",
+                "season_number": season_number,
+                "poster_path": f"/season{season_number}.jpg",
+                "air_date": episode_date,
+                "vote_average": 0,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": f"Episode {season_number}-1",
+                        "overview": "Episode overview",
+                        "still_path": None,
+                        "runtime": 29,
+                        "vote_count": 0,
+                        "air_date": episode_date,
+                    },
+                ],
+            }
+
+        tv_response = {
+            "id": 61746,
+            "name": "Inside No. 9",
+            "original_name": "Inside No. 9",
+            "poster_path": "/inside-no-9.jpg",
+            "overview": "A test show.",
+            "genres": [],
+            "vote_average": 8.0,
+            "vote_count": 10,
+            "production_companies": [],
+            "production_countries": [],
+            "spoken_languages": [],
+            "recommendations": {"results": []},
+            "external_ids": {"tvdb_id": "12345"},
+            "watch/providers": {"results": {}},
+            "aggregate_credits": {"cast": [], "crew": []},
+            "alternative_titles": {"results": []},
+            "episode_run_time": [29],
+            "first_air_date": "2014-05-07",
+            "last_air_date": "2023-05-17",
+            "status": "Ended",
+            "number_of_seasons": 8,
+            "number_of_episodes": 8,
+            "seasons": [],
+        }
+        for season_number in range(1, 9):
+            tv_response["seasons"].append(
+                {
+                    "season_number": season_number,
+                    "name": f"Season {season_number}",
+                    "air_date": f"2024-01-{season_number:02d}",
+                    "episode_count": 1,
+                    "poster_path": f"/season{season_number}.jpg",
+                },
+            )
+            tv_response[f"season/{season_number}"] = _build_season_payload(
+                season_number,
+            )
+            tv_response[f"season/{season_number}/watch/providers"] = {
+                "results": {},
+            }
+
+        append_requests = []
+
+        def _mock_api_request(source, _method, url, params=None):
+            self.assertEqual(source, Sources.TMDB.value)
+            self.assertEqual(url, "https://api.themoviedb.org/3/tv/61746")
+            append_to_response = params["append_to_response"]
+            append_requests.append(append_to_response)
+            self.assertLessEqual(len(append_to_response.split(",")), 20)
+            return tv_response
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("61746", list(range(1, 9)))
+
+        self.assertEqual(len(append_requests), 2)
+        self.assertEqual(result["title"], "Inside No. 9")
+        self.assertIn("season/8", result)
+        self.assertEqual(result["season/8"]["season_number"], 8)
+
     @patch("app.providers.tvdb.search")
     @patch("app.providers.tmdb.services.api_request")
     @override_settings(TVDB_API_KEY="test-tvdb-key")
@@ -716,6 +999,59 @@ class Metadata(TestCase):
             tmdb.cache.get(f"{Sources.TMDB.value}_{MediaTypes.TV.value}_294737")["tvdb_id"],
             "468632",
         )
+        mock_tvdb_search.assert_called_once_with(
+            MediaTypes.TV.value,
+            "Guz Khan's Custom Cars",
+            1,
+        )
+
+    @patch("app.providers.tvdb.search")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    def test_resolve_tvdb_id_for_tmdb_show_uses_existing_tvdb_id_without_search(
+        self,
+        mock_tvdb_search,
+    ):
+        """The TMDB->TVDB resolver should prefer an existing TVDB id from metadata."""
+        result = tmdb.resolve_tvdb_id_for_tmdb_show(
+            "294737",
+            {
+                "title": "Guz Khan's Custom Cars",
+                "tvdb_id": "468632",
+                "details": {"first_air_date": "2026-01-19"},
+            },
+        )
+
+        self.assertEqual(result, "468632")
+        mock_tvdb_search.assert_not_called()
+
+    @patch("app.providers.tvdb.search")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    def test_resolve_tvdb_id_for_tmdb_show_searches_exact_tvdb_title_match(
+        self,
+        mock_tvdb_search,
+    ):
+        """The TMDB->TVDB resolver should fall back to exact TVDB title matching."""
+        tmdb.cache.clear()
+        mock_tvdb_search.return_value = {
+            "results": [
+                {
+                    "media_id": "468632",
+                    "title": "Guz Khan's Custom Cars",
+                    "year": "2026",
+                },
+            ],
+        }
+
+        result = tmdb.resolve_tvdb_id_for_tmdb_show(
+            "294737",
+            {
+                "title": "Guz Khan's Custom Cars",
+                "details": {"first_air_date": "2026-01-19"},
+            },
+        )
+
+        self.assertEqual(result, "468632")
+        self.assertEqual(tmdb.get_tvdb_id_override("294737"), "468632")
         mock_tvdb_search.assert_called_once_with(
             MediaTypes.TV.value,
             "Guz Khan's Custom Cars",
@@ -960,7 +1296,10 @@ class Metadata(TestCase):
         with self.assertRaises(services.ProviderAPIError) as cm:
             tmdb.episode("1396", "1", "3")
 
-        self.assertIn("The Movie Database API (HTTP 404)", str(cm.exception))
+        self.assertIn(
+            "There was an error contacting The Movie Database (HTTP 404)",
+            str(cm.exception),
+        )
 
         mock_tv_with_seasons.assert_called_with("1396", ["1"])
 
@@ -1168,16 +1507,138 @@ class Metadata(TestCase):
         self.assertEqual(response["details"]["country"], None)
         self.assertEqual(response["details"]["languages"], None)
 
-    def test_games(self):
+    @patch("app.providers.igdb.services.api_request")
+    @patch("app.providers.igdb.get_access_token", return_value="test-access-token")
+    def test_games(self, _mock_get_access_token, mock_api_request):
         """Test the metadata method for games."""
+        igdb.cache.clear()
+        mock_api_request.return_value = [
+            {
+                "id": 1942,
+                "name": "The Witcher 3: Wild Hunt",
+                "cover": {"image_id": "abcd1234"},
+                "artworks": [],
+                "screenshots": [],
+                "url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+                "summary": "Test summary",
+                "game_type": 0,
+                "first_release_date": 1431993600,
+                "total_rating": 92.7,
+                "total_rating_count": 123456,
+                "genres": [{"name": "RPG"}],
+                "themes": [
+                    {"name": "Action"},
+                    {"name": "Fantasy"},
+                    {"name": "Open world"},
+                ],
+                "platforms": [{"name": "PC"}],
+                "involved_companies": [
+                    {
+                        "company": {
+                            "id": 1,
+                            "name": "CD Projekt Red",
+                            "logo": {"image_id": "logo123"},
+                        },
+                    },
+                ],
+                "parent_game": None,
+                "remasters": [],
+                "remakes": [],
+                "expansions": [],
+                "standalone_expansions": [],
+                "expanded_games": [],
+                "similar_games": [],
+                "dlcs": [],
+                "external_games": [],
+                "websites": [],
+            },
+        ]
+
         response = igdb.game("1942")
         self.assertEqual(response["title"], "The Witcher 3: Wild Hunt")
         self.assertEqual(response["details"]["format"], "Main game")
         self.assertEqual(response["details"]["release_date"], "2015-05-19")
+        self.assertEqual(response["details"]["companies"], "CD Projekt Red")
         self.assertEqual(
             response["details"]["themes"],
             ["Action", "Fantasy", "Open world"],
         )
+        self.assertEqual(
+            response["studios_full"],
+            [
+                {
+                    "studio_id": "1",
+                    "name": "CD Projekt Red",
+                    "logo": "https://images.igdb.com/igdb/image/upload/t_logo_med/logo123.png",
+                    "sort_order": 0,
+                },
+            ],
+        )
+
+    @patch("app.providers.igdb.services.api_request")
+    @patch("app.providers.igdb.get_access_token", return_value="test-access-token")
+    def test_company_profile(self, _mock_get_access_token, mock_api_request):
+        """Test the IGDB company profile metadata helper."""
+        igdb.cache.clear()
+
+        def _mock_api_request(source, _method, url, data=None, params=None, headers=None):  # noqa: ARG001
+            if source == Sources.IGDB.value and url.endswith("/companies"):
+                self.assertIn(
+                    "fields name,description,developed,published,logo.image_id,",
+                    data,
+                )
+                return [
+                    {
+                        "id": 1,
+                        "name": "CD Projekt Red",
+                        "description": "We make role-playing games.",
+                        "logo": {"image_id": "logo123"},
+                        "developed": [1942],
+                        "published": [1942, 2077],
+                        "url": "https://www.cdprojekt.com/",
+                        "start_date": 762489600,
+                        "country": 616,
+                        "status": 0,
+                    },
+                ]
+            if source == Sources.IGDB.value and url.endswith("/games"):
+                self.assertIn(
+                    "fields id,name,cover.image_id,first_release_date;",
+                    data,
+                )
+                return [
+                    {
+                        "id": 1942,
+                        "name": "The Witcher 3: Wild Hunt",
+                        "cover": {"image_id": "abcd1234"},
+                        "first_release_date": 1431993600,
+                    },
+                    {
+                        "id": 2077,
+                        "name": "Cyberpunk 2077",
+                        "cover": {"image_id": "efgh5678"},
+                        "first_release_date": 1607980800,
+                    },
+                ]
+
+            raise AssertionError(f"Unexpected request in test: {source} {url}")
+
+        mock_api_request.side_effect = _mock_api_request
+
+        response = igdb.company_profile("1")
+        self.assertIsNotNone(response)
+        self.assertEqual(response["name"], "CD Projekt Red")
+        self.assertEqual(response["source_url"], "https://www.cdprojekt.com/")
+        self.assertEqual(response["description"], "We make role-playing games.")
+        self.assertEqual(response["details"]["founded"], "1994-03-01")
+        self.assertEqual(response["details"]["developed_count"], 1)
+        self.assertEqual(response["details"]["published_count"], 2)
+        self.assertEqual(
+            [game["title"] for game in response["games"]],
+            ["Cyberpunk 2077", "The Witcher 3: Wild Hunt"],
+        )
+        self.assertEqual(response["games"][0]["role"], "Publisher")
+        self.assertEqual(response["games"][1]["role"], "Developer, Publisher")
 
     def test_game_non_numeric_id_raises_value_error(self):
         """Non-numeric IGDB IDs should raise ValueError before any API call."""

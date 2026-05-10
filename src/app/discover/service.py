@@ -76,7 +76,7 @@ ROW_CACHE_SCHEMA_META_KEY = "schema_version"
 ROW_CACHE_ACTIVITY_VERSION_META_KEY = "activity_version"
 MOVIE_CANON_ROW_SCHEMA_VERSION = 2
 MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
-MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 4
+MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 6
 TV_ANIME_TRAKT_ROW_SCHEMA_VERSION = 1
 TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 4
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
@@ -246,6 +246,14 @@ MOVIE_COMFORT_BURST_GAP_DAYS = 30.0
 MOVIE_COMFORT_BURST_HISTORY_MIN_WATCHES = 3
 MOVIE_COMFORT_RECENT_TITLE_MULTIPLIER_FLOOR = 0.72
 MOVIE_COMFORT_READY_NOW_WEIGHT = 0.12
+MOVIE_COMFORT_SATURATION_ELIGIBLE_DAYS = 30.0
+MOVIE_COMFORT_SATURATION_WINDOW_90D = 90
+MOVIE_COMFORT_SATURATION_WINDOW_180D = 180
+MOVIE_COMFORT_SATURATION_GAP_TARGET_DAYS = 45.0
+MOVIE_COMFORT_SATURATION_GAP_RANGE_DAYS = 30.0
+MOVIE_COMFORT_SATURATION_WEIGHT = 0.45
+MOVIE_TOP_PICKS_HISTORY_NEIGHBOR_TARGET = 6.0
+MOVIE_TOP_PICKS_PLANNING_CONFIDENCE_WEIGHT = 0.05
 WORLD_RATING_PROFILE_MIN_SAMPLE_SIZE = 5
 WORLD_QUALITY_ALIGNMENT_BASELINE = 0.25
 WORLD_QUALITY_ALIGNMENT_WEIGHT = 0.20
@@ -495,6 +503,7 @@ def _entries_to_candidates(
         media_type = override_media_type or item.media_type
         release_date = item.release_datetime.date().isoformat() if item.release_datetime else None
         activity_dt = _entry_activity_datetime(entry)
+        entry_status = str(getattr(entry, "status", "") or "")
         candidate = CandidateItem(
             media_type=media_type,
             source=item.source,
@@ -547,7 +556,19 @@ def _entries_to_candidates(
         candidate.score_breakdown["phase_pool_medium"] = 1.0 if phase_bucket == "medium_phase" else 0.0
         candidate.score_breakdown["phase_pool_backfill"] = 1.0 if phase_bucket == "weak_backfill" else 0.0
         candidate.score_breakdown["phase_pool_weak_only"] = 1.0 if phase_bucket == "weak_only" else 0.0
-        if activity_dt:
+        is_movie_top_picks_planning = (
+            row_key == "top_picks_for_you"
+            and media_type == MediaTypes.MOVIE.value
+            and entry_status == Status.PLANNING.value
+        )
+        if is_movie_top_picks_planning:
+            candidate.score_breakdown["planning_entry"] = 1.0
+            created_at = getattr(entry, "created_at", None)
+            if created_at:
+                candidate.score_breakdown["days_since_planned"] = float(
+                    max(0, (timezone.now() - created_at).days),
+                )
+        elif activity_dt:
             candidate.score_breakdown["days_since_activity"] = float(
                 max(0, (timezone.now() - activity_dt).days),
             )
@@ -2344,6 +2365,13 @@ def _top_picks_candidates(user, media_type: str, row_key: str, profile_payload: 
         row_key=row_key,
         source_reason="Ranked from your planning list",
     )
+    if media_type == MediaTypes.MOVIE.value:
+        today = timezone.localdate()
+        candidates = [
+            candidate
+            for candidate in candidates
+            if _candidate_release_status(candidate, today=today) != "upcoming"
+        ]
     score_candidates(candidates, profile_payload)
     recent_history_tag_coverage = _recent_completed_tag_coverage(
         user,
@@ -2400,15 +2428,11 @@ def _apply_top_picks_confidence(
     media_type: str = "",
     user=None,
 ) -> list[CandidateItem]:
-    # Keep Top Picks ranking formula aligned with Comfort Rewatches.
-    # Pass user=None to skip _movie_comfort_cooldown_context: planning candidates
-    # are unwatched so title cooldown is impossible and the three full-library DB
-    # queries it runs are wasted work here.
     return _apply_comfort_confidence(
         candidates,
         profile_payload,
         use_movie_rewatch_model=(media_type in BEHAVIOR_FIRST_MEDIA_TYPES),
-        user=None,
+        user=user if media_type == MediaTypes.MOVIE.value else None,
     )
 
 
@@ -2824,6 +2848,19 @@ def _movie_cadence_signal(
         if gaps
         else MOVIE_COMFORT_COOLDOWN_DEFAULT_DAYS
     )
+    recent_90_cutoff = now - timedelta(days=MOVIE_COMFORT_SATURATION_WINDOW_90D)
+    recent_180_cutoff = now - timedelta(days=MOVIE_COMFORT_SATURATION_WINDOW_180D)
+    recent_90_activity = [dt for dt in ordered if dt >= recent_90_cutoff]
+    recent_180_activity = [dt for dt in ordered if dt >= recent_180_cutoff]
+    recent_gaps = [
+        float(max(0, (earlier - later).days))
+        for earlier, later in zip(recent_180_activity, recent_180_activity[1:], strict=False)
+    ]
+    recent_gap_median_days = (
+        float(statistics.median(recent_gaps))
+        if recent_gaps
+        else 0.0
+    )
     burstiness = _clamp_unit(
         (
             sum(1 for gap in gaps if gap <= MOVIE_COMFORT_BURST_GAP_DAYS)
@@ -2837,6 +2874,159 @@ def _movie_cadence_signal(
         "days_since_last_watch": days_since_last_watch,
         "median_gap_days": median_gap_days,
         "burstiness": burstiness,
+        "recent_play_count_90d": float(len(recent_90_activity)),
+        "recent_play_count_180d": float(len(recent_180_activity)),
+        "recent_gap_median_days": recent_gap_median_days,
+        "recent_gap_count": float(len(recent_gaps)),
+    }
+
+
+def _movie_title_saturation_signal(
+    *,
+    media_type: str,
+    days_since_title_watch: float,
+    title_signal: dict[str, float],
+) -> dict[str, float]:
+    recent_play_count_90d = float(title_signal.get("recent_play_count_90d", 0.0))
+    recent_play_count_180d = float(title_signal.get("recent_play_count_180d", 0.0))
+    recent_gap_median_days = float(title_signal.get("recent_gap_median_days", 0.0))
+    recent_gap_count = int(title_signal.get("recent_gap_count", 0.0) or 0)
+
+    if (
+        media_type != MediaTypes.MOVIE.value
+        or days_since_title_watch < MOVIE_COMFORT_SATURATION_ELIGIBLE_DAYS
+    ):
+        return {
+            "recent_play_count_90d": round(recent_play_count_90d, 6),
+            "recent_play_count_180d": round(recent_play_count_180d, 6),
+            "recent_gap_median_days": round(recent_gap_median_days, 6),
+            "title_saturation_penalty": 0.0,
+            "saturation_multiplier": 1.0,
+        }
+
+    plays_90_pressure = _clamp_unit((recent_play_count_90d - 1.0) / 3.0)
+    plays_180_pressure = _clamp_unit((recent_play_count_180d - 2.0) / 4.0)
+    if recent_gap_count > 0:
+        recent_gap_pressure = _clamp_unit(
+            (
+                MOVIE_COMFORT_SATURATION_GAP_TARGET_DAYS
+                - recent_gap_median_days
+            )
+            / MOVIE_COMFORT_SATURATION_GAP_RANGE_DAYS,
+        )
+    else:
+        recent_gap_pressure = 0.0
+    title_saturation_penalty = _clamp_unit(
+        (plays_90_pressure * 0.50)
+        + (plays_180_pressure * 0.30)
+        + (recent_gap_pressure * 0.20),
+    )
+    saturation_multiplier = _clamp_unit(
+        1.0 - (MOVIE_COMFORT_SATURATION_WEIGHT * title_saturation_penalty),
+    )
+    return {
+        "recent_play_count_90d": round(recent_play_count_90d, 6),
+        "recent_play_count_180d": round(recent_play_count_180d, 6),
+        "recent_gap_median_days": round(recent_gap_median_days, 6),
+        "title_saturation_penalty": round(title_saturation_penalty, 6),
+        "saturation_multiplier": round(saturation_multiplier, 6),
+    }
+
+
+def _movie_top_picks_planning_confidence(
+    candidate: CandidateItem,
+    *,
+    candidate_families: dict[str, list[str]],
+    family_layer_fits: dict[str, dict[str, float]],
+    cooldown_context: dict[str, dict],
+) -> dict[str, object]:
+    if (
+        candidate.media_type != MediaTypes.MOVIE.value
+        or candidate.row_key != "top_picks_for_you"
+        or float(candidate.score_breakdown.get("planning_entry", 0.0)) < 1.0
+    ):
+        return {
+            "planning_confidence": 0.0,
+            "planning_confidence_bonus": 0.0,
+            "similar_watched_count": 0,
+            "matched_history_families": [],
+            "rich_history_family_count": 0,
+            "generic_history_family_count": 0,
+        }
+
+    history_items_by_family_label = cooldown_context.get("history_items_by_family_label") or {}
+    if not history_items_by_family_label:
+        return {
+            "planning_confidence": 0.0,
+            "planning_confidence_bonus": 0.0,
+            "similar_watched_count": 0,
+            "matched_history_families": [],
+            "rich_history_family_count": 0,
+            "generic_history_family_count": 0,
+        }
+
+    matched_history_families: list[str] = []
+    matched_history_items: set[int] = set()
+    weighted_history_fit = 0.0
+    rich_history_family_count = 0
+    generic_history_family_count = 0
+    total_family_weight = sum(MOVIE_COMFORT_FAMILY_WEIGHTS.values()) or 1.0
+
+    for family in MOVIE_COMFORT_FAMILY_WEIGHTS:
+        family_values = candidate_families.get(family) or []
+        family_history_items = history_items_by_family_label.get(family) or {}
+        family_match_items: set[int] = set()
+        for value in family_values:
+            family_match_items.update(family_history_items.get(value, set()))
+        if not family_match_items:
+            continue
+        matched_history_families.append(family)
+        matched_history_items.update(family_match_items)
+        weighted_history_fit += (
+            MOVIE_COMFORT_FAMILY_WEIGHTS[family]
+            * float(family_layer_fits.get(family, {}).get("blended", 0.0))
+        )
+        if family in MOVIE_COMFORT_RICH_FAMILIES:
+            rich_history_family_count += 1
+        else:
+            generic_history_family_count += 1
+
+    if not matched_history_families:
+        return {
+            "planning_confidence": 0.0,
+            "planning_confidence_bonus": 0.0,
+            "similar_watched_count": 0,
+            "matched_history_families": [],
+            "rich_history_family_count": 0,
+            "generic_history_family_count": 0,
+        }
+
+    weighted_history_fit = _clamp_unit(weighted_history_fit / total_family_weight)
+    rich_history_coverage = _clamp_unit(
+        rich_history_family_count / max(1, len(MOVIE_COMFORT_RICH_FAMILIES)),
+    )
+    generic_history_coverage = _clamp_unit(
+        generic_history_family_count / max(1, len(MOVIE_COMFORT_GENERIC_SOURCES)),
+    )
+    similar_watched_count = len(matched_history_items)
+    history_neighbor_norm = _clamp_unit(
+        similar_watched_count / MOVIE_TOP_PICKS_HISTORY_NEIGHBOR_TARGET,
+    )
+    planning_confidence = _clamp_unit(
+        (weighted_history_fit * 0.40)
+        + (rich_history_coverage * 0.25)
+        + (history_neighbor_norm * 0.25)
+        + (generic_history_coverage * 0.10),
+    )
+    planning_confidence_bonus = planning_confidence * MOVIE_TOP_PICKS_PLANNING_CONFIDENCE_WEIGHT
+
+    return {
+        "planning_confidence": round(planning_confidence, 6),
+        "planning_confidence_bonus": round(planning_confidence_bonus, 6),
+        "similar_watched_count": int(similar_watched_count),
+        "matched_history_families": matched_history_families,
+        "rich_history_family_count": int(rich_history_family_count),
+        "generic_history_family_count": int(generic_history_family_count),
     }
 
 
@@ -2845,7 +3035,7 @@ def _movie_comfort_cooldown_context(
     candidates: list[CandidateItem],
 ) -> dict[str, dict]:
     if not user or not candidates:
-        return {"title": {}, "family": {}}
+        return {"title": {}, "family": {}, "history_items_by_family_label": {}}
 
     candidate_media_types = {
         candidate.media_type
@@ -2853,14 +3043,14 @@ def _movie_comfort_cooldown_context(
         if candidate.media_type
     }
     if len(candidate_media_types) != 1:
-        return {"title": {}, "family": {}}
+        return {"title": {}, "family": {}, "history_items_by_family_label": {}}
     media_type = next(iter(candidate_media_types))
     if media_type not in BEHAVIOR_FIRST_MEDIA_TYPES:
-        return {"title": {}, "family": {}}
+        return {"title": {}, "family": {}, "history_items_by_family_label": {}}
 
     model = _model_for_media_type(media_type)
     if not model:
-        return {"title": {}, "family": {}}
+        return {"title": {}, "family": {}, "history_items_by_family_label": {}}
 
     entry_only_fields = [
         "item_id",
@@ -2889,7 +3079,7 @@ def _movie_comfort_cooldown_context(
         .order_by(*_activity_ordering(model))
     )
     if not entries:
-        return {"title": {}, "family": {}}
+        return {"title": {}, "family": {}, "history_items_by_family_label": {}}
 
     item_ids = sorted({entry.item_id for entry in entries if entry.item_id})
     studio_map = _item_studio_map(item_ids)
@@ -2899,6 +3089,9 @@ def _movie_comfort_cooldown_context(
     title_activity: dict[tuple[str, str], list[datetime]] = defaultdict(list)
     family_activity: dict[str, dict[str, list[datetime]]] = {
         family: defaultdict(list) for family in MOVIE_COMFORT_FAMILY_WEIGHTS
+    }
+    history_items_by_family_label: dict[str, dict[str, set[int]]] = {
+        family: defaultdict(set) for family in MOVIE_COMFORT_FAMILY_WEIGHTS
     }
 
     for entry in entries:
@@ -2917,6 +3110,7 @@ def _movie_comfort_cooldown_context(
         for family, values in item_families.items():
             for value in values:
                 family_activity[family][value].append(activity_dt)
+                history_items_by_family_label[family][value].add(item.id)
 
     title_signals = {
         key: _movie_cadence_signal(activity_dts, now=now)
@@ -2932,6 +3126,7 @@ def _movie_comfort_cooldown_context(
     return {
         "title": title_signals,
         "family": family_signals,
+        "history_items_by_family_label": history_items_by_family_label,
     }
 
 
@@ -2942,18 +3137,31 @@ def _movie_ready_now_signal(
 ) -> dict[str, float]:
     title_key = (str(candidate.source or "").strip(), str(candidate.media_id or "").strip())
     title_signal = (cooldown_context.get("title") or {}).get(title_key, {})
+    title_history_present = 1.0 if title_signal else 0.0
+    planning_entry = float(candidate.score_breakdown.get("planning_entry", 0.0)) >= 1.0
+    release_status = _candidate_release_status(candidate)
+    release_ready_score = 0.0 if release_status == "upcoming" else 1.0
 
     title_watch_count = float(title_signal.get("watch_count", 0.0))
-    days_since_title_watch = float(
-        title_signal.get(
-            "days_since_last_watch",
-            candidate.score_breakdown.get("days_since_activity", 9999.0),
-        ),
-    )
-    title_burstiness = float(title_signal.get("burstiness", 0.0))
-    median_gap_days = float(
-        title_signal.get("median_gap_days", MOVIE_COMFORT_COOLDOWN_DEFAULT_DAYS),
-    )
+    if title_signal:
+        days_since_title_watch = float(
+            title_signal.get(
+                "days_since_last_watch",
+                candidate.score_breakdown.get("days_since_activity", 9999.0),
+            ),
+        )
+        title_burstiness = float(title_signal.get("burstiness", 0.0))
+        median_gap_days = float(
+            title_signal.get("median_gap_days", MOVIE_COMFORT_COOLDOWN_DEFAULT_DAYS),
+        )
+    else:
+        days_since_title_watch = float(
+            candidate.score_breakdown.get("days_since_planned", 0.0)
+            if planning_entry
+            else 0.0,
+        )
+        title_burstiness = 0.0
+        median_gap_days = 0.0
 
     lane_burstiness = 0.0
     lane_days_since_watch = 9999.0
@@ -2976,27 +3184,41 @@ def _movie_ready_now_signal(
                 float(family_signal.get("watch_count", 0.0)),
             )
 
-    cooldown_window_days = median_gap_days if title_watch_count >= 2 else MOVIE_COMFORT_COOLDOWN_DEFAULT_DAYS
-    cooldown_window_days = max(
-        MOVIE_COMFORT_COOLDOWN_MIN_DAYS,
-        min(MOVIE_COMFORT_COOLDOWN_MAX_DAYS, cooldown_window_days),
-    )
-    if title_watch_count >= MOVIE_COMFORT_BURST_HISTORY_MIN_WATCHES:
-        cooldown_window_days *= 1.0 - (0.45 * title_burstiness)
-    cooldown_window_days *= 1.0 - (0.20 * lane_burstiness)
-    cooldown_window_days = max(
-        MOVIE_COMFORT_COOLDOWN_MIN_DAYS,
-        min(MOVIE_COMFORT_COOLDOWN_MAX_DAYS, cooldown_window_days),
-    )
+    if title_signal:
+        cooldown_window_days = (
+            median_gap_days
+            if title_watch_count >= 2
+            else MOVIE_COMFORT_COOLDOWN_DEFAULT_DAYS
+        )
+        cooldown_window_days = max(
+            MOVIE_COMFORT_COOLDOWN_MIN_DAYS,
+            min(MOVIE_COMFORT_COOLDOWN_MAX_DAYS, cooldown_window_days),
+        )
 
-    title_cooldown_penalty = _clamp_unit(
-        1.0 - (days_since_title_watch / max(cooldown_window_days, 1.0)),
-    )
-    burst_replay_allowance = _clamp_unit((title_burstiness * 0.7) + (lane_burstiness * 0.3))
-    cooldown_penalty = _clamp_unit(
-        title_cooldown_penalty * (1.0 - (burst_replay_allowance * 0.75)),
-    )
-    ready_now_score = _clamp_unit(1.0 - cooldown_penalty)
+        title_cooldown_penalty = _clamp_unit(
+            1.0 - (days_since_title_watch / max(cooldown_window_days, 1.0)),
+        )
+        burst_replay_allowance = 0.0
+        cooldown_penalty = title_cooldown_penalty
+        ready_now_score = _clamp_unit(1.0 - cooldown_penalty)
+        saturation_signal = _movie_title_saturation_signal(
+            media_type=candidate.media_type,
+            days_since_title_watch=days_since_title_watch,
+            title_signal=title_signal,
+        )
+    else:
+        cooldown_window_days = 0.0
+        title_cooldown_penalty = 0.0
+        burst_replay_allowance = 0.0
+        cooldown_penalty = _clamp_unit(1.0 - release_ready_score)
+        ready_now_score = release_ready_score
+        saturation_signal = {
+            "recent_play_count_90d": 0.0,
+            "recent_play_count_180d": 0.0,
+            "recent_gap_median_days": 0.0,
+            "title_saturation_penalty": 0.0,
+            "saturation_multiplier": 1.0,
+        }
 
     return {
         "days_since_title_watch": round(days_since_title_watch, 6),
@@ -3011,6 +3233,14 @@ def _movie_ready_now_signal(
         "burst_replay_allowance": round(burst_replay_allowance, 6),
         "cooldown_penalty": round(cooldown_penalty, 6),
         "ready_now_score": round(ready_now_score, 6),
+        "recent_play_count_90d": float(saturation_signal["recent_play_count_90d"]),
+        "recent_play_count_180d": float(saturation_signal["recent_play_count_180d"]),
+        "recent_gap_median_days": float(saturation_signal["recent_gap_median_days"]),
+        "title_saturation_penalty": float(saturation_signal["title_saturation_penalty"]),
+        "saturation_multiplier": float(saturation_signal["saturation_multiplier"]),
+        "title_history_present": round(title_history_present, 6),
+        "release_ready_score": round(release_ready_score, 6),
+        "release_status": release_status,
     }
 
 
@@ -3052,10 +3282,41 @@ def _candidate_release_year(candidate: CandidateItem) -> int | None:
     return None
 
 
+def _candidate_release_date_value(candidate: CandidateItem):
+    iso_date = _iso_date(candidate.release_date)
+    if not iso_date:
+        return None
+    try:
+        return datetime.strptime(iso_date, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _candidate_release_status(
+    candidate: CandidateItem,
+    *,
+    today=None,
+) -> str:
+    release_date = _candidate_release_date_value(candidate)
+    if release_date is None:
+        return "unknown"
+    if today is None:
+        today = timezone.localdate()
+    return "upcoming" if release_date > today else "released"
+
+
 def _format_phase_label(value: str) -> str:
     key = str(value).strip().lower()
     if not key:
         return ""
+    if key == "<90":
+        return "Under 90 Minutes"
+    if key == "130_plus":
+        return "130+ Minutes"
+    if "_" in key:
+        lower, upper = key.split("_", 1)
+        if lower.isdigit() and upper.isdigit():
+            return f"{int(lower)}-{int(upper)} Minutes"
     return " ".join(part.capitalize() for part in key.replace("_", " ").replace("-", " ").split())
 
 
@@ -3713,6 +3974,34 @@ def _apply_movie_comfort_confidence(
                 _clamp_unit(legacy_core_affinity_score * floor_multiplier),
             )
 
+        saturation_multiplier = float(cooldown_signal["saturation_multiplier"])
+        saturation_penalty_contribution = 0.0
+        if candidate.media_type == MediaTypes.MOVIE.value and saturation_multiplier < 0.999:
+            raw_before_saturation = raw_final_score
+            raw_final_score = _clamp_unit(raw_final_score * saturation_multiplier)
+            legacy_raw_final_score = _clamp_unit(
+                legacy_raw_final_score * saturation_multiplier,
+            )
+            saturation_penalty_contribution = max(
+                0.0,
+                raw_before_saturation - raw_final_score,
+            )
+
+        planning_confidence_signal = _movie_top_picks_planning_confidence(
+            candidate,
+            candidate_families=candidate_families,
+            family_layer_fits=family_layer_fits,
+            cooldown_context=cooldown_context,
+        )
+        planning_confidence_bonus = float(
+            planning_confidence_signal["planning_confidence_bonus"],
+        )
+        if planning_confidence_bonus > 0.0:
+            raw_final_score = _clamp_unit(raw_final_score + planning_confidence_bonus)
+            legacy_raw_final_score = _clamp_unit(
+                legacy_raw_final_score + planning_confidence_bonus,
+            )
+
         holiday_strength, seasonal_adjustment = _holiday_seasonal_adjustment(
             candidate,
             holiday_window_active=holiday_window_active,
@@ -3786,6 +4075,57 @@ def _apply_movie_comfort_confidence(
         candidate.score_breakdown["cooldown_window_days"] = round(
             float(cooldown_signal["cooldown_window_days"]),
             6,
+        )
+        candidate.score_breakdown["recent_play_count_90d"] = round(
+            float(cooldown_signal["recent_play_count_90d"]),
+            6,
+        )
+        candidate.score_breakdown["recent_play_count_180d"] = round(
+            float(cooldown_signal["recent_play_count_180d"]),
+            6,
+        )
+        candidate.score_breakdown["recent_gap_median_days"] = round(
+            float(cooldown_signal["recent_gap_median_days"]),
+            6,
+        )
+        candidate.score_breakdown["title_saturation_penalty"] = round(
+            float(cooldown_signal["title_saturation_penalty"]),
+            6,
+        )
+        candidate.score_breakdown["saturation_multiplier"] = round(
+            float(cooldown_signal["saturation_multiplier"]),
+            6,
+        )
+        candidate.score_breakdown["title_history_present"] = round(
+            float(cooldown_signal["title_history_present"]),
+            6,
+        )
+        candidate.score_breakdown["release_ready_score"] = round(
+            float(cooldown_signal["release_ready_score"]),
+            6,
+        )
+        candidate.score_breakdown["release_status"] = str(
+            cooldown_signal["release_status"],
+        )
+        candidate.score_breakdown["planning_confidence"] = round(
+            float(planning_confidence_signal["planning_confidence"]),
+            6,
+        )
+        candidate.score_breakdown["planning_confidence_bonus"] = round(
+            planning_confidence_bonus,
+            6,
+        )
+        candidate.score_breakdown["similar_watched_count"] = int(
+            planning_confidence_signal["similar_watched_count"],
+        )
+        candidate.score_breakdown["matched_history_families"] = list(
+            planning_confidence_signal["matched_history_families"],
+        )
+        candidate.score_breakdown["rich_history_family_count"] = int(
+            planning_confidence_signal["rich_history_family_count"],
+        )
+        candidate.score_breakdown["generic_history_family_count"] = int(
+            planning_confidence_signal["generic_history_family_count"],
         )
         candidate.score_breakdown["keyword_fit"] = round(family_layer_fits["keywords"]["blended"], 6)
         candidate.score_breakdown["collection_fit"] = round(family_layer_fits["collections"]["blended"], 6)
@@ -3875,6 +4215,10 @@ def _apply_movie_comfort_confidence(
             ready_now_score * MOVIE_COMFORT_READY_NOW_WEIGHT,
             6,
         )
+        candidate.score_breakdown["planning_confidence_contribution"] = round(
+            planning_confidence_bonus,
+            6,
+        )
         candidate.score_breakdown["phase_family_contribution"] = round(recency_phase_fit * 0.25, 6)
         candidate.score_breakdown["hot_recency_contribution"] = 0.0
         candidate.score_breakdown["rating_contribution"] = round(quality_score * 0.10, 6)
@@ -3884,7 +4228,15 @@ def _apply_movie_comfort_confidence(
             6,
         )
         candidate.score_breakdown["holiday_strength"] = round(holiday_strength, 6)
-        candidate.score_breakdown["dampeners_contribution"] = round(seasonal_adjustment, 6)
+        candidate.score_breakdown["raw_final_score"] = round(raw_final_score, 6)
+        candidate.score_breakdown["dampeners_contribution"] = round(
+            seasonal_adjustment - saturation_penalty_contribution,
+            6,
+        )
+        candidate.score_breakdown["saturation_dampener_contribution"] = round(
+            -saturation_penalty_contribution,
+            6,
+        )
         candidate.score_breakdown["seasonality_dampener_contribution"] = round(
             seasonal_adjustment,
             6,
@@ -4410,6 +4762,7 @@ def _build_movie_comfort_debug_payload(
                 "quality": 0.0,
                 "shape_coverage": 0.0,
                 "ready_now": 0.0,
+                "planning_confidence": 0.0,
             },
             "profile_layer_weights": dict(MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS),
             "family_weights": dict(MOVIE_COMFORT_FAMILY_WEIGHTS),
@@ -4458,6 +4811,7 @@ def _build_movie_comfort_debug_payload(
         "quality": 0.0,
         "shape_coverage": 0.0,
         "ready_now": 0.0,
+        "planning_confidence": 0.0,
     }
     top_candidates: list[dict] = []
     multi_penalty_ids: list[str] = []
@@ -4471,6 +4825,8 @@ def _build_movie_comfort_debug_payload(
         if str(score.get("reason_bucket_quota_action", "")) in {"relaxed_fill", "forced_fill"}:
             penalty_count += 1
         if float(score.get("candidate_is_unrated", 0.0)) >= 1.0:
+            penalty_count += 1
+        if float(score.get("saturation_multiplier", 1.0)) < 0.999:
             penalty_count += 1
         if seasonal_adjustment < 0.0:
             penalty_count += 1
@@ -4490,6 +4846,9 @@ def _build_movie_comfort_debug_payload(
             score.get("shape_coverage_contribution", 0.0),
         )
         contribution_totals["ready_now"] += float(score.get("ready_now_contribution", 0.0))
+        contribution_totals["planning_confidence"] += float(
+            score.get("planning_confidence_contribution", 0.0),
+        )
 
         top_candidates.append(
             {
@@ -4517,6 +4876,55 @@ def _build_movie_comfort_debug_payload(
                 "burst_replay_allowance": round(
                     float(score.get("burst_replay_allowance", 0.0)),
                     6,
+                ),
+                "recent_play_count_90d": round(
+                    float(score.get("recent_play_count_90d", 0.0)),
+                    6,
+                ),
+                "recent_play_count_180d": round(
+                    float(score.get("recent_play_count_180d", 0.0)),
+                    6,
+                ),
+                "recent_gap_median_days": round(
+                    float(score.get("recent_gap_median_days", 0.0)),
+                    6,
+                ),
+                "title_saturation_penalty": round(
+                    float(score.get("title_saturation_penalty", 0.0)),
+                    6,
+                ),
+                "saturation_multiplier": round(
+                    float(score.get("saturation_multiplier", 1.0)),
+                    6,
+                ),
+                "planning_entry": float(score.get("planning_entry", 0.0)) >= 1.0,
+                "days_since_planned": round(
+                    float(score.get("days_since_planned", 0.0)),
+                    6,
+                ),
+                "title_history_present": float(
+                    score.get("title_history_present", 1.0),
+                ) >= 1.0,
+                "release_ready_score": round(
+                    float(score.get("release_ready_score", 0.0)),
+                    6,
+                ),
+                "release_status": str(score.get("release_status", "unknown")),
+                "planning_confidence": round(
+                    float(score.get("planning_confidence", 0.0)),
+                    6,
+                ),
+                "planning_confidence_bonus": round(
+                    float(score.get("planning_confidence_bonus", 0.0)),
+                    6,
+                ),
+                "similar_watched_count": int(score.get("similar_watched_count", 0) or 0),
+                "matched_history_families": list(score.get("matched_history_families") or []),
+                "rich_history_family_count": int(
+                    score.get("rich_history_family_count", 0) or 0,
+                ),
+                "generic_history_family_count": int(
+                    score.get("generic_history_family_count", 0) or 0,
                 ),
                 "days_since_title_watch": round(
                     float(score.get("days_since_title_watch", 0.0)),
@@ -4583,6 +4991,10 @@ def _build_movie_comfort_debug_payload(
                     float(score.get("ready_now_contribution", 0.0)),
                     6,
                 ),
+                "planning_confidence_contribution": round(
+                    float(score.get("planning_confidence_contribution", 0.0)),
+                    6,
+                ),
                 "holiday_strength": round(float(score.get("holiday_strength", 0.0)), 6),
                 "seasonal_adjustment": round(seasonal_adjustment, 6),
                 "dampeners_contribution": round(
@@ -4591,6 +5003,10 @@ def _build_movie_comfort_debug_payload(
                 ),
                 "seasonality_dampener_contribution": round(
                     float(score.get("seasonality_dampener_contribution", 0.0)),
+                    6,
+                ),
+                "saturation_dampener_contribution": round(
+                    float(score.get("saturation_dampener_contribution", 0.0)),
                     6,
                 ),
                 "penalty_count": penalty_count,

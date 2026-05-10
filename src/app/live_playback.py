@@ -164,6 +164,16 @@ def apply_playback_event(  # noqa: C901, PLR0912
         ) or not rating_key):
             # Grace period instead of immediate deletion — keeps the
             # card visible across auto-play transitions and brief gaps.
+            if view_offset_seconds is not None:
+                existing_state["view_offset_seconds"] = max(
+                    0,
+                    view_offset_seconds,
+                )
+            if duration_seconds is not None:
+                existing_state["duration_seconds"] = max(0, duration_seconds)
+            existing_state["updated_at_ts"] = now_ts
+            existing_state["pause_expires_at_ts"] = None
+            existing_state["scrobble_expires_at_ts"] = None
             existing_state["status"] = PLAYBACK_STATUS_STOPPED
             existing_state["stop_expires_at_ts"] = (
                 now_ts + PLAYBACK_STOP_GRACE_SECONDS
@@ -192,6 +202,22 @@ def apply_playback_event(  # noqa: C901, PLR0912
                 existing_state.get("duration_seconds"), 0,
             )
 
+    started_at_ts = now_ts
+    if _state_matches(
+        existing_state,
+        rating_key=rating_key,
+        media_id=media_id,
+        playback_media_type=playback_media_type,
+    ):
+        existing_started_at_ts = _coerce_int(
+            existing_state.get("started_at_ts"),
+            None,
+        )
+        if existing_started_at_ts is not None and (
+            existing_state.get("status") != PLAYBACK_STATUS_STOPPED
+        ):
+            started_at_ts = existing_started_at_ts
+
     is_paused = event_type == "media.pause"
     status = PLAYBACK_STATUS_PAUSED if is_paused else PLAYBACK_STATUS_PLAYING
 
@@ -208,6 +234,7 @@ def apply_playback_event(  # noqa: C901, PLR0912
         "episode_number": episode_number,
         "view_offset_seconds": max(0, offset_seconds or 0),
         "duration_seconds": max(0, dur_seconds or 0),
+        "started_at_ts": started_at_ts,
         "status": status,
         "updated_at_ts": now_ts,
         "expires_at_ts": now_ts + PLAYBACK_HARD_STALE_SECONDS,

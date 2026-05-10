@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -6,6 +7,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
     Book,
     Comic,
     CreditRoleType,
@@ -14,6 +16,8 @@ from app.models import (
     ItemStudioCredit,
     Manga,
     MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
     Movie,
     Episode,
     Person,
@@ -34,22 +38,128 @@ class PersonDetailViewTests(TestCase):
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
-
-        self.item = Item.objects.create(
-            media_id="501",
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.MOVIE.value,
-            title="Tracked Movie",
-            image="http://example.com/tracked.jpg",
-        )
         self.person = Person.objects.create(
             source=Sources.TMDB.value,
             source_person_id="123",
             name="Jane Star",
             gender=PersonGender.FEMALE.value,
         )
+        for patcher in (
+            patch("app.providers.tmdb.tv", return_value={}),
+            patch("app.providers.tmdb.tv_with_seasons", return_value={}),
+            patch("app.providers.tmdb.episode", return_value={}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _credit(person, role="Lead", sort_order=0):
+        return {
+            "person": person,
+            "role": role,
+            "sort_order": sort_order,
+        }
+
+    def _mark_tmdb_credits_current(self, *items):
+        for item in items:
+            MetadataBackfillState.objects.update_or_create(
+                item=item,
+                field=MetadataBackfillField.CREDITS,
+                defaults={
+                    "last_success_at": timezone.now(),
+                    "strategy_version": CREDITS_BACKFILL_VERSION,
+                },
+            )
+
+    def _create_tmdb_tv_show(self, media_id, title, studio, show_credits, seasons, base_time):
+        tv_item = Item.objects.create(
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title=title,
+            image=f"http://example.com/{media_id}.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        ItemStudioCredit.objects.create(item=tv_item, studio=studio)
+        for credit in show_credits:
+            ItemPersonCredit.objects.create(
+                item=tv_item,
+                person=credit["person"],
+                role_type=CreditRoleType.CAST.value,
+                role=credit.get("role", "Lead"),
+                sort_order=credit.get("sort_order"),
+            )
+        self._mark_tmdb_credits_current(tv_item)
+
+        for season_number, season_spec in seasons.items():
+            season_item = Item.objects.create(
+                media_id=media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title=title,
+                image=f"http://example.com/{media_id}-s{season_number}.jpg",
+                season_number=season_number,
+            )
+            season = Season.objects.create(
+                item=season_item,
+                user=self.user,
+                related_tv=tv,
+                status=Status.COMPLETED.value,
+            )
+            for credit in season_spec.get("season_credits", []):
+                ItemPersonCredit.objects.create(
+                    item=season_item,
+                    person=credit["person"],
+                    role_type=CreditRoleType.CAST.value,
+                    role=credit.get("role", "Lead"),
+                    sort_order=credit.get("sort_order"),
+                )
+            self._mark_tmdb_credits_current(season_item)
+            for episode_spec in season_spec.get("episodes", []):
+                episode_number = episode_spec["episode_number"]
+                episode_item = Item.objects.create(
+                    media_id=media_id,
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.EPISODE.value,
+                    title=episode_spec.get("title") or f"{title} Episode {season_number}-{episode_number}",
+                    image=episode_spec.get("image") or f"http://example.com/{media_id}-s{season_number}e{episode_number}.jpg",
+                    season_number=season_number,
+                    episode_number=episode_number,
+                    runtime_minutes=episode_spec.get("runtime_minutes", 45),
+                )
+                Episode.objects.create(
+                    item=episode_item,
+                    related_season=season,
+                    end_date=base_time + timedelta(minutes=episode_spec.get("offset_minutes", 0)),
+                )
+                for credit in episode_spec.get("credits", []):
+                    ItemPersonCredit.objects.create(
+                        item=episode_item,
+                        person=credit["person"],
+                        role_type=CreditRoleType.CAST.value,
+                        role=credit.get("role", "Guest"),
+                        sort_order=credit.get("sort_order"),
+                    )
+                self._mark_tmdb_credits_current(episode_item)
+
+    @patch("app.providers.tmdb.person")
+    def test_person_detail_shows_filmography_and_history_link(self, mock_person):
+        self.user.media_card_subtitle_display = "always"
+        self.user.save(update_fields=["media_card_subtitle_display"])
+
+        item = Item.objects.create(
+            media_id="501",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Tracked Movie",
+            image="http://example.com/tracked.jpg",
+        )
         ItemPersonCredit.objects.create(
-            item=self.item,
+            item=item,
             person=self.person,
             role_type=CreditRoleType.CAST.value,
             role="Lead",
@@ -59,20 +169,15 @@ class PersonDetailViewTests(TestCase):
             source_studio_id="1",
             name="Test Studio",
         )
-        ItemStudioCredit.objects.create(item=self.item, studio=studio)
+        ItemStudioCredit.objects.create(item=item, studio=studio)
         Movie.objects.create(
-            item=self.item,
+            item=item,
             user=self.user,
             status=Status.PLANNING.value,
             progress=1,
             start_date=timezone.now(),
             end_date=timezone.now(),
         )
-
-    @patch("app.providers.tmdb.person")
-    def test_person_detail_shows_filmography_and_history_link(self, mock_person):
-        self.user.media_card_subtitle_display = "always"
-        self.user.save(update_fields=["media_card_subtitle_display"])
 
         mock_person.return_value = {
             "person_id": "123",
@@ -180,7 +285,7 @@ class PersonDetailViewTests(TestCase):
         self.assertContains(response, "01.01.1990")
         self.assertNotContains(response, "1990-01-01")
 
-    @patch("app.models.providers.services.get_media_metadata", return_value={})
+    @patch("app.providers.services.get_media_metadata", return_value={})
     @patch("app.providers.tmdb.person")
     def test_person_detail_counts_tv_runtime_from_show_cast_when_episode_has_other_people(
         self,
@@ -188,7 +293,7 @@ class PersonDetailViewTests(TestCase):
         _mock_get_media_metadata,
     ):
         show_item = Item.objects.create(
-            media_id="777",
+            media_id="person-detail-main-cast",
             source=Sources.TMDB.value,
             media_type=MediaTypes.TV.value,
             title="Main Cast Show",
@@ -200,7 +305,7 @@ class PersonDetailViewTests(TestCase):
             status=Status.COMPLETED.value,
         )
         season_item = Item.objects.create(
-            media_id="777",
+            media_id="person-detail-main-cast",
             source=Sources.TMDB.value,
             media_type=MediaTypes.SEASON.value,
             title="Main Cast Show",
@@ -214,7 +319,7 @@ class PersonDetailViewTests(TestCase):
             status=Status.COMPLETED.value,
         )
         episode_item = Item.objects.create(
-            media_id="777",
+            media_id="person-detail-main-cast",
             source=Sources.TMDB.value,
             media_type=MediaTypes.EPISODE.value,
             title="Episode One",
@@ -248,6 +353,7 @@ class PersonDetailViewTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Guest",
         )
+        self._mark_tmdb_credits_current(show_item, season_item, episode_item)
 
         mock_person.return_value = {
             "person_id": "123",
@@ -262,7 +368,7 @@ class PersonDetailViewTests(TestCase):
             "place_of_birth": "",
             "filmography": [
                 {
-                    "media_id": "777",
+                    "media_id": "person-detail-main-cast",
                     "source": Sources.TMDB.value,
                     "media_type": MediaTypes.TV.value,
                     "title": "Main Cast Show",
@@ -287,10 +393,10 @@ class PersonDetailViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["tracked_plays_count"], 2)
+        self.assertEqual(response.context["tracked_plays_count"], 1)
         self.assertEqual(response.context["tracked_hours_count"], "0h 45min")
 
-    @patch("app.models.providers.services.get_media_metadata", return_value={})
+    @patch("app.providers.services.get_media_metadata", return_value={})
     @patch("app.providers.tmdb.person")
     def test_person_detail_does_not_count_high_order_tmdb_show_cast_on_every_episode(
         self,
@@ -298,7 +404,7 @@ class PersonDetailViewTests(TestCase):
         _mock_get_media_metadata,
     ):
         show_item = Item.objects.create(
-            media_id="778",
+            media_id="person-detail-high-order",
             source=Sources.TMDB.value,
             media_type=MediaTypes.TV.value,
             title="Guest Star Show",
@@ -310,7 +416,7 @@ class PersonDetailViewTests(TestCase):
             status=Status.COMPLETED.value,
         )
         season_item = Item.objects.create(
-            media_id="778",
+            media_id="person-detail-high-order",
             source=Sources.TMDB.value,
             media_type=MediaTypes.SEASON.value,
             title="Guest Star Show",
@@ -324,7 +430,7 @@ class PersonDetailViewTests(TestCase):
             status=Status.COMPLETED.value,
         )
         first_episode_item = Item.objects.create(
-            media_id="778",
+            media_id="person-detail-high-order",
             source=Sources.TMDB.value,
             media_type=MediaTypes.EPISODE.value,
             title="Guest Episode One",
@@ -334,7 +440,7 @@ class PersonDetailViewTests(TestCase):
             runtime_minutes=45,
         )
         second_episode_item = Item.objects.create(
-            media_id="778",
+            media_id="person-detail-high-order",
             source=Sources.TMDB.value,
             media_type=MediaTypes.EPISODE.value,
             title="Guest Episode Two",
@@ -379,6 +485,7 @@ class PersonDetailViewTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Guest",
         )
+        self._mark_tmdb_credits_current(show_item, season_item, first_episode_item, second_episode_item)
 
         mock_person.return_value = {
             "person_id": "123",
@@ -393,7 +500,7 @@ class PersonDetailViewTests(TestCase):
             "place_of_birth": "",
             "filmography": [
                 {
-                    "media_id": "778",
+                    "media_id": "person-detail-high-order",
                     "source": Sources.TMDB.value,
                     "media_type": MediaTypes.TV.value,
                     "title": "Guest Star Show",
@@ -418,8 +525,118 @@ class PersonDetailViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["tracked_plays_count"], 2)
+        self.assertEqual(response.context["tracked_plays_count"], 1)
         self.assertEqual(response.context["tracked_hours_count"], "0h 45min")
+
+    @patch("app.providers.services.get_media_metadata", return_value={})
+    @patch("app.providers.tmdb.person")
+    def test_person_detail_uses_season_credit_without_leaking_later_show_cast(
+        self,
+        mock_person,
+        _mock_get_media_metadata,
+    ):
+        base_time = timezone.now().replace(second=0, microsecond=0)
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="7700",
+            name="Detail Ladder Studio",
+        )
+        season_lead = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="7790",
+            name="Season Lead",
+            gender=PersonGender.FEMALE.value,
+        )
+        season_two_person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="7791",
+            name="Season Two Rival",
+            gender=PersonGender.MALE.value,
+        )
+        episode_helper = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="7792",
+            name="Episode Helper",
+            gender=PersonGender.MALE.value,
+        )
+
+        self._create_tmdb_tv_show(
+            "person-detail-season-ladder",
+            "Season Ladder Show",
+            studio,
+            show_credits=[self._credit(season_lead, "Lead")],
+            seasons={
+                1: {
+                    "season_credits": [self._credit(season_lead, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 0,
+                            "credits": [self._credit(episode_helper, "Guest")],
+                        },
+                    ],
+                },
+                2: {
+                    "season_credits": [self._credit(season_two_person, "Lead")],
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "offset_minutes": 1,
+                            "credits": [self._credit(episode_helper, "Guest")],
+                        },
+                    ],
+                },
+            },
+            base_time=base_time,
+        )
+
+        mock_person.return_value = {
+            "person_id": "7790",
+            "source": Sources.TMDB.value,
+            "name": "Season Lead",
+            "image": "http://example.com/season-lead.jpg",
+            "biography": "",
+            "known_for_department": "Acting",
+            "gender": "female",
+            "birth_date": None,
+            "death_date": None,
+            "place_of_birth": "",
+            "filmography": [
+                {
+                    "media_id": "person-detail-season-ladder",
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "title": "Season Ladder Show",
+                    "image": "http://example.com/season-ladder.jpg",
+                    "year": 2024,
+                    "credit_type": "cast",
+                    "role": "Lead",
+                    "department": "Acting",
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "person_id": "7790",
+                    "name": "season-lead",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["tracked_plays_count"], 1)
+        self.assertEqual(response.context["tracked_hours_count"], "0h 45min")
+        self.assertEqual(response.context["watched_show_count"], 1)
+        self.assertEqual(len(response.context["watched_filmography"]), 1)
+        self.assertEqual(response.context["watched_filmography"][0]["title"], "Season Ladder Show")
+        self.assertEqual(
+            response.context["watched_filmography"][0]["watched_person_runtime_display"],
+            "45min",
+        )
 
     @patch("app.providers.openlibrary.author_profile")
     def test_person_detail_openlibrary_author_uses_bibliography(self, mock_author_profile):

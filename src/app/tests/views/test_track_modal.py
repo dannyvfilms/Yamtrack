@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -95,6 +95,18 @@ class TrackModalViewTests(TestCase):
             progress=0,
         )
 
+    def assert_release_shortcut_labels(self, response):
+        """Release-date shortcut buttons should split mobile and desktop labels."""
+        content = response.content.decode()
+        self.assertEqual(
+            content.count('track-release-shortcut-mobile-label">Release</span>'),
+            2,
+        )
+        self.assertEqual(
+            content.count('track-release-shortcut-desktop-label">Release Date</span>'),
+            2,
+        )
+
     def test_track_modal_view_existing_media(self):
         """Test the track modal view for existing media."""
         response = self.client.get(
@@ -138,6 +150,59 @@ class TrackModalViewTests(TestCase):
         self.assertContains(response, 'hx-post="/discover/toggle-hidden"', html=False)
         self.assertContains(response, 'name="action"', html=False)
         self.assertNotContains(response, "Custom Metadata")
+
+    def test_track_modal_view_renders_release_date_shortcuts_for_existing_media(self):
+        """Existing item-backed trackers should expose release-date shortcuts."""
+        self.item.release_datetime = datetime(2024, 1, 15, tzinfo=UTC)
+        self.item.runtime_minutes = 95
+        self.item.save(update_fields=["release_datetime", "runtime_minutes"])
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "applyTrackModalReleaseDate(this, '2024-01-15', 'start_date')",
+            html=False,
+        )
+        self.assertContains(
+            response,
+            "applyTrackModalReleaseDate(this, '2024-01-15', 'end_date', '95')",
+            html=False,
+        )
+        self.assertContains(response, "Release date", count=2)
+        self.assert_release_shortcut_labels(response)
+
+    def test_track_modal_close_button_supports_split_button_wrapper(self):
+        """The shared close button should work for edit/create split-button wrappers."""
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                },
+            )
+            + "?return_url=/home",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('@click="', content)
+        self.assertIn("if (modalState && modalState.createTrackOpen)", content)
+        self.assertIn("if (modalState && modalState.editTrackOpen)", content)
+        self.assertIn("if (modalState && modalState.trackOpen)", content)
+        self.assertNotContains(response, 'onclick="closeTrackModal(this)"', html=False)
 
     def test_track_modal_view_uses_stored_discover_hidden_state(self):
         """Discover tab should reflect persisted hidden feedback for the item."""
@@ -206,6 +271,28 @@ class TrackModalViewTests(TestCase):
         self.assertFalse(response.context["metadata_tab_available"])
         self.assertContains(response, "General")
         self.assertNotContains(response, "Metadata")
+
+    def test_album_track_modal_renders_release_date_shortcuts(self):
+        """Album trackers should expose the shared release-date shortcut."""
+        artist = Artist.objects.create(name="Test Artist")
+        album = Album.objects.create(
+            title="Test Album",
+            artist=artist,
+            release_date=date(2024, 2, 3),
+        )
+
+        response = self.client.get(
+            reverse("album_track_modal", args=[album.id]) + "?return_url=/music",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "applyTrackModalReleaseDate(this, '2024-02-03', 'start_date')",
+            html=False,
+        )
+        self.assertContains(response, "Release date", count=2)
+        self.assert_release_shortcut_labels(response)
 
     def test_artist_save_redirects_to_canonical_music_details(self):
         """Artist saves should land on the canonical shared details page."""
@@ -338,6 +425,10 @@ class TrackModalViewTests(TestCase):
             "media_type": MediaTypes.MOVIE.value,
             "source": Sources.TMDB.value,
             "image": "http://example.com/image.jpg",
+            "details": {
+                "release_date": "2024-01-15",
+                "runtime": "1h 35min",
+            },
             "max_progress": 1,
         }
 
@@ -370,6 +461,13 @@ class TrackModalViewTests(TestCase):
             response,
             "Save this image from the General tab when you add or update the entry.",
         )
+        self.assertContains(
+            response,
+            "applyTrackModalReleaseDate(this, '2024-01-15', 'end_date', '95')",
+            html=False,
+        )
+        self.assertContains(response, "Release date", count=2)
+        self.assert_release_shortcut_labels(response)
         self.assertNotContains(response, "Save Image")
 
     def test_update_item_image(self):

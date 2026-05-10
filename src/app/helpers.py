@@ -89,6 +89,7 @@ def redirect_back(request):
         query_params = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
         query_params.pop("page", None)
         query_params.pop("load_media_type", None)
+        query_params.pop("load_row", None)
 
         # Reconstruct the URL
         new_query = urlencode(query_params)
@@ -133,6 +134,69 @@ def format_search_response(page, per_page, total_results, results):
         "total_pages": total_results // per_page + 1,
         "results": results,
     }
+
+
+def is_caught_up_media(media) -> bool:
+    """Return whether watched progress has caught up to released progress."""
+    max_progress = getattr(media, "max_progress", None)
+    if max_progress is None:
+        return False
+
+    try:
+        max_progress_value = int(max_progress)
+    except (TypeError, ValueError):
+        return False
+
+    if max_progress_value <= 0:
+        return False
+
+    try:
+        progress_value = int(getattr(media, "progress", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+
+    # TV rows can keep dropped seasons in their raw progress/max_progress totals.
+    # Mirror time-left behavior by removing dropped-season episodes from both sides
+    # before deciding whether the show is actually caught up.
+    item_media_type = getattr(getattr(media, "item", None), "media_type", None)
+    if item_media_type == MediaTypes.TV.value:
+        breakdown = getattr(media, "released_episode_breakdown", None) or {}
+        seasons_manager = getattr(media, "seasons", None)
+        if (
+            breakdown
+            and seasons_manager is not None
+            and hasattr(seasons_manager, "all")
+        ):
+            seasons = [
+                season
+                for season in seasons_manager.all()
+                if getattr(getattr(season, "item", None), "season_number", 0)
+            ]
+            if seasons:
+                dropped_season_numbers = {
+                    season.item.season_number
+                    for season in seasons
+                    if season.status == Status.DROPPED.value
+                }
+                if dropped_season_numbers:
+                    filtered_breakdown = {
+                        season_num: count
+                        for season_num, count in breakdown.items()
+                        if season_num not in dropped_season_numbers
+                    }
+                    if filtered_breakdown != breakdown:
+                        included_progress = sum(
+                            int(getattr(season, "progress", 0) or 0)
+                            for season in seasons
+                            if season.status != Status.DROPPED.value
+                        )
+                        remaining = max(
+                            sum(filtered_breakdown.values()) - included_progress,
+                            0,
+                        )
+                        return remaining == 0
+
+    return progress_value >= max_progress_value
 
 
 def enrich_items_with_user_data(request, items, section_name=None, user=None):
@@ -519,81 +583,113 @@ def get_tv_show_collection_stats(user, tv_item, metadata_episode_count=None):
         - total_seasons: Total number of seasons for this show
         - total_episodes: Total number of episodes for this show
     """
-    from app.models import TV, Season, Episode, Item, MediaTypes
-    
+    from app.models import Item, MediaTypes
+
     # Always count total seasons and episodes from Item objects (all available, not just tracked)
     # This matches what the Details pane shows
     # Exclude Season 0 (Specials) to match Details pane behavior
-    all_season_items = Item.objects.filter(
-        media_id=tv_item.media_id,
-        source=tv_item.source,
-        media_type__in=[MediaTypes.SEASON.value],
-    ).exclude(season_number=0)  # Exclude Season 0 (Specials)
-    total_seasons = all_season_items.count()
-    
+    all_season_items = list(
+        Item.objects.filter(
+            media_id=tv_item.media_id,
+            source=tv_item.source,
+            media_type=MediaTypes.SEASON.value,
+        ).exclude(season_number=0)
+    )
+    total_seasons = len(all_season_items)
+
     # Exclude episodes from Season 0 to match Details pane
-    all_episode_items = Item.objects.filter(
-        media_id=tv_item.media_id,
-        source=tv_item.source,
-        media_type__in=[MediaTypes.EPISODE.value],
-    ).exclude(season_number=0)  # Exclude Season 0 episodes
-    
+    all_episode_items = list(
+        Item.objects.filter(
+            media_id=tv_item.media_id,
+            source=tv_item.source,
+            media_type=MediaTypes.EPISODE.value,
+        ).exclude(season_number=0)
+    )
+
     # Use metadata episode count if provided (matches Details pane), otherwise count from Items
     if metadata_episode_count is not None:
         total_episodes = metadata_episode_count
     else:
-        total_episodes = all_episode_items.count()
-    
+        total_episodes = len(all_episode_items)
+
     # Get collection entries for all seasons and episodes
-    season_item_ids = list(all_season_items.values_list('id', flat=True))
-    episode_item_ids = list(all_episode_items.values_list('id', flat=True))
-    
-    if not season_item_ids and not episode_item_ids:
+    season_item_ids = [item.id for item in all_season_items]
+    episode_item_ids = [item.id for item in all_episode_items]
+
+    # Get collection entries for seasons
+    season_collection_item_ids = list(
+        CollectionEntry.objects.filter(
+            user=user,
+            item_id__in=season_item_ids,
+        ).values_list("item_id", flat=True)
+    ) if season_item_ids else []
+
+    # Get collection entries for episodes
+    episode_collection_item_ids = list(
+        CollectionEntry.objects.filter(
+            user=user,
+            item_id__in=episode_item_ids,
+        ).values_list("item_id", flat=True)
+    ) if episode_item_ids else []
+
+    # Match season_details fallback behavior: a show-level collection entry represents
+    # the entire show only when no granular season/episode collection rows exist.
+    if not season_collection_item_ids and not episode_collection_item_ids:
+        if CollectionEntry.objects.filter(user=user, item=tv_item).exists():
+            return {
+                "collected_seasons": total_seasons,
+                "total_seasons": total_seasons,
+                "collected_episodes": total_episodes,
+                "total_episodes": total_episodes,
+            }
+
         return {
             "collected_seasons": 0,
             "total_seasons": total_seasons,
             "collected_episodes": 0,
             "total_episodes": total_episodes,
         }
-    
-    # Get collection entries for seasons
-    season_collection_entries = CollectionEntry.objects.filter(
-        user=user,
-        item_id__in=season_item_ids,
-    ) if season_item_ids else CollectionEntry.objects.none()
-    
-    # Get collection entries for episodes
-    episode_collection_entries = CollectionEntry.objects.filter(
-        user=user,
-        item_id__in=episode_item_ids,
-    ) if episode_item_ids else CollectionEntry.objects.none()
-    
+
     # Count distinct seasons that have at least one collected episode
     # A season is "collected" if either:
     # 1. The season Item itself has a collection entry, OR
     # 2. At least one episode in that season has a collection entry
     collected_season_ids = set()
-    
+    season_by_number = {
+        item.season_number: item
+        for item in all_season_items
+        if item.season_number is not None
+    }
+    season_by_id = {item.id: item for item in all_season_items}
+    episode_by_id = {item.id: item for item in all_episode_items}
+    episode_ids_by_season_number = {}
+    for item in all_episode_items:
+        if item.season_number is None:
+            continue
+        episode_ids_by_season_number.setdefault(item.season_number, set()).add(item.id)
+    collected_episode_ids = set(episode_collection_item_ids)
+
     # Add seasons that have direct collection entries
-    for entry in season_collection_entries:
-        collected_season_ids.add(entry.item_id)
-    
+    collected_season_ids.update(season_collection_item_ids)
+    for season_item_id in season_collection_item_ids:
+        season_item = season_by_id.get(season_item_id)
+        if season_item and season_item.season_number is not None:
+            collected_episode_ids.update(
+                episode_ids_by_season_number.get(season_item.season_number, set())
+            )
+
     # Add seasons that have at least one collected episode
-    # We need to map episode items back to their season items
-    for entry in episode_collection_entries:
-        episode_item = all_episode_items.filter(id=entry.item_id).first()
+    for episode_item_id in episode_collection_item_ids:
+        episode_item = episode_by_id.get(episode_item_id)
         if episode_item and episode_item.season_number is not None:
-            # Find the season item for this episode
-            season_item = all_season_items.filter(
-                season_number=episode_item.season_number,
-            ).first()
+            season_item = season_by_number.get(episode_item.season_number)
             if season_item:
                 collected_season_ids.add(season_item.id)
-    
+
     return {
         "collected_seasons": len(collected_season_ids),
         "total_seasons": total_seasons,
-        "collected_episodes": episode_collection_entries.count(),
+        "collected_episodes": len(collected_episode_ids),
         "total_episodes": total_episodes,
     }
 
@@ -636,8 +732,25 @@ def get_season_collection_stats(user, season_item):
     
     collected_count = episode_collection_entries.count()
     
-    # If no episode-level entries exist, check if there's a show-level collection entry
-    # This is a heuristic: if the show is marked as collected, consider all episodes collected
+    # If no episode-level entries exist, fall back to broader collection rows.
+    # A manual season-level entry represents the whole season in the current UI.
+    if collected_count == 0:
+        season_collection_entry = CollectionEntry.objects.filter(
+            user=user,
+            item=season_item,
+        ).exists()
+        if season_collection_entry:
+            collected_count = total_episodes
+
+    show_has_granular_collection = CollectionEntry.objects.filter(
+        user=user,
+        item__media_id=season_item.media_id,
+        item__source=season_item.source,
+        item__media_type__in=[MediaTypes.SEASON.value, MediaTypes.EPISODE.value],
+    ).exists()
+
+    # If no episode or season-level entries exist anywhere for the show,
+    # a show-level collection entry can still represent the whole season.
     if collected_count == 0:
         try:
             tv_item = Item.objects.get(
@@ -650,8 +763,7 @@ def get_season_collection_stats(user, season_item):
                 item=tv_item,
             ).exists()
             
-            # If show-level entry exists and no granular episode entries, consider all episodes collected
-            if show_collection_entry:
+            if show_collection_entry and not show_has_granular_collection:
                 collected_count = total_episodes
         except Item.DoesNotExist:
             pass
@@ -726,6 +838,12 @@ def get_season_collection_metadata(user, season_item):
             }
         
         # Check for show-level entry
+        show_has_granular_collection = CollectionEntry.objects.filter(
+            user=user,
+            item__media_id=season_item.media_id,
+            item__source=season_item.source,
+            item__media_type__in=[MediaTypes.SEASON.value, MediaTypes.EPISODE.value],
+        ).exists()
         try:
             tv_item = Item.objects.get(
                 media_id=season_item.media_id,
@@ -737,7 +855,7 @@ def get_season_collection_metadata(user, season_item):
                 item=tv_item,
             ).first()
             
-            if show_collection_entry:
+            if show_collection_entry and not show_has_granular_collection:
                 # Return the show-level entry metadata
                 return {
                     "resolution": show_collection_entry.resolution or "",

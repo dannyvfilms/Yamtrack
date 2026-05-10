@@ -175,7 +175,7 @@ class SimklImporter:
                 logger.debug("Processing %s", title)
 
                 try:
-                    tmdb_id = tv["show"]["ids"]["tmdb"]
+                    tmdb_id = str(tv["show"]["ids"]["tmdb"])
                 except KeyError:
                     self.warnings.append(f"{title}: No TMDB ID found")
                     continue
@@ -186,17 +186,6 @@ class SimklImporter:
                     )
                     continue
 
-                # Check if we should process this entry based on mode
-                if not helpers.should_process_media(
-                    self.existing_media,
-                    self.to_delete,
-                    MediaTypes.TV.value,
-                    Sources.TMDB.value,
-                    str(tmdb_id),
-                    self.mode,
-                ):
-                    continue
-
                 tv_status = self._get_status(tv["status"])
 
                 try:
@@ -205,7 +194,9 @@ class SimklImporter:
                     season_numbers = []
 
                 try:
-                    metadata = app.providers.tmdb.tv_with_seasons(
+                    tv_source, tv_media_id, metadata = self._resolve_tv_metadata(
+                        tv,
+                        title,
                         tmdb_id,
                         season_numbers,
                     )
@@ -218,9 +209,20 @@ class SimklImporter:
                         continue
                     raise
 
+                # Check if we should process this entry based on mode.
+                if not helpers.should_process_media(
+                    self.existing_media,
+                    self.to_delete,
+                    MediaTypes.TV.value,
+                    tv_source,
+                    str(tv_media_id),
+                    self.mode,
+                ):
+                    continue
+
                 tv_item, _ = app.models.Item.objects.get_or_create(
-                    media_id=tmdb_id,
-                    source=Sources.TMDB.value,
+                    media_id=tv_media_id,
+                    source=tv_source,
                     media_type=MediaTypes.TV.value,
                     defaults={
                         **app.models.Item.title_fields_from_metadata(metadata),
@@ -243,6 +245,8 @@ class SimklImporter:
                     self._process_seasons_and_episodes(
                         tv,
                         tv_instance,
+                        tv_media_id,
+                        tv_source,
                         metadata,
                     )
 
@@ -252,21 +256,106 @@ class SimklImporter:
 
         logger.info("Processed %d tv shows", len(tv_list))
 
-    def _process_seasons_and_episodes(self, tv, tv_instance, metadata):
+    def _resolve_tv_metadata(self, tv, title, tmdb_id, season_numbers):
+        """Return the preferred provider payload for a SIMKL TV import entry."""
+        metadata = app.providers.tmdb.tv_with_seasons(tmdb_id, season_numbers)
+
+        if not season_numbers or self._has_requested_seasons(metadata, season_numbers):
+            return Sources.TMDB.value, tmdb_id, metadata
+
+        tvdb_id = self._get_tvdb_id(tv, metadata)
+        if not tvdb_id or not app.providers.tvdb.enabled():
+            return Sources.TMDB.value, tmdb_id, metadata
+
+        try:
+            tvdb_metadata = app.providers.tvdb.tv_with_seasons(tvdb_id, season_numbers)
+        except services.ProviderAPIError as error:
+            logger.warning(
+                "TVDB fallback failed for SIMKL import %s (%s): %s",
+                title,
+                tvdb_id,
+                error,
+            )
+            return Sources.TMDB.value, tmdb_id, metadata
+
+        if not self._has_requested_seasons(tvdb_metadata, season_numbers):
+            return Sources.TMDB.value, tmdb_id, metadata
+
+        self.warnings.append(
+            (
+                f"{title}: imported via {Sources.TVDB.label} because "
+                "TMDB season metadata was incomplete"
+            ),
+        )
+        logger.info(
+            "Resolved SIMKL TV import via TVDB fallback for %s (TMDB %s -> TVDB %s)",
+            title,
+            tmdb_id,
+            tvdb_id,
+        )
+        return Sources.TVDB.value, tvdb_id, tvdb_metadata
+
+    def _get_tvdb_id(self, tv, metadata):
+        """Return the best available TVDB ID for a SIMKL TV import entry."""
+        tv_ids = ((tv or {}).get("show") or {}).get("ids") or {}
+        tvdb_id = tv_ids.get("tvdb")
+        if tvdb_id not in (None, ""):
+            return str(tvdb_id)
+
+        metadata_tvdb_id = (metadata or {}).get("tvdb_id")
+        if metadata_tvdb_id not in (None, ""):
+            return str(metadata_tvdb_id)
+
+        provider_ids = (metadata or {}).get("provider_external_ids") or {}
+        provider_tvdb_id = provider_ids.get("tvdb_id")
+        if provider_tvdb_id not in (None, ""):
+            return str(provider_tvdb_id)
+
+        return None
+
+    def _has_requested_seasons(self, metadata, season_numbers):
+        """Return True when the metadata payload contains every requested season."""
+        return all(
+            (metadata or {}).get(f"season/{season_number}")
+            for season_number in season_numbers
+        )
+
+    def _process_seasons_and_episodes(
+        self,
+        tv,
+        tv_instance,
+        tv_media_id,
+        tv_source,
+        metadata,
+    ):
         """Process seasons and episodes for a TV show."""
-        tmdb_id = tv["show"]["ids"]["tmdb"]
+        title = tv["show"].get("title", tv_media_id)
+        source_label = Sources(tv_source).label
 
         for season in tv["seasons"]:
             season_number = season["number"]
             episodes = season["episodes"]
-            season_metadata = metadata[f"season/{season_number}"]
+            season_metadata = metadata.get(f"season/{season_number}")
+
+            if not season_metadata:
+                self.warnings.append(
+                    f"{title}: missing {source_label} metadata for season "
+                    f"{season_number}",
+                )
+                logger.warning(
+                    "Season %s not found in %s metadata for %s; skipping",
+                    season_number,
+                    source_label,
+                    title,
+                )
+                continue
 
             # Use season poster if available, otherwise fallback to TV show poster
             season_image = season_metadata.get("image") or metadata.get("image")
 
             season_item, _ = app.models.Item.objects.get_or_create(
-                media_id=tmdb_id,
-                source=Sources.TMDB.value,
+                media_id=tv_media_id,
+                source=tv_source,
                 media_type=MediaTypes.SEASON.value,
                 season_number=season_number,
                 defaults={
@@ -293,8 +382,8 @@ class SimklImporter:
             for episode in episodes:
                 ep_img = self._get_episode_image(episode, season_number, metadata)
                 episode_item, _ = app.models.Item.objects.get_or_create(
-                    media_id=tmdb_id,
-                    source=Sources.TMDB.value,
+                    media_id=tv_media_id,
+                    source=tv_source,
                     media_type=MediaTypes.EPISODE.value,
                     season_number=season_number,
                     episode_number=episode["number"],
@@ -319,11 +408,18 @@ class SimklImporter:
 
     def _get_episode_image(self, episode, season_number, metadata):
         """Get the image for the episode."""
-        for episode_metadata in metadata[f"season/{season_number}"]["episodes"]:
+        season_metadata = metadata.get(f"season/{season_number}")
+        if not season_metadata:
+            return settings.IMG_NONE
+
+        for episode_metadata in season_metadata.get("episodes", []):
             if episode_metadata["episode_number"] == episode["number"]:
-                return (
-                    f"https://image.tmdb.org/t/p/w500{episode_metadata['still_path']}"
-                )
+                if episode_metadata.get("image"):
+                    return episode_metadata["image"]
+                still_path = episode_metadata.get("still_path")
+                if not still_path:
+                    return settings.IMG_NONE
+                return f"https://image.tmdb.org/t/p/w500{still_path}"
         return settings.IMG_NONE
 
     def _process_movie_list(self, movie_list):

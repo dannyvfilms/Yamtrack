@@ -28,6 +28,8 @@ class AppConfig(AppConfig):
     def ready(self):
         """Import signals when the app is ready."""
         import_module("app.signals")
+        if not settings.TESTING:
+            self._repair_celery_redis_bindings()
         is_celery_worker = _is_celery_worker_process()
 
         runtime_cache_available = self._add_startup_cache_key(
@@ -75,6 +77,26 @@ class AppConfig(AppConfig):
             )
             return False
 
+    def _repair_celery_redis_bindings(self):
+        """Normalize persisted Kombu Redis bindings after separator changes."""
+        try:
+            from app.celery_broker import repair_celery_redis_bindings  # noqa: PLC0415
+
+            repair_summary = repair_celery_redis_bindings()
+            if repair_summary["repaired"] or repair_summary["removed"]:
+                logger.info(
+                    (
+                        "Normalized Kombu Redis bindings "
+                        "(keys=%s members=%s repaired=%s removed=%s)"
+                    ),
+                    repair_summary["keys"],
+                    repair_summary["members"],
+                    repair_summary["repaired"],
+                    repair_summary["removed"],
+                )
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to normalize Kombu Redis bindings: %s", error)
+
     def _schedule_runtime_population(self):
         """Schedule runtime population task to run once on startup."""
         try:
@@ -114,7 +136,7 @@ class AppConfig(AppConfig):
             logger.warning("Failed to schedule history day coverage warmup: %s", error)
 
     def _schedule_genre_backfill_reconcile(self):
-        """Schedule a one-time genre backfill reconcile for the current strategy version."""
+        """Schedule a one-time genre backfill reconcile."""
         try:
             tasks = import_module("app.tasks")
             version_key = f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}"
@@ -150,9 +172,14 @@ class AppConfig(AppConfig):
         queued so a broker hiccup at startup never silently blocks future restarts.
         """
         try:
-            from app.services.trakt_popularity import TRAKT_POPULARITY_SCORE_VERSION
+            from app.services.trakt_popularity import (  # noqa: PLC0415
+                TRAKT_POPULARITY_SCORE_VERSION,
+            )
 
-            version_key = f"trakt_popularity_reconciled_v{TRAKT_POPULARITY_SCORE_VERSION}"
+            version_key = (
+                "trakt_popularity_reconciled_"
+                f"v{TRAKT_POPULARITY_SCORE_VERSION}"
+            )
             daily_key = "trakt_popularity_reconcile_daily"
 
             version_status = cache.get(version_key)   # None | "pending" | "done"

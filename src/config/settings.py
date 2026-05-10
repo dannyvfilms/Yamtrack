@@ -121,7 +121,11 @@ if BASE_URL:
     # send cookies with all requests under the base URL prefix
     CSRF_COOKIE_PATH = BASE_URL
 
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED = config("USE_X_FORWARDED", default=False, cast=bool)
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https") if (config("USE_X_FORWARDED_PROTO", default=USE_X_FORWARDED, cast=bool)) else None
+USE_X_FORWARDED_HOST = config("USE_X_FORWARDED_HOST", default=USE_X_FORWARDED, cast=bool)
+USE_X_FORWARDED_PORT = config("USE_X_FORWARDED_PORT", default=USE_X_FORWARDED, cast=bool)
 
 # Application definition
 
@@ -213,7 +217,10 @@ WSGI_APPLICATION = "config.wsgi.application"
 # create db folder if it doesn't exist
 Path(BASE_DIR / "db").mkdir(parents=True, exist_ok=True)
 
-if config("DB_HOST", default=None):
+DB_HOST = config("DB_HOST", default=None)
+USING_SQLITE_DATABASE = not bool(DB_HOST)
+
+if DB_HOST:
     DB_POOL_ENABLED = config("DB_POOL_ENABLED", default=False, cast=bool)
     DB_POOL_MIN = config("DB_POOL_MIN", default=0, cast=int)
     DB_POOL_MAX = config("DB_POOL_MAX", default=2, cast=int)
@@ -229,7 +236,7 @@ if config("DB_HOST", default=None):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "HOST": config("DB_HOST"),
+            "HOST": DB_HOST,
             "NAME": config("DB_NAME", default=secret("DB_NAME_FILE")),
             "USER": config("DB_USER", default=secret("DB_USER_FILE")),
             "PASSWORD": config("DB_PASSWORD", default=secret("DB_PASSWORD_FILE")),
@@ -712,11 +719,17 @@ BACKUP_DIR = config("BACKUP_DIR", default=str(BASE_DIR / "backups"))
 # Runtime population settings
 RUNTIME_POPULATION_DISABLED = config("RUNTIME_POPULATION_DISABLED", default=False, cast=bool)
 RUNTIME_POPULATION_ON_STARTUP = config("RUNTIME_POPULATION_ON_STARTUP", default=False, cast=bool)
-DISCOVER_WARMUP_ON_STARTUP = config(
+_DISCOVER_WARMUP_ON_STARTUP = config(
     "DISCOVER_WARMUP_ON_STARTUP",
-    default=not DEBUG,
-    cast=bool,
+    default=None,
 )
+if _DISCOVER_WARMUP_ON_STARTUP is None:
+    DISCOVER_WARMUP_ON_STARTUP = False if USING_SQLITE_DATABASE else not DEBUG
+else:
+    DISCOVER_WARMUP_ON_STARTUP = config(
+        "DISCOVER_WARMUP_ON_STARTUP",
+        cast=bool,
+    )
 
 TZ = zoneinfo.ZoneInfo(TIME_ZONE)
 

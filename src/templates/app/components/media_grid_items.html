@@ -26,6 +26,12 @@
           <p class="mt-2 text-sm font-semibold text-white">{{ release_date|user_date_format:user }}</p>
         {% endif %}
       {% endwith %}
+    {% elif current_sort == 'next_episode_air_date' %}
+      {% with next_episode_air_date=media|safe_attr:"next_episode_air_date" %}
+        {% if next_episode_air_date %}
+          <p class="mt-2 text-sm font-semibold text-white">{{ next_episode_air_date|user_date_format:user }}</p>
+        {% endif %}
+      {% endwith %}
     {% elif current_sort == 'date_added' %}
       {% if media.created_at %}
         <p class="mt-2 text-sm font-semibold text-white">{{ media.created_at|user_date_format:user }}</p>

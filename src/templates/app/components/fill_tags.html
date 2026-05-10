@@ -1,5 +1,5 @@
 
-<div class="bg-[#2a2f35] p-6 rounded-lg max-h-[70svh] overflow-y-auto">
+<div class="tag-modal-shell bg-[#2a2f35] p-6 rounded-lg max-h-[70svh] overflow-y-auto">
   <input type="hidden"
          name="preview_genres_json"
          value="{{ preview_genres_json|default:'[]'|escape }}">
@@ -12,7 +12,21 @@
     {% for tag in user_tags %}
       <li class="flex items-center justify-between bg-[#39404b] p-3 rounded-md gap-1">
         <span class="text-white">{{ tag.name }}</span>
-        {% include "app/components/tag_item_button.html" with has_tag=tag.has_tag %}
+        <div class="flex items-center gap-1.5 shrink-0">
+          {% include "app/components/tag_item_button.html" with has_tag=tag.has_tag %}
+          <button type="button"
+                  hx-post="{% url 'tag_delete' %}"
+                  hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                  hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}"}'
+                  hx-target="closest .tag-modal-shell"
+                  hx-swap="outerHTML"
+                  hx-confirm="Delete the &quot;{{ tag.name|escape }}&quot; tag from your library? This removes it from every item."
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500/50 cursor-pointer"
+                  title="Delete tag"
+                  aria-label="Delete {{ tag.name }} tag">
+            {% include "app/icons/trashcan.svg" with classes="w-4 h-4" %}
+          </button>
+        </div>
       </li>
     {% empty %}
       <li class="text-gray-200">No tags yet. Create one below.</li>
@@ -20,7 +34,7 @@
   </ul>
   <form hx-post="{% url 'tag_create' %}"
         hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-        hx-target="closest div.bg-\[\#2a2f35\]"
+        hx-target="closest .tag-modal-shell"
         hx-swap="outerHTML"
         class="mt-4 flex gap-2">
     {% csrf_token %}

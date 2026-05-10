@@ -5,14 +5,14 @@ from contextvars import ContextVar
 from celery import states
 from celery.signals import before_task_publish
 from django.conf import settings
-from django.db.backends.signals import connection_created
 from django.db.models.signals import post_delete, post_save
 from django.db.utils import OperationalError
 from django.dispatch import receiver
 from django_celery_results.models import TaskResult
 
-from app import statistics_cache
+from app import credits as credit_helpers
 from app import history_cache
+from app import statistics_cache
 from app.discover import tab_cache as discover_tab_cache
 from app.models import (
     TV,
@@ -87,16 +87,6 @@ def suppress_media_change_side_effects():
 def media_change_side_effects_suppressed() -> bool:
     """Return whether media-row side effects are suppressed for the current context."""
     return bool(_SUPPRESS_MEDIA_CHANGE_SIDE_EFFECTS.get())
-
-
-@receiver(connection_created)
-def setup_sqlite_pragmas(sender, connection, **kwargs):  # noqa: ARG001
-    """Set up SQLite pragmas for WAL mode and busy timeout on connection creation."""
-    if connection.vendor == "sqlite":
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA journal_mode=wal;")
-        cursor.execute("PRAGMA busy_timeout=5000;")
-        cursor.close()
 
 
 @before_task_publish.connect
@@ -455,21 +445,13 @@ def _schedule_credits_backfill_if_needed(item_id):
         media_type__in=[
             MediaTypes.MOVIE.value,
             MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
             MediaTypes.EPISODE.value,
         ],
     ).values("media_type").first()
     if not item_row:
         return
-    media_type = item_row["media_type"]
-
-    has_people = ItemPersonCredit.objects.filter(item_id=item_id).exists()
-    has_studios = ItemStudioCredit.objects.filter(item_id=item_id).exists()
-    needs_studios = media_type != MediaTypes.EPISODE.value
-    if has_people and (has_studios or not needs_studios):
-        MetadataBackfillState.objects.filter(
-            item_id=item_id,
-            field=MetadataBackfillField.CREDITS,
-        ).delete()
+    if not credit_helpers.missing_credits_backfill_item_ids([item_id]):
         return
     from app.tasks import enqueue_credits_backfill_items
 
@@ -486,6 +468,8 @@ def schedule_credits_backfill_on_episode_play(sender, instance, **kwargs):  # no
     episode_item_id = getattr(instance, "item_id", None)
     _schedule_credits_backfill_if_needed(episode_item_id)
     related_season = getattr(instance, "related_season", None)
+    season_item_id = getattr(getattr(related_season, "item", None), "id", None)
+    _schedule_credits_backfill_if_needed(season_item_id)
     related_tv = getattr(related_season, "related_tv", None)
     tv_item_id = getattr(related_tv, "item_id", None)
     _schedule_credits_backfill_if_needed(tv_item_id)
@@ -782,10 +766,12 @@ def schedule_runtime_backfill_on_item_save(
     if instance.source == Sources.TMDB.value and instance.media_type in (
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
     ):
         has_people = ItemPersonCredit.objects.filter(item=instance).exists()
         has_studios = ItemStudioCredit.objects.filter(item=instance).exists()
-        if has_people and has_studios:
+        needs_studios = instance.media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        if has_people and (has_studios or not needs_studios):
             MetadataBackfillState.objects.filter(
                 item=instance,
                 field=MetadataBackfillField.CREDITS,
@@ -848,8 +834,15 @@ def schedule_runtime_backfill_on_item_save(
 
     if (
         instance.source == Sources.TMDB.value
-        and instance.media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
-        and (not has_people or not has_studios)
+        and instance.media_type
+        in (MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.SEASON.value)
+        and (
+            not has_people
+            or (
+                instance.media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+                and not has_studios
+            )
+        )
     ):
         from app.tasks import enqueue_credits_backfill_items
 

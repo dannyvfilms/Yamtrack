@@ -5,10 +5,10 @@ from django.db.utils import OperationalError
 from django.http import HttpRequest
 from django.urls import reverse
 
+from app.db_retry import is_retryable_error
 from app.discover import tab_cache as discover_tab_cache
 from app.error_views import format_exception_traceback, render_error_page
 from app.providers import services
-from integrations.imports.helpers import is_retryable_error
 
 logger = logging.getLogger(__name__)
 

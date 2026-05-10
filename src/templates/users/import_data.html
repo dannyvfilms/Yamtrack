@@ -435,6 +435,146 @@
         </div>
 
 
+        {# Radarr #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['screen'])"
+             x-transition.opacity.duration.150ms>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "radarr" %}</div>
+            {% if radarr_account and radarr_account.is_connected %}
+              <form method="post" action="{% url 'radarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+          {% if radarr_account %}
+            <p class="text-sm text-gray-400">Sync owned movies from Radarr every 2 hours and reconcile quality metadata with Plex.</p>
+            <div class="flex items-center gap-2 text-sm text-gray-400">
+              <span>{{ radarr_account.base_url }}</span>
+              {% if radarr_account.last_sync_at %}
+                <span>•</span>
+                <span>Last sync: {{ radarr_account.last_sync_at|user_datetime_format:user }}</span>
+              {% endif %}
+            </div>
+            {% if radarr_account.last_error_message %}
+              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>Error:</strong> {{ radarr_account.last_error_message }}
+              </div>
+            {% endif %}
+            <div class="flex gap-2">
+              <form method="post" action="{% url 'import_radarr' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors cursor-pointer">
+                  Sync Now
+                </button>
+              </form>
+              <form method="post" action="{% url 'radarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-slate-500/10 text-slate-200 border border-slate-400/30 hover:bg-slate-500/20 transition-colors cursor-pointer">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          {% else %}
+            <p class="text-sm text-gray-400">Connect Radarr using your server URL and API key.</p>
+            <form method="post" action="{% url 'radarr_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <input name="base_url"
+                     placeholder="https://radarr.local:7878"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="url"
+                     required>
+              <input name="api_key"
+                     placeholder="Radarr API key"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="password"
+                     required>
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect Radarr
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
+        {# Sonarr #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['screen'])"
+             x-transition.opacity.duration.150ms>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "sonarr" %}</div>
+            {% if sonarr_account and sonarr_account.is_connected %}
+              <form method="post" action="{% url 'sonarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+          {% if sonarr_account %}
+            <p class="text-sm text-gray-400">Sync owned TV collection from Sonarr every 2 hours and reconcile ownership with Plex.</p>
+            <div class="flex items-center gap-2 text-sm text-gray-400">
+              <span>{{ sonarr_account.base_url }}</span>
+              {% if sonarr_account.last_sync_at %}
+                <span>•</span>
+                <span>Last sync: {{ sonarr_account.last_sync_at|user_datetime_format:user }}</span>
+              {% endif %}
+            </div>
+            {% if sonarr_account.last_error_message %}
+              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>Error:</strong> {{ sonarr_account.last_error_message }}
+              </div>
+            {% endif %}
+            <div class="flex gap-2">
+              <form method="post" action="{% url 'import_sonarr' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors cursor-pointer">
+                  Sync Now
+                </button>
+              </form>
+              <form method="post" action="{% url 'sonarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-slate-500/10 text-slate-200 border border-slate-400/30 hover:bg-slate-500/20 transition-colors cursor-pointer">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          {% else %}
+            <p class="text-sm text-gray-400">Connect Sonarr using your server URL and API key.</p>
+            <form method="post" action="{% url 'sonarr_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <input name="base_url"
+                     placeholder="https://sonarr.local:8989"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="url"
+                     required>
+              <input name="api_key"
+                     placeholder="Sonarr API key"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="password"
+                     required>
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect Sonarr
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
         {# Audiobookshelf #}
         <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
              x-show="sourceSupports(['books', 'podcasts'])"
@@ -723,24 +863,44 @@
 
         {# Trakt #}
         <div class="bg-[#39404b] p-4 rounded-lg"
-             x-data="{ usePrivateImport: false }"
+             x-data="{ traktProfileType: 'public' }"
              x-show="sourceSupports(['screen'])"
              x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "trakt" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import TV shows and movies</p>
 
           <div class="mb-3">
-            <label class="flex items-center text-sm text-gray-300">
-              <input type="checkbox"
-                     x-model="usePrivateImport"
-                     class="mr-2 rounded bg-[#2a2f35] border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0">
-              Import private profile (requires authentication)
-            </label>
+            <label class="block text-sm text-gray-300 mb-2">Profile</label>
+            <div class="relative">
+              <select x-model="traktProfileType"
+                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
+                <option value="public">Public profile</option>
+                <option value="private">Private profile (OAuth)</option>
+              </select>
+              {% include "app/icons/chevron-down.svg" with classes="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" %}
+            </div>
+          </div>
+
+          <div x-show="traktProfileType === 'private'" class="mb-3 rounded-md border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-gray-300 space-y-2">
+            <p class="text-indigo-200 font-medium">Private Profile Import (OAuth)</p>
+            <ol class="list-decimal list-inside space-y-1">
+              <li>
+                Create a Trakt application at
+                <a href="https://trakt.tv/oauth/applications"
+                   target="_blank"
+                   class="text-indigo-300 underline hover:text-indigo-200">Trakt API Apps</a>.
+              </li>
+              <li>Set the Redirect URI to <code class="text-indigo-200 break-all">{{ request.scheme }}://{{ request.get_host }}{% url 'import_trakt_private' %}</code>.</li>
+              <li>Set <code class="text-indigo-200">TRAKT_API</code> and <code class="text-indigo-200">TRAKT_API_SECRET</code> in your environment.</li>
+            </ol>
+            <p class="text-gray-400">
+              Behind reverse proxies, also set <code class="text-indigo-200">URLS=https://your_domain.com</code> so Yamtrack builds the correct callback URL.
+            </p>
           </div>
 
           <form class="flex items-center"
                 method="post"
-                x-show="!usePrivateImport"
+                x-show="traktProfileType === 'public'"
                 action="{% url 'import_trakt_public' %}">
             {% csrf_token %}
             <input type="hidden" name="frequency" x-model="importFrequency">
@@ -764,7 +924,7 @@
 
           <form class="flex items-center"
                 method="post"
-                x-show="usePrivateImport"
+                x-show="traktProfileType === 'private'"
                 action="{% url 'trakt_oauth' %}">
             {% csrf_token %}
             <input type="hidden" name="frequency" x-model="importFrequency">
@@ -1055,13 +1215,13 @@
           </form>
         </div>
 
-        {# GoodReads #}
+        {# Goodreads #}
         <div class="bg-[#39404b] p-4 rounded-lg"
              x-show="sourceSupports(['reading'])"
              x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "goodreads" %}</div>
           <p class="text-sm text-gray-400 mb-3"
-             x-text="importFrequency === 'once' ? 'Import from GoodReads backup' : 'File uploads are not available for periodic imports'">
+             x-text="importFrequency === 'once' ? 'Import from Goodreads backup' : 'File uploads are not available for periodic imports'">
           </p>
           <form method="post"
                 action="{% url 'import_goodreads' %}"

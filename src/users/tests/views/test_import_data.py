@@ -56,6 +56,15 @@ class ImportDataViewTests(TestCase):
         self.assertContains(response, "Page 2 of 6")
         self.assertContains(response, "Reimport full history")
 
+    def test_import_data_renders_trakt_profile_dropdown(self):
+        """The Trakt card should use a dropdown for public/private profile selection."""
+        response = self.client.get(reverse("import_data"))
+
+        self.assertContains(response, 'x-data="{ traktProfileType: \'public\' }"', html=False)
+        self.assertContains(response, '<label class="block text-sm text-gray-400 mb-2">Profile</label>', html=False)
+        self.assertContains(response, '<option value="public">Public profile</option>', html=False)
+        self.assertContains(response, '<option value="private">Private profile (OAuth)</option>', html=False)
+
     @patch("users.views.plex.list_sections")
     @patch("users.views.plex.fetch_account")
     def test_import_data_skips_live_plex_checks_during_initial_render(

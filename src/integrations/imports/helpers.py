@@ -3,7 +3,6 @@ import datetime
 import hashlib
 import json
 import logging
-import time
 from collections import defaultdict
 
 from cryptography.fernet import Fernet
@@ -16,6 +15,12 @@ from django_celery_beat.models import CrontabSchedule, PeriodicTask
 from simple_history.utils import bulk_create_with_history
 
 import app
+from app.db_retry import (
+    is_disk_io_error,
+    is_lock_error,
+    is_retryable_error,
+    run_retryable_db_operation,
+)
 from app.models import MediaTypes
 
 logger = logging.getLogger(__name__)
@@ -29,63 +34,18 @@ class MediaImportUnexpectedError(Exception):
     """Custom exception for unexpected import errors."""
 
 
-LOCK_ERROR_SIGNALS = (
-    "database is locked",
-    "database table is locked",
-    "database file is locked",
-)
-
-DISK_IO_ERROR_SIGNALS = (
-    "disk i/o error",
-    "disk i/o",
-    "i/o error",
-    "unable to open database file",
-    "readonly database",
-)
-
-
-def is_lock_error(error):
-    """Return True if the OperationalError was caused by a SQLite lock."""
-    message = str(error).lower()
-    return any(signal in message for signal in LOCK_ERROR_SIGNALS)
-
-
-def is_disk_io_error(error):
-    """Return True if the OperationalError was caused by a disk I/O error."""
-    message = str(error).lower()
-    return any(signal in message for signal in DISK_IO_ERROR_SIGNALS)
-
-
-def is_retryable_error(error):
-    """Return True if the OperationalError is retryable (lock or disk I/O)."""
-    return is_lock_error(error) or is_disk_io_error(error)
-
-
 def retry_on_lock(func, max_retries=5, base_delay=0.1, backoff=2.0):
     """Retry the callable when SQLite reports a lock or disk I/O error."""
-    attempt = 0
-
-    while True:
-        try:
-            return func()
-        except OperationalError as error:
-            if not is_retryable_error(error) or attempt >= max_retries:
-                raise
-
-            error_type = "disk I/O" if is_disk_io_error(error) else "lock"
-            sleep_for = base_delay * (backoff**attempt)
-            logger.warning(
-                (
-                    "Retrying database operation due to %s error "
-                    "(attempt %s/%s, sleeping %.2fs)"
-                ),
-                error_type,
-                attempt + 1,
-                max_retries,
-                sleep_for,
-            )
-            time.sleep(sleep_for)
-            attempt += 1
+    outcome = run_retryable_db_operation(
+        func,
+        mode="required",
+        operation_name="database operation",
+        operation_logger=logger,
+        max_retries=max_retries,
+        base_delay=base_delay,
+        backoff=backoff,
+    )
+    return outcome.value
 
 
 def get_existing_media(user):

@@ -7,8 +7,29 @@
     <div>
       <h2 class="text-xl md:text-2xl font-bold text-white line-clamp-2">{{ title }}</h2>
     </div>
-    <button class="text-gray-400 hover:text-white cursor-pointer shrink-0"
-            @click="trackOpen = false">{% include "app/icons/x.svg" with classes="w-5 h-5" %}</button>
+    <button type="button"
+            class="text-gray-400 hover:text-white cursor-pointer shrink-0"
+            @click="
+              let node = $el.parentElement;
+              while (node) {
+                if (node.hasAttribute && node.hasAttribute('x-data')) {
+                  const modalState = Alpine.$data(node);
+                  if (modalState && modalState.createTrackOpen) {
+                    modalState.createTrackOpen = false;
+                    break;
+                  }
+                  if (modalState && modalState.editTrackOpen) {
+                    modalState.editTrackOpen = false;
+                    break;
+                  }
+                  if (modalState && modalState.trackOpen) {
+                    modalState.trackOpen = false;
+                    break;
+                  }
+                }
+                node = node.parentElement;
+              }
+            ">{% include "app/icons/x.svg" with classes="w-5 h-5" %}</button>
   </div>
 
   <div class="flex flex-col sm:flex-row min-h-[36rem]">
@@ -88,6 +109,20 @@
                         {% include "app/icons/chevron-down.svg" with classes="w-3.5 h-3.5" %}
                       </button>
                     </div>
+                  {% elif field.name == "start_date" or field.name == "end_date" %}
+                    {% if release_date_shortcut %}
+                      {{ field|add_class:"track-release-shortcut-input w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                      <button type="button"
+                              onclick="applyTrackModalReleaseDate(this, '{{ release_date_shortcut }}', '{{ field.name }}'{% if field.name == 'end_date' and release_date_runtime_minutes %}, '{{ release_date_runtime_minutes }}'{% endif %})"
+                              aria-label="Release date"
+                              class="absolute right-2 top-1/2 -translate-y-1/2 track-release-shortcut-button flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                        {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                        <span class="track-release-shortcut-mobile-label">Release</span>
+                        <span class="track-release-shortcut-desktop-label">Release Date</span>
+                      </button>
+                    {% else %}
+                      {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                    {% endif %}
                   {% else %}
                     {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
                   {% endif %}

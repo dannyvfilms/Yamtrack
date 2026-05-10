@@ -1,3 +1,5 @@
+# ruff: noqa: D101, D102
+
 from importlib import import_module
 from unittest.mock import patch
 
@@ -23,6 +25,7 @@ class AppStartupTests(TestCase):
         config = YamtrackAppConfig("app", import_module("app"))
 
         with (
+            patch.object(config, "_repair_celery_redis_bindings"),
             patch.object(config, "_schedule_history_day_coverage_warmup"),
             patch.object(config, "_schedule_genre_backfill_reconcile") as mock_schedule,
             patch.object(config, "_schedule_trakt_popularity_reconcile"),
@@ -97,7 +100,9 @@ class AppStartupTests(TestCase):
             settings.CELERY_TASK_PRIORITY_BACKGROUND,
         )
         self.assertEqual(
-            settings.CELERY_TASK_ROUTES["Repair History Day Cache Coverage"]["priority"],
+            settings.CELERY_TASK_ROUTES[
+                "Repair History Day Cache Coverage"
+            ]["priority"],
             settings.CELERY_TASK_PRIORITY_BACKGROUND,
         )
 

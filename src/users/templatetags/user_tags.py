@@ -54,7 +54,7 @@ SOURCES_CONFIG = {
         "logo": static("img/steam-logo.ico"),
     },
     "goodreads": {
-        "name": "GoodReads",
+        "name": "Goodreads",
         "logo": static("img/logo-goodreads.svg"),
     },
     "plex": {
@@ -76,6 +76,14 @@ SOURCES_CONFIG = {
     "hardcover": {
         "name": "Hardcover",
         "logo": static("img/hardcover-logo.png"),
+    },
+    "radarr": {
+        "name": "Radarr",
+        "logo": static("img/plex-logo.svg"),
+    },
+    "sonarr": {
+        "name": "Sonarr",
+        "logo": static("img/plex-logo.svg"),
     },
 }
 

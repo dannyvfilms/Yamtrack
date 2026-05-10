@@ -61,7 +61,8 @@
             comfort-safety {{ row.debug_payload.contribution_totals.comfort_safety|floatformat:3 }},
             quality {{ row.debug_payload.contribution_totals.quality|floatformat:3 }},
             shape {{ row.debug_payload.contribution_totals.shape_coverage|floatformat:3 }},
-            ready-now {{ row.debug_payload.contribution_totals.ready_now|floatformat:3 }}
+            ready-now {{ row.debug_payload.contribution_totals.ready_now|floatformat:3 }}{% if row.key == "top_picks_for_you" %},
+            planning-confidence {{ row.debug_payload.contribution_totals.planning_confidence|floatformat:3 }}{% endif %}
           </p>
           <p>
             Profile layers:
@@ -103,8 +104,23 @@
                 cooldown {{ debug_item.cooldown_penalty|floatformat:3 }},
                 title-cooldown {{ debug_item.title_cooldown_penalty|floatformat:3 }},
                 burst-allowance {{ debug_item.burst_replay_allowance|floatformat:3 }},
-                title-days {{ debug_item.days_since_title_watch|floatformat:1 }},
-                gap {{ debug_item.title_repeat_gap_days|floatformat:1 }},
+                saturation {{ debug_item.title_saturation_penalty|floatformat:3 }},
+                sat-mult {{ debug_item.saturation_multiplier|floatformat:3 }},
+                recent-90 {{ debug_item.recent_play_count_90d|floatformat:0 }},
+                recent-180 {{ debug_item.recent_play_count_180d|floatformat:0 }},
+                recent-gap {{ debug_item.recent_gap_median_days|floatformat:1 }},
+                {% if row.key == "top_picks_for_you" and debug_item.planning_entry %}
+                release-status {{ debug_item.release_status }},
+                release-ready {{ debug_item.release_ready_score|floatformat:3 }},
+                planned-days {{ debug_item.days_since_planned|floatformat:1 }},
+                title-history {{ debug_item.title_history_present|yesno:'yes,no' }},
+                planning-conf {{ debug_item.planning_confidence|floatformat:3 }},
+                similar-watched {{ debug_item.similar_watched_count }},
+                matched-history [{% for family in debug_item.matched_history_families %}{{ family }}{% if not forloop.last %}, {% endif %}{% empty %}none{% endfor %}],
+                {% else %}
+                last-watch-days {{ debug_item.days_since_title_watch|floatformat:1 }},
+                median-repeat-gap {{ debug_item.title_repeat_gap_days|floatformat:1 }},
+                {% endif %}
                 title-burst {{ debug_item.title_burstiness|floatformat:3 }},
                 lane-burst {{ debug_item.lane_burstiness|floatformat:3 }},
                 rating {{ debug_item.rating_confidence|floatformat:3 }},
@@ -130,6 +146,9 @@
                 contrib quality {{ debug_item.quality_contribution|floatformat:3 }},
                 contrib shape {{ debug_item.shape_coverage_contribution|floatformat:3 }},
                 contrib ready-now {{ debug_item.ready_now_contribution|floatformat:3 }},
+                {% if row.key == "top_picks_for_you" and debug_item.planning_entry %}
+                contrib planning {{ debug_item.planning_confidence_contribution|floatformat:3 }},
+                {% endif %}
                 active [{% for family in debug_item.active_signal_families %}{{ family }}{% if not forloop.last %}, {% endif %}{% endfor %}],
                 suppressed [{% for entry in debug_item.suppressed_signal_families %}{{ entry.family }}:{{ entry.reason }}{% if not forloop.last %}, {% endif %}{% endfor %}],
                 penalties {{ debug_item.penalty_count }}

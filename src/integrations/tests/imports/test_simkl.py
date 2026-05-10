@@ -3,7 +3,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.urls import reverse
+from django.utils import timezone
 
 from app.models import (
     TV,
@@ -13,8 +15,10 @@ from app.models import (
     MediaTypes,
     Movie,
     Season,
+    Sources,
     Status,
 )
+from integrations import tasks
 from integrations.imports import (
     helpers,
     simkl,
@@ -230,3 +234,170 @@ class ImportSimkl(TestCase):
 
         for episode in season1_episodes:
             self.assertIsNotNone(episode.end_date)
+
+    @patch("integrations.imports.simkl.SimklImporter._get_user_list")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_importer_skips_missing_tmdb_season_metadata_instead_of_crashing(
+        self,
+        mock_tv_with_seasons,
+        mock_user_list,
+    ):
+        """Importer should continue when SIMKL seasons are absent from TMDB metadata."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Breaking Bad",
+            "image": "https://image.tmdb.org/t/p/w500/test.jpg",
+            # season/6 intentionally missing
+        }
+        mock_user_list.return_value = {
+            "shows": [
+                {
+                    "last_watched_at": "2023-01-02T00:00:00Z",
+                    "show": {"title": "Breaking Bad", "ids": {"tmdb": 1396}},
+                    "status": "watching",
+                    "user_rating": 8,
+                    "seasons": [
+                        {
+                            "number": 6,
+                            "episodes": [
+                                {"number": 1, "watched_at": "2023-01-02T00:00:00Z"},
+                            ],
+                        },
+                    ],
+                    "memo": {},
+                },
+            ],
+            "movies": [],
+            "anime": [],
+        }
+
+        imported_counts, warnings = self.importer.import_data()
+
+        self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
+        self.assertNotIn(MediaTypes.SEASON.value, imported_counts)
+        self.assertNotIn(MediaTypes.EPISODE.value, imported_counts)
+        self.assertIn(
+            f"missing {Sources.TMDB.label} metadata for season 6",
+            warnings,
+        )
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("integrations.imports.simkl.SimklImporter._get_user_list")
+    @patch("app.providers.tvdb.tv_with_seasons")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_importer_switches_show_to_tvdb_when_tmdb_seasons_are_incomplete(
+        self,
+        mock_tmdb_tv_with_seasons,
+        mock_tvdb_tv_with_seasons,
+        mock_user_list,
+    ):
+        """Importer should switch a show to TVDB when TMDB lacks requested seasons."""
+        mock_tmdb_tv_with_seasons.return_value = {
+            "title": "Jeopardy!",
+            "image": "https://image.tmdb.org/t/p/w500/test.jpg",
+            "tvdb_id": "76703",
+        }
+        mock_tvdb_tv_with_seasons.return_value = {
+            "title": "Jeopardy!",
+            "image": "https://example.com/jeopardy.jpg",
+            "season/2019": {
+                "image": "https://example.com/season-2019.jpg",
+                "max_progress": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "image": "https://example.com/episode-2019-1.jpg",
+                    },
+                ],
+            },
+        }
+        mock_user_list.return_value = {
+            "shows": [
+                {
+                    "last_watched_at": "2023-01-02T00:00:00Z",
+                    "show": {
+                        "title": "Jeopardy!",
+                        "ids": {"tmdb": 1975, "tvdb": 76703},
+                    },
+                    "status": "watching",
+                    "user_rating": 8,
+                    "seasons": [
+                        {
+                            "number": 2019,
+                            "episodes": [
+                                {"number": 1, "watched_at": "2023-01-02T00:00:00Z"},
+                            ],
+                        },
+                    ],
+                    "memo": {},
+                },
+            ],
+            "movies": [],
+            "anime": [],
+        }
+
+        imported_counts, warnings = self.importer.import_data()
+
+        self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
+        self.assertEqual(imported_counts[MediaTypes.SEASON.value], 1)
+        self.assertEqual(imported_counts[MediaTypes.EPISODE.value], 1)
+        self.assertIn("imported via TheTVDB", warnings)
+        self.assertNotIn("missing TMDB metadata for season 2019", warnings)
+
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value)
+        season_item = Item.objects.get(media_type=MediaTypes.SEASON.value)
+        episode_item = Item.objects.get(media_type=MediaTypes.EPISODE.value)
+
+        self.assertEqual(tv_item.source, Sources.TVDB.value)
+        self.assertEqual(tv_item.media_id, "76703")
+        self.assertEqual(season_item.source, Sources.TVDB.value)
+        self.assertEqual(episode_item.source, Sources.TVDB.value)
+        self.assertEqual(
+            episode_item.image,
+            "https://example.com/episode-2019-1.jpg",
+        )
+
+    @patch("integrations.imports.simkl.SimklImporter._get_user_list")
+    def test_history_month_view_updates_after_simkl_import_without_manual_refresh(
+        self,
+        mock_user_list,
+    ):
+        """SIMKL imports should appear on the month history page right away."""
+        self.client.force_login(self.user)
+        now = timezone.localtime()
+        watch_dt = now.replace(day=2, hour=12, minute=0, second=0, microsecond=0)
+        watched_at = watch_dt.astimezone(UTC).isoformat().replace(
+            "+00:00",
+            "Z",
+        )
+
+        # Prime an empty month cache.
+        initial_response = self.client.get(
+            reverse("history"),
+            {"y": now.year, "m": now.month},
+        )
+        self.assertContains(initial_response, "No watch history yet")
+
+        mock_user_list.return_value = {
+            "shows": [],
+            "movies": [
+                {
+                    "added_to_watchlist_at": watched_at,
+                    "movie": {"title": "Perfect Blue", "ids": {"tmdb": 10494}},
+                    "status": "completed",
+                    "user_rating": 9,
+                    "last_watched_at": watched_at,
+                    "memo": {},
+                },
+            ],
+            "anime": [],
+        }
+
+        tasks.import_media(
+            simkl.importer,
+            helpers.encrypt("token"),
+            self.user.id,
+            "new",
+        )
+
+        response = self.client.get(reverse("history"), {"y": now.year, "m": now.month})
+        self.assertContains(response, "Perfect Blue")

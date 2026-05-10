@@ -597,6 +597,31 @@ class ListDetailViewTests(TestCase):
         response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
         self.assertEqual(response.status_code, 200)
 
+    def test_public_list_detail_reorders_header_and_removes_public_banner(self):
+        """Public manual lists should show the owner on the metadata line without the banner."""
+        self.custom_list.visibility = "public"
+        self.custom_list.allow_recommendations = True
+        self.custom_list.save(update_fields=["visibility", "allow_recommendations"])
+
+        self.client.logout()
+        response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "3 items")
+        self.assertContains(response, self.user.username)
+        self.assertNotContains(response, "View Profile")
+        self.assertNotContains(response, "You're viewing a public list.")
+
+        content = response.content.decode()
+        self.assertIn(
+            'class="inline-flex items-center text-gray-400 transition-colors hover:text-indigo-300"',
+            content,
+        )
+        self.assertLess(content.index("3 items"), content.index(self.user.username))
+        self.assertLess(content.index(self.user.username), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Recommend Item"))
+        self.assertLess(content.index("Recommend Item"), content.index("Test Description"))
+
     def test_public_list_detail_resolves_custom_slug(self):
         """Public lists should resolve their custom slug in the detail route."""
         self.custom_list.visibility = "public"
@@ -1047,6 +1072,20 @@ class ListDetailViewTests(TestCase):
         self.assertContains(response, "More list actions")
         self.assertNotContains(response, 'aria-label="Edit list"')
 
+    def test_manual_list_detail_reorders_internal_header_like_public_layout(self):
+        """Owner views should keep the same header stack as public manual lists."""
+        self.custom_list.visibility = "public"
+        self.custom_list.allow_recommendations = True
+        self.custom_list.save(update_fields=["visibility", "allow_recommendations"])
+
+        response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertLess(content.index("3 items"), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Add New Item"))
+        self.assertLess(content.index("Add New Item"), content.index("Test Description"))
+
     @patch("app.providers.services.get_media_metadata")
     def test_smart_list_detail_exposes_smart_rule_split_actions(
         self,
@@ -1078,8 +1117,89 @@ class ListDetailViewTests(TestCase):
             response,
             f'{reverse("list_detail", args=[smart_list.id])}?edit_smart_rules=1',
         )
+        self.assertContains(response, "Smart Rules")
         self.assertContains(response, "More list actions")
         self.assertNotContains(response, 'aria-label="Edit list metadata"')
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_smart_list_detail_reorders_internal_header_like_public_layout(
+        self,
+        mock_get_media_metadata,
+    ):
+        """Owner smart-list views should keep description above the editable rules UI."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        smart_list = CustomList.objects.create(
+            name="Internal Smart List",
+            description="Smart Description",
+            owner=self.user,
+            is_smart=True,
+            visibility="public",
+            allow_recommendations=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertLess(content.index("1 item"), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Edit Smart Rules"))
+        self.assertLess(content.index("Edit Smart Rules"), content.index("Smart Description"))
+        self.assertLess(content.index("Smart Description"), content.rindex("Smart Rules"))
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_public_smart_list_reorders_header_and_removes_public_banner(
+        self,
+        mock_get_media_metadata,
+    ):
+        """Public smart lists should match the manual-list header ordering."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        smart_list = CustomList.objects.create(
+            name="Public Smart List",
+            description="Smart Description",
+            owner=self.user,
+            is_smart=True,
+            visibility="public",
+            allow_recommendations=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        self.client.logout()
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "1 item")
+        self.assertContains(response, self.user.username)
+        self.assertNotContains(response, "View Profile")
+        self.assertNotContains(response, "You're viewing a public list.")
+        self.assertNotContains(response, "Smart Rules")
+
+        content = response.content.decode()
+        self.assertIn("border-indigo-400/18 bg-indigo-500/[0.07]", content)
+        self.assertLess(content.index("1 item"), content.index(self.user.username))
+        self.assertLess(content.index(self.user.username), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Recommend Item"))
+        self.assertLess(content.index("Recommend Item"), content.index("Smart Description"))
 
     @patch("app.providers.services.get_media_metadata")
     def test_smart_list_detail_table_partial(self, mock_get_media_metadata):
@@ -1992,6 +2112,32 @@ class ListsModalViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(existing_item.title, "Rebirth")
 
+    @patch("app.providers.services.get_media_metadata")
+    def test_lists_modal_music_route_creates_music_item(self, mock_get_metadata):
+        """Music details list button should resolve to a track-backed Item row."""
+        mock_get_metadata.return_value = {
+            "title": "Neon Lights - Test Artist",
+            "image": "https://example.com/music.jpg",
+            "details": {},
+        }
+
+        media_id = "123e4567-e89b-12d3-a456-426614174000"
+        response = self.client.get(
+            reverse(
+                "lists_modal",
+                args=[Sources.MUSICBRAINZ.value, MediaTypes.MUSIC.value, media_id],
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            Item.objects.filter(
+                media_id=media_id,
+                source=Sources.MUSICBRAINZ.value,
+                media_type=MediaTypes.MUSIC.value,
+            ).exists(),
+        )
+
     def test_lists_modal_view_filters_lists_by_tag(self):
         """Tag query param should filter list options in the modal."""
         self.list1.tags = ["Active"]
@@ -2500,6 +2646,42 @@ class RecommendationRedirectTests(TestCase):
             fetch_redirect_response=False,
         )
 
+    @patch("lists.views.services.search")
+    def test_recommend_search_uses_track_results_from_music_combined_payload(
+        self,
+        mock_search,
+    ):
+        """Recommendation search should render nested music track hits."""
+        mock_search.return_value = {
+            "artists": [{"artist_id": "artist-1", "name": "Test Artist"}],
+            "releases": [{"release_id": "release-1", "title": "Test Album"}],
+            "tracks": {
+                "results": [
+                    {
+                        "media_id": "recording-1",
+                        "source": Sources.MUSICBRAINZ.value,
+                        "media_type": MediaTypes.MUSIC.value,
+                        "title": "Recommendation Track - Test Artist",
+                        "image": "https://example.com/track.jpg",
+                    },
+                ],
+                "total_pages": 2,
+            },
+        }
+
+        response = self.client.get(
+            reverse("recommend_search", args=[self.custom_list.id]),
+            {
+                "q": "test",
+                "media_type": MediaTypes.MUSIC.value,
+                "page": 1,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Recommendation Track - Test Artist")
+        self.assertContains(response, "Showing page 1 of 2")
+
 
 class QuickAddListItemTests(TestCase):
     """Tests for the owner quick-add list search flow."""
@@ -2694,3 +2876,39 @@ class QuickAddListItemTests(TestCase):
             reverse("list_detail", args=[self.custom_list.id]),
             fetch_redirect_response=False,
         )
+
+    @patch("lists.views.services.search")
+    def test_add_list_item_search_uses_track_results_from_music_combined_payload(
+        self,
+        mock_search,
+    ):
+        """Music quick-add search should render nested track hits from combined payloads."""
+        mock_search.return_value = {
+            "artists": [{"artist_id": "artist-1", "name": "Test Artist"}],
+            "releases": [{"release_id": "release-1", "title": "Test Album"}],
+            "tracks": {
+                "results": [
+                    {
+                        "media_id": "recording-1",
+                        "source": Sources.MUSICBRAINZ.value,
+                        "media_type": MediaTypes.MUSIC.value,
+                        "title": "Test Track - Test Artist",
+                        "image": "https://example.com/track.jpg",
+                    },
+                ],
+                "total_pages": 3,
+            },
+        }
+
+        response = self.client.get(
+            reverse("list_add_item_search", args=[self.custom_list.id]),
+            {
+                "q": "test",
+                "media_type": MediaTypes.MUSIC.value,
+                "page": 1,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Test Track - Test Artist")
+        self.assertContains(response, "Showing page 1 of 3")

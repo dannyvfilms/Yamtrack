@@ -84,7 +84,83 @@ def _detail_html():
     )
 
 
+def _bleed_search_payload():
+    payload = {
+        "color": "blue",
+        "title": "",
+        "category": "games",
+        "count": 1,
+        "pageCurrent": 1,
+        "pageTotal": 1,
+        "pageSize": 20,
+        "data": [
+            {
+                "game_id": 129742,
+                "game_name": "Iron Meat",
+                "release_world": 2023,
+                "profile_platform": "Nintendo Switch, PC, PlayStation 4, PlayStation 5, Xbox One, Xbox Series X/S",
+            },
+        ],
+        "userData": [],
+        "displayModifier": None,
+    }
+    return payload
+
+
 class GameLengthsServiceTests(TestCase):
+    @patch("app.services.game_lengths.fetch_hltb_detail")
+    @patch("app.services.game_lengths.provider_services.session.post")
+    @patch("app.services.game_lengths.provider_services.session.get")
+    def test_resolve_hltb_candidate_uses_bleed_search_for_iron_meat(
+        self,
+        mock_get,
+        mock_post,
+        mock_detail,
+    ):
+        mock_get.return_value = _mock_response(
+            json_payload={
+                "token": "test-token",
+                "hpKey": "ign_test_key",
+                "hpVal": "test-hp-value",
+            },
+        )
+        mock_post.return_value = _mock_response(json_payload=_bleed_search_payload())
+        mock_detail.return_value = {
+            "game_id": 129742,
+            "url": "https://howlongtobeat.com/game/129742",
+            "title": "Iron Meat",
+            "release_year": 2023,
+            "summary": {
+                "main_minutes": 360,
+                "main_plus_minutes": 420,
+                "completionist_minutes": 540,
+                "all_styles_minutes": 480,
+            },
+            "counts": {"main": 12, "main_plus": 8, "completionist": 4, "all_styles": 16},
+            "single_player_table": [],
+            "platform_table": [{"platform": "PC"}],
+            "external_ids": {"hltb_game_id": 129742, "steam_app_id": 2592160},
+            "raw": {},
+        }
+
+        payload = game_lengths.resolve_hltb_candidate(
+            {
+                "title": "Iron Meat",
+                "details": {
+                    "release_date": "2024-09-26",
+                    "platforms": ["PC"],
+                },
+                "external_ids": {"steam_app_id": 2592160},
+            },
+        )
+
+        self.assertEqual(payload["match"], "steam_verified")
+        self.assertEqual(payload["hltb_id"], 129742)
+        self.assertEqual(payload["detail"]["url"], "https://howlongtobeat.com/game/129742")
+        self.assertEqual(mock_get.call_count, 1)
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertEqual(mock_post.call_args.kwargs["json"]["searchTerms"], ["Iron", "Meat"])
+
     @patch("app.services.game_lengths.provider_services.session.get")
     def test_fetch_hltb_detail_extracts_summary_platforms_and_external_ids(self, mock_get):
         mock_get.return_value = _mock_response(text=_detail_html())

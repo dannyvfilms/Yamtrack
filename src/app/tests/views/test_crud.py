@@ -485,6 +485,94 @@ class CreateMedia(TestCase):
             MediaTypes.ANIME.value,
         )
 
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("app.views.services.get_media_metadata")
+    def test_create_grouped_anime_episode_prefers_route_source_over_tmdb_post_value(
+        self,
+        view_metadata_mock,
+        model_metadata_mock,
+    ):
+        """Grouped-anime episode saves should follow the provider encoded in the details route."""
+        tv_metadata = {
+            "media_id": "267440",
+            "source": Sources.TVDB.value,
+            "media_type": MediaTypes.TV.value,
+            "title": "Attack on Titan",
+            "original_title": "進撃の巨人",
+            "localized_title": "Attack on Titan",
+            "image": "http://example.com/aot.jpg",
+            "details": {"seasons": 4},
+            "related": {
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "image": "http://example.com/aot-s1.jpg",
+                    },
+                ],
+            },
+        }
+        tv_with_seasons_metadata = {
+            **tv_metadata,
+            "season/1": {
+                "media_id": "267440",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.SEASON.value,
+                "season_number": 1,
+                "season_title": "Season 1",
+                "image": "http://example.com/aot-s1.jpg",
+                "details": {"episodes": 1},
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "air_date": "2013-04-07",
+                        "image": "http://example.com/aot-e1.jpg",
+                        "name": "To You, in 2000 Years",
+                    },
+                ],
+            },
+        }
+
+        def metadata_side_effect(
+            media_type,
+            media_id,
+            source,
+            season_numbers=None,
+            **_kwargs,
+        ):
+            self.assertEqual(media_id, "267440")
+            self.assertEqual(source, Sources.TVDB.value)
+            if media_type == "tv_with_seasons":
+                self.assertEqual(season_numbers, [1])
+                return tv_with_seasons_metadata
+            if media_type == MediaTypes.TV.value:
+                return tv_metadata
+            error_message = f"Unexpected metadata request: {media_type}"
+            raise AssertionError(error_message)
+
+        view_metadata_mock.side_effect = metadata_side_effect
+        model_metadata_mock.side_effect = metadata_side_effect
+
+        response = self.client.post(
+            f"{reverse('episode_save')}?next=/details/tvdb/tv/267440/attack-on-titan/season/1",
+            {
+                "media_id": "267440",
+                "season_number": 1,
+                "episode_number": 1,
+                "source": Sources.TMDB.value,
+                "library_media_type": MediaTypes.ANIME.value,
+                "end_date": "2024-01-01",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        created_episode = Episode.objects.get(
+            item__media_id="267440",
+            item__source=Sources.TVDB.value,
+            item__episode_number=1,
+            related_season__user=self.user,
+        )
+        self.assertEqual(created_episode.related_season.item.source, Sources.TVDB.value)
+
 
 class EditMedia(TestCase):
     """Test the editing of media objects through views."""

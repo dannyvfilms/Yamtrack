@@ -1,12 +1,13 @@
 import logging
 import re
+from datetime import timedelta
 
 from django.utils import timezone
 
 import app
 from app import live_playback
 from app.log_safety import exception_summary, mapping_keys, presence_map, safe_url
-from app.models import MediaTypes, Sources
+from app.models import MediaTypes, Sources, Status
 from app.providers import services
 from app.services import music_scrobble
 from integrations import plex as plex_api
@@ -30,6 +31,8 @@ tasks = _TasksProxy()
 
 class PlexWebhookProcessor(BaseWebhookProcessor):
     """Processor for Plex webhook events."""
+
+    SHORT_STOP_WINDOW_SECONDS = 60
 
     MEDIA_TYPE_MAPPING = {
         **BaseWebhookProcessor.MEDIA_TYPE_MAPPING,
@@ -126,7 +129,11 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             playback_media_type,
         )
 
-        if event_type in ("media.pause", "media.stop"):
+        if event_type == "media.stop":
+            self._cleanup_short_stop_playback(user, playback_media_type, ids)
+            return None
+
+        if event_type == "media.pause":
             return None
 
         if not any(
@@ -210,6 +217,115 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             season_number=season_number,
             episode_number=episode_number,
         )
+
+    def _cleanup_short_stop_playback(self, user, playback_media_type, ids):
+        """Delete a just-started in-progress row when Plex stops immediately."""
+        if playback_media_type not in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.EPISODE.value,
+        ):
+            return False
+
+        state = live_playback.get_user_playback_state(user.id)
+        if not state or state.get("media_type") != playback_media_type:
+            return False
+
+        if state.get("event_type") == "media.scrobble":
+            return False
+
+        started_at_ts = state.get("started_at_ts")
+        try:
+            started_at_ts = int(started_at_ts)
+        except (TypeError, ValueError):
+            return False
+
+        now_ts = int(timezone.now().timestamp())
+        if now_ts - started_at_ts >= self.SHORT_STOP_WINDOW_SECONDS:
+            return False
+
+        offset_seconds = state.get("view_offset_seconds")
+        try:
+            offset_seconds = int(offset_seconds or 0)
+        except (TypeError, ValueError):
+            offset_seconds = 0
+
+        if offset_seconds >= self.SHORT_STOP_WINDOW_SECONDS:
+            return False
+
+        deleted_count = self._delete_short_stop_rows(user, state, ids)
+        live_playback.clear_user_playback_state(user.id)
+        logger.info(
+            "Cleared short Plex playback for user=%s media_type=%s offset=%ss deleted_rows=%s",
+            user.username,
+            playback_media_type,
+            offset_seconds,
+            deleted_count,
+        )
+        return True
+
+    def _delete_short_stop_rows(self, user, state, ids):
+        """Delete fresh in-progress rows that belong to an abandoned Plex start."""
+        candidate_media_ids = []
+        for candidate in (ids.get("tmdb_id"), state.get("media_id")):
+            candidate_id = str(candidate or "").strip()
+            if candidate_id and candidate_id not in candidate_media_ids:
+                candidate_media_ids.append(candidate_id)
+
+        if not candidate_media_ids:
+            return 0
+
+        source = state.get("source") or Sources.TMDB.value
+        playback_media_type = state.get("media_type")
+        cutoff = timezone.now() - timedelta(seconds=self.SHORT_STOP_WINDOW_SECONDS)
+
+        if playback_media_type == MediaTypes.MOVIE.value:
+            for media_id in candidate_media_ids:
+                movie_qs = app.models.Movie.objects.filter(
+                    item__media_id=media_id,
+                    item__source=source,
+                    user=user,
+                    status=Status.IN_PROGRESS.value,
+                    created_at__gte=cutoff,
+                )
+                movie_count, _ = movie_qs.delete()
+                if movie_count:
+                    return movie_count
+            return 0
+
+        if playback_media_type == MediaTypes.EPISODE.value:
+            season_number = state.get("season_number")
+            try:
+                season_number = int(season_number)
+            except (TypeError, ValueError):
+                season_number = None
+
+            for media_id in candidate_media_ids:
+                tv_qs = app.models.TV.objects.filter(
+                    item__media_id=media_id,
+                    item__source=source,
+                    user=user,
+                    status=Status.IN_PROGRESS.value,
+                    created_at__gte=cutoff,
+                )
+                tv_count, _ = tv_qs.delete()
+                if tv_count:
+                    return tv_count
+
+                season_qs = app.models.Season.objects.filter(
+                    item__media_id=media_id,
+                    item__source=source,
+                    user=user,
+                    status=Status.IN_PROGRESS.value,
+                    created_at__gte=cutoff,
+                )
+                if season_number is not None:
+                    season_qs = season_qs.filter(item__season_number=season_number)
+
+                season_count, _ = season_qs.delete()
+                if season_count:
+                    return season_count
+
+        return 0
 
     def resolve_external_ids(self, payload, allow_title_search=True):
         """Extract external IDs, optionally allowing title search fallback."""
