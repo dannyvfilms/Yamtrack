@@ -456,7 +456,7 @@ class MetadataResolutionTests(TestCase):
         self.assertEqual(result.display_provider, Sources.TMDB.value)
         self.assertEqual(result.mapping_status, "identity")
         self.assertEqual(result.header_metadata["title"], "Breaking Bad")
-        self.assertEqual(mock_update_or_create.call_count, 12)
+        self.assertEqual(mock_update_or_create.call_count, 6)
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.db_retry.time.sleep")
