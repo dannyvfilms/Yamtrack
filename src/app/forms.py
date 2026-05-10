@@ -548,7 +548,7 @@ class SeasonForm(MediaForm):
         ]
 
 
-class EpisodeForm(forms.ModelForm):
+class EpisodeForm(RatingScaleFormMixin, forms.ModelForm):
     """Form for episodes."""
 
     instance_id = forms.CharField(widget=forms.HiddenInput(), required=False)
@@ -563,14 +563,16 @@ class EpisodeForm(forms.ModelForm):
         """Bind form to model."""
 
         model = Episode
-        fields = ("end_date",)
+        fields = ("score", "end_date")
         widgets = {
+            "score": forms.NumberInput(
+                attrs={"min": 0, "max": 10, "step": 0.1, "placeholder": "0-10"},
+            ),
             "end_date": forms.DateInput(attrs={"type": "date"}),
         }
 
     def __init__(self, *args, **kwargs):
         """Initialize the form."""
-        kwargs.pop("user", None)
         super().__init__(*args, **kwargs)
 
         if settings.TRACK_TIME:

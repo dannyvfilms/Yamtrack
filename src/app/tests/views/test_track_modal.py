@@ -6,13 +6,15 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from app.models import (
+    TV,
     Album,
     AlbumTracker,
+    Anime,
     Artist,
     ArtistTracker,
-    Anime,
     DiscoverFeedback,
     DiscoverFeedbackType,
+    Episode,
     Item,
     MediaTypes,
     MetadataProviderPreference,
@@ -21,9 +23,9 @@ from app.models import (
     PodcastEpisode,
     PodcastShow,
     PodcastShowTracker,
+    Season,
     Sources,
     Status,
-    TV,
 )
 from app.services.metadata_resolution import MetadataResolutionResult
 
@@ -150,6 +152,68 @@ class TrackModalViewTests(TestCase):
         self.assertContains(response, 'hx-post="/discover/toggle-hidden"', html=False)
         self.assertContains(response, 'name="action"', html=False)
         self.assertNotContains(response, "Custom Metadata")
+
+    def test_track_modal_view_existing_episode_exposes_score(self):
+        """Episode history edits should use the standard modal with rating support."""
+        tv_item = Item.objects.create(
+            media_id="episode-show-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Episode Show",
+            image="http://example.com/show.jpg",
+        )
+        tv = TV.objects.create(item=tv_item, user=self.user)
+        season_item = Item.objects.create(
+            media_id="episode-show-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Episode Show Season 1",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+        )
+        episode_item = Item.objects.create(
+            media_id="episode-show-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode Two",
+            image="http://example.com/episode.jpg",
+            season_number=1,
+            episode_number=2,
+        )
+        episode = Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=datetime(2025, 1, 2, 12, 0, tzinfo=UTC),
+            score=7,
+        )
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.EPISODE.value,
+                    "media_id": "episode-show-1",
+                    "season_number": 1,
+                },
+            )
+            + f"?instance_id={episode.id}&standard_modal=1&return_url=/history",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/fill_track.html")
+        self.assertEqual(response.context["media"], episode)
+        self.assertEqual(
+            [field.name for field in response.context["general_fields"]],
+            ["score", "end_date"],
+        )
+        self.assertContains(response, 'name="score"', html=False)
+        self.assertContains(response, 'value="7.0"', html=False)
 
     def test_track_modal_view_renders_release_date_shortcuts_for_existing_media(self):
         """Existing item-backed trackers should expose release-date shortcuts."""

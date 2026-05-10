@@ -524,6 +524,64 @@ class AppTagsTests(TestCase):
             content,
         )
 
+    def test_history_card_episode_edit_uses_track_modal(self):
+        """Episode history cards should open the track modal so ratings can be edited."""
+        item = Item.objects.create(
+            media_id="episode-history-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="History Episode",
+            image="http://example.com/history-episode.jpg",
+            season_number=1,
+            episode_number=2,
+        )
+        request = self.request_factory.get("/history")
+        request.user = self.user
+
+        content = render_to_string(
+            "app/components/history_card.html",
+            {
+                "entry": SimpleNamespace(
+                    media_type=MediaTypes.EPISODE.value,
+                    album=None,
+                    item=item,
+                    poster=item.image,
+                    status=None,
+                    runtime_display=None,
+                    display_title=item.title,
+                    title=item.title,
+                    played_at_local=timezone.now(),
+                    time_range_display="6:00 PM",
+                    play_count=1,
+                    progress_display=None,
+                    episode_label="S1E2",
+                    episode_code="S1E2",
+                    show=None,
+                    score=8,
+                    entry_key="episode-entry-1",
+                    instance_id=7,
+                ),
+                "card_class": "search-result-card",
+                "history_mode": "activity",
+                "user": self.user,
+            },
+            request=request,
+        )
+
+        expected_track_url = reverse(
+            "track_modal",
+            kwargs={
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "media_id": "episode-history-1",
+                "season_number": 1,
+            },
+        )
+        self.assertIn(f'hx-get="{expected_track_url}"', content)
+        self.assertIn('"instance_id": "7"', content)
+        self.assertIn('"standard_modal": "1"', content)
+        self.assertNotIn('hx-get="/history_modal/', content)
+
     def test_history_card_teleports_alt_title_tooltip(self):
         """History cards should teleport alternate-title tooltips outside the clipped shell."""
         item = Item.objects.create(
@@ -682,8 +740,29 @@ class AppTagsTests(TestCase):
         self.assertEqual(episode_modal, expected_episode_modal)
 
         # Test with dict for Episode
-        episode_dict_modal = app_tags.media_view_url("history_modal", self.episode_dict)
+        episode_dict_modal = app_tags.media_view_url(
+            "history_modal",
+            self.episode_dict,
+        )
         self.assertEqual(episode_dict_modal, expected_episode_modal)
+
+        expected_episode_track_modal = reverse(
+            "track_modal",
+            kwargs={
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "media_id": "1668",
+                "season_number": 1,
+            },
+        )
+        self.assertEqual(
+            app_tags.media_view_url("track_modal", self.episode_item),
+            expected_episode_track_modal,
+        )
+        self.assertEqual(
+            app_tags.media_view_url("track_modal", self.episode_dict),
+            expected_episode_track_modal,
+        )
 
         # Test with podcast ID containing path separators
         podcast_episode_dict = {

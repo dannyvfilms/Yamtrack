@@ -56,28 +56,16 @@
 
         <div class="relative z-10 flex items-center justify-center space-x-2.5">
           {% if history_mode != "release" %}
-            {# Edit History Button #}
-            {% if entry.media_type == MediaTypes.EPISODE.value %}
-              <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
-                      title="Edit history"
-                      hx-get="{% media_view_url 'history_modal' entry.item %}"
-                      hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if entry.instance_id %}, "instance_id": "{{ entry.instance_id }}"{% endif %}}'
-                      hx-target="#{% component_id 'history' entry.item entry.entry_key %}"
-                      hx-trigger="click once"
-                      @click="historyOpen = true">
-                {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
-              </button>
-            {% else %}
-              <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
-                      title="Edit tracking"
-                      hx-get="{% media_view_url 'track_modal' entry.item %}"
-                      hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if entry.instance_id %}, "instance_id": "{{ entry.instance_id }}"{% endif %}, "standard_modal": "1"}'
-                      hx-target="#{% component_id 'track' entry.item entry.entry_key %}"
-                      hx-trigger="click once"
-                      @click="trackOpen = true">
-                {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
-              </button>
-            {% endif %}
+            {# Edit Tracking Button #}
+            <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
+                    title="Edit tracking"
+                    hx-get="{% media_view_url 'track_modal' entry.item %}"
+                    hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if entry.instance_id %}, "instance_id": "{{ entry.instance_id }}"{% endif %}, "standard_modal": "1"}'
+                    hx-target="#{% component_id 'track' entry.item entry.entry_key %}"
+                    hx-trigger="click once"
+                    @click="trackOpen = true">
+              {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+            </button>
 
             {# Lists Button #}
             <button class="p-2.5 bg-emerald-600 text-white rounded-full hover:bg-emerald-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 cursor-pointer"
@@ -230,28 +218,16 @@
 
   {# Modals #}
   {% if entry.item and entry.item.media_type and history_mode != "release" %}
-    {% if entry.media_type == MediaTypes.EPISODE.value %}
-      {# History Modal #}
-      <div x-show="historyOpen"
-           @keydown.escape.window="historyOpen = false"
-           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
-             @click.outside="historyOpen = false">
-          <div id="{% component_id 'history' entry.item entry.entry_key %}"></div>
-        </div>
+    {# Track Modal #}
+    <div x-show="trackOpen"
+         @keydown.escape.window="trackOpen = false"
+         class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+           style="width: min(96vw, 72rem);"
+           @click.outside="trackOpen = false">
+        <div id="{% component_id 'track' entry.item entry.entry_key %}"></div>
       </div>
-    {% else %}
-      {# Track Modal #}
-      <div x-show="trackOpen"
-           @keydown.escape.window="trackOpen = false"
-           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-             style="width: min(96vw, 72rem);"
-             @click.outside="trackOpen = false">
-          <div id="{% component_id 'track' entry.item entry.entry_key %}"></div>
-        </div>
-      </div>
-    {% endif %}
+    </div>
 
     {# Lists Modal #}
     <div x-show="listsOpen"
