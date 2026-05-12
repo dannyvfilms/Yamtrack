@@ -8,6 +8,7 @@ from django.urls import reverse
 from app.db_retry import is_retryable_error
 from app.discover import tab_cache as discover_tab_cache
 from app.error_views import format_exception_traceback, render_error_page
+from app.models import Sources
 from app.providers import services
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,37 @@ class ProviderAPIErrorMiddleware:
         """Handle exceptions raised during request processing."""
         if isinstance(exception, services.ProviderAPIError):
             is_provider_unreachable = exception.status_code is None
+            extra_context = {}
+            extra_lines = [
+                f"Provider: {exception.provider_label}",
+                (
+                    f"Provider status: {exception.status_code}"
+                    if exception.status_code is not None
+                    else "Provider status: unavailable"
+                ),
+            ]
+
+            if (
+                exception.provider == Sources.HARDCOVER.value
+                and exception.status_code == 401
+            ):
+                extra_context = {
+                    "error_support_title": "Hardcover token expired",
+                    "error_support_text": (
+                        "Hardcover API keys expire after one year. The bundled "
+                        "key in src/config/settings.py needs to be refreshed by a "
+                        "maintainer."
+                    ),
+                    "error_support_url": (
+                        "https://docs.hardcover.app/api/getting-started/"
+                    ),
+                    "error_support_link_label": "Open Hardcover API docs",
+                }
+                extra_lines.append(
+                    "Hardcover API keys expire after one year; the bundled key "
+                    "in src/config/settings.py needs to be refreshed by a "
+                    "maintainer."
+                )
             return render_error_page(
                 request,
                 "500.html",
@@ -103,14 +135,8 @@ class ProviderAPIErrorMiddleware:
                 heading="Service Unavailable" if is_provider_unreachable else "Something Went Wrong",
                 error_message=str(exception),
                 exception=exception,
-                extra_lines=[
-                    f"Provider: {exception.provider_label}",
-                    (
-                        f"Provider status: {exception.status_code}"
-                        if exception.status_code is not None
-                        else "Provider status: unavailable"
-                    ),
-                ],
+                extra_lines=extra_lines,
+                extra_context=extra_context,
             )
         return None
 

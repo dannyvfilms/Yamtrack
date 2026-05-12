@@ -24,6 +24,23 @@
             We're sorry, but there was an error processing your request.
           {% endif %}
         </p>
+        {% if error_support_text %}
+          <div class="mb-4 rounded-lg border border-amber-400/30 bg-amber-400/10 p-4 text-left">
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200/80">
+              {{ error_support_title|default:"Provider note" }}
+            </p>
+            <p class="mt-2 text-sm leading-6 text-amber-50">
+              {{ error_support_text }}
+            </p>
+            {% if error_support_url %}
+              <a href="{{ error_support_url }}"
+                 class="mt-3 inline-flex items-center gap-2 text-sm font-medium text-amber-200 hover:text-amber-100 hover:underline">
+                <span>{{ error_support_link_label|default:"Open documentation" }}</span>
+                {% include "app/icons/external-link.svg" with classes="h-4 w-4" %}
+              </a>
+            {% endif %}
+          </div>
+        {% endif %}
         {% include "includes/error_report_panel.html" %}
         <p class="text-sm text-gray-500 mb-6">
           If you believe this was a bug, please <a href="https://github.com/dannyvfilms/Yamtrack/issues"

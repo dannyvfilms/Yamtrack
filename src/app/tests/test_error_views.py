@@ -90,6 +90,31 @@ class ErrorPageTests(TestCase):
             html=False,
         )
 
+    def test_hardcover_401_page_shows_api_token_expiry_help(self):
+        """Hardcover 401s should show token-expiry guidance and a docs link."""
+        response = self.client.get("/boom-hardcover-401/")
+
+        self.assertEqual(response.status_code, 500)
+        self.assert_traceback_panel(response, "error-report-500")
+        self.assertContains(
+            response,
+            "Hardcover token expired",
+            status_code=500,
+            html=False,
+        )
+        self.assertContains(
+            response,
+            "src/config/settings.py",
+            status_code=500,
+            html=False,
+        )
+        self.assertContains(
+            response,
+            "https://docs.hardcover.app/api/getting-started/",
+            status_code=500,
+            html=False,
+        )
+
     def test_csrf_failure_page_includes_copyable_report(self):
         """The CSRF failure page should expose a copyable diagnostic report."""
         response = self.csrf_client.post("/csrf-protected/")

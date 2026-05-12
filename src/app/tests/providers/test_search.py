@@ -197,6 +197,21 @@ class Search(TestCase):
         response = hardcover.search("xjkqzptmvnsieurytowahdbfglc", 1)
         self.assertEqual(response["results"], [])
 
+    @patch("app.providers.hardcover.services.api_request")
+    def test_hardcover_search_prefixes_bearer_for_raw_tokens(self, mock_api_request):
+        """Hardcover should accept raw tokens from env vars."""
+        mock_api_request.return_value = {
+            "data": {"search": {"results": {"hits": [], "found": 0}}},
+        }
+
+        with patch.object(hardcover.settings, "HARDCOVER_API", "raw-hardcover-token"):
+            hardcover.search("Born a crime", 1)
+
+        self.assertEqual(
+            mock_api_request.call_args.kwargs["headers"]["Authorization"],
+            "Bearer raw-hardcover-token",
+        )
+
 
 class SearchById(TestCase):
     """Test direct ID lookup via services.search_by_id and services.search."""

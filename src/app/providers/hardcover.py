@@ -13,6 +13,16 @@ logger = logging.getLogger(__name__)
 base_url = "https://api.hardcover.app/v1/graphql"
 
 
+def _authorization_header():
+    """Return the Hardcover auth header, normalizing raw tokens."""
+    api_token = (settings.HARDCOVER_API or "").strip()
+    if not api_token:
+        return api_token
+    if api_token.lower().startswith("bearer "):
+        return api_token
+    return f"Bearer {api_token}"
+
+
 def handle_error(error):
     """Handle Hardcover API errors."""
     error_resp = error.response
@@ -64,7 +74,7 @@ def search(query, page):
                 "POST",
                 base_url,
                 params={"query": search_query, "variables": variables},
-                headers={"Authorization": settings.HARDCOVER_API},
+                headers={"Authorization": _authorization_header()},
             )
         except requests.exceptions.HTTPError as error:
             handle_error(error)
@@ -171,7 +181,7 @@ def book(media_id):
                 "POST",
                 base_url,
                 params={"query": book_query, "variables": variables},
-                headers={"Authorization": settings.HARDCOVER_API},
+                headers={"Authorization": _authorization_header()},
             )
         except requests.exceptions.HTTPError as error:
             handle_error(error)
@@ -414,7 +424,7 @@ def author_profile(author_id):
             "POST",
             base_url,
             params={"query": profile_query, "variables": variables},
-            headers={"Authorization": settings.HARDCOVER_API},
+            headers={"Authorization": _authorization_header()},
         )
     except requests.exceptions.HTTPError as error:
         handle_error(error)
@@ -503,7 +513,7 @@ def get_series_details(series_id):
             "POST",
             base_url,
             params={"query": series_query, "variables": variables},
-            headers={"Authorization": settings.HARDCOVER_API},
+            headers={"Authorization": _authorization_header()},
         )
     except requests.exceptions.HTTPError as error:
         logger.warning("Failed to fetch series details: %s", error)

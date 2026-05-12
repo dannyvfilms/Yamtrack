@@ -11,6 +11,7 @@ from redis import ConnectionPool
 from requests.adapters import HTTPAdapter
 from requests_ratelimiter import LimiterAdapter, LimiterSession
 
+from app import helpers
 from app import config
 from app.log_safety import exception_summary, mapping_keys
 from app.models import Item, MediaTypes, Sources
@@ -892,8 +893,6 @@ def search(media_type, query, page, source=None):
 
     if response is None:
         # Return empty results for non-pocketcasts podcast sources.
-        from app import helpers
-
         return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
     return response
 

@@ -4,6 +4,11 @@ from django.http import Http404, HttpResponse
 from django.urls import path
 from django.views.decorators.csrf import csrf_protect
 
+import requests
+
+from app.models import Sources
+from app.providers import services
+
 
 @login_not_required
 def home(_request):
@@ -45,6 +50,28 @@ def boom_500(_request):
     raise RuntimeError(message)
 
 
+@login_not_required
+def boom_hardcover_401(_request):
+    """Raise a Hardcover auth failure for middleware testing."""
+    class MockResponse:
+        status_code = 401
+        headers = {"Content-Type": "application/json"}
+        text = '{"error":"Unable to verify token"}'
+
+        def json(self):
+            return {"error": "Unable to verify token"}
+
+    error = requests.exceptions.HTTPError(
+        "401 Client Error: Unauthorized for url: https://api.hardcover.app/v1/graphql",
+        response=MockResponse(),
+    )
+    raise services.ProviderAPIError(
+        Sources.HARDCOVER.value,
+        error,
+        "Unable to verify token",
+    )
+
+
 @csrf_protect
 @login_not_required
 def csrf_protected(_request):
@@ -64,5 +91,6 @@ urlpatterns = [
     path("boom-403/", boom_403),
     path("boom-404/", boom_404),
     path("boom-500/", boom_500),
+    path("boom-hardcover-401/", boom_hardcover_401),
     path("csrf-protected/", csrf_protected),
 ]
