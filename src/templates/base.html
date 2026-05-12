@@ -434,6 +434,13 @@
       </div>
     {% endif %}
 
+    <div id="htmx-toast-outlet"
+         class="fixed top-24 right-0 left-0 lg:left-64 z-50 flex justify-center pointer-events-none"
+         aria-live="polite"
+         aria-atomic="true">
+      <div class="w-full max-w-xl px-4 space-y-2 pointer-events-auto"></div>
+    </div>
+
     {% block js %}
     {% endblock js %}
 

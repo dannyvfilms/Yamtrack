@@ -1,0 +1,39 @@
+{% load app_tags %}
+
+<div id="{% component_id 'track-action' media %}"
+     data-track-action-root
+     {% if swap_oob %}hx-swap-oob="outerHTML"{% endif %}
+     x-data="{ trackOpen: {% if track_open %}true{% else %}false{% endif %} }"
+     class="w-full sm:w-auto sm:shrink-0">
+  <button type="button"
+          class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if current_instance %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+          hx-get="{% media_view_url 'track_modal' media %}"
+          hx-vals='{"return_url": "{{ return_url }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}{% if track_action_update %}, "track_action_update": "1"{% endif %}}'
+          hx-target="#{% component_id 'track' media %}"
+          hx-trigger="click"
+          @click="trackOpen = true">
+    {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+    <span class="font-medium">
+      {% if current_instance %}
+        {{ current_instance.status|media_status_readable }}
+      {% else %}
+        Add to tracker
+      {% endif %}
+    </span>
+  </button>
+
+  <div x-show="trackOpen"
+       @keydown.escape.window="trackOpen = false"
+       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+         style="width: min(96vw, 72rem);"
+         @click.outside="trackOpen = false"
+         @click.stop>
+      <div id="{% component_id 'track' media %}">
+        {% if track_modal_content %}
+          {{ track_modal_content|safe }}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

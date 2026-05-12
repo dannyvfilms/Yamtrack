@@ -28,31 +28,7 @@
       {% endif %}
     </div>
 
-    {% if music_album_activity_subtitle %}
-      <div class="mb-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
-        <span>{{ music_album_activity_subtitle.title }}</span>
-        {% if music_album_activity_subtitle.progress_text %}
-          <span class="mx-2 text-gray-600">•</span>
-          <span>{{ music_album_activity_subtitle.progress_text }}</span>
-        {% endif %}
-        {% if music_album_activity_subtitle.date_start or music_album_activity_subtitle.date_end %}
-          <span class="mx-2 text-gray-600">•</span>
-          <span>
-            {% if music_album_activity_subtitle.date_start and music_album_activity_subtitle.date_end %}
-              {% if music_album_activity_subtitle.collapse_same_day or music_album_activity_subtitle.date_start == music_album_activity_subtitle.date_end %}
-                {{ music_album_activity_subtitle.date_start|user_date_format:user }}
-              {% else %}
-                {{ music_album_activity_subtitle.date_start|user_date_format:user }} - {{ music_album_activity_subtitle.date_end|user_date_format:user }}
-              {% endif %}
-            {% elif music_album_activity_subtitle.date_start %}
-              {{ music_album_activity_subtitle.date_start|user_date_format:user }}
-            {% else %}
-              {{ music_album_activity_subtitle.date_end|user_date_format:user }}
-            {% endif %}
-          </span>
-        {% endif %}
-      </div>
-    {% endif %}
+    {% include "app/components/detail_music_album_activity_subtitle.html" with album=album music_album_activity_subtitle=music_album_activity_subtitle user=user only %}
 
     {% if album_tracker %}
       <div class="mt-4 mb-5 flex flex-wrap gap-2">
@@ -323,15 +299,7 @@
 
                       <div class="flex space-x-2 shrink-0">
                         <div x-data="{ trackOpen: false }">
-                          <button @click="trackOpen = true"
-                                  title="Track Song"
-                                  class="p-2 {% if track_data.music %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-500{% endif %} text-white rounded-full transition duration-300 cursor-pointer">
-                            {% if track_data.music %}
-                              {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
-                            {% else %}
-                              {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
-                            {% endif %}
-                          </button>
+                          {% include "app/components/detail_music_track_button.html" with track_data=track_data only %}
 
                           {% include "app/components/fill_track_song.html" with request=request album=album track=track_data.track music=track_data.music csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
                         </div>
@@ -382,18 +350,7 @@
                     </div>
                   </div>
 
-                  {% if track_data.history %}
-                    <p id="track-history-{% if track_data.music %}{{ track_data.music.id }}{% else %}{{ track_data.track.id }}{% endif %}"
-                       class="text-xs text-gray-400 mt-2 px-4">
-                      Last listened: {{ track_data.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
-                      {% if track_data.history|length > 1 %}• Listened {{ track_data.history|length }} times{% endif %}
-                      {% if track_data.collection_entry and track_data.collection_entry.audio_codec %}• Collected: {{ track_data.collection_entry.audio_codec }}{% endif %}
-                    </p>
-                  {% elif track_data.collection_entry and track_data.collection_entry.audio_codec %}
-                    <p class="text-xs text-gray-400 mt-2 px-4">
-                      Collected: {{ track_data.collection_entry.audio_codec }}
-                    </p>
-                  {% endif %}
+                  {% include "app/components/detail_music_track_history_line.html" with track_data=track_data user=user only %}
                 </div>
               </div>
             </div>

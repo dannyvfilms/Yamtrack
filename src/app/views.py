@@ -8,7 +8,7 @@ from collections import Counter, defaultdict
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 from uuid import uuid4
 
 import requests
@@ -958,6 +958,229 @@ def _build_detail_activity_subtitle(media_type, media_metadata, current_instance
         "duration_text": duration_text,
         "collapse_same_day": collapse_same_day,
     }
+
+
+def _build_detail_activity_state(
+    media_type,
+    media_metadata,
+    current_instance=None,
+    user_medias=None,
+    public_view=False,
+):
+    """Return the activity subtitle payload for tracked detail pages."""
+    play_stats = None
+    activity_subtitle = None
+    user_medias = list(user_medias or [])
+
+    if (
+        not public_view
+        and current_instance
+        and user_medias
+        and media_type
+        in [
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.GAME.value,
+            MediaTypes.BOARDGAME.value,
+            MediaTypes.ANIME.value,
+            MediaTypes.MANGA.value,
+            MediaTypes.MOVIE.value,
+            MediaTypes.MUSIC.value,
+            MediaTypes.PODCAST.value,
+            MediaTypes.TV.value,
+        ]
+    ):
+        if media_type == MediaTypes.TV.value or (
+            media_type == MediaTypes.ANIME.value
+            and hasattr(current_instance, "seasons")
+        ):
+            # Calculate TV and grouped-anime play stats from watched episodes.
+            total_minutes = 0
+            episode_count = 0
+            first_played = None
+            last_played = None
+
+            # Iterate through all seasons and episodes
+            seasons = current_instance.seasons.all().select_related("item").prefetch_related(
+                "episodes__item",
+            )
+            for season in seasons:
+                episodes = season.episodes.all().select_related("item")
+                for episode in episodes:
+                    # Only count episodes that have been watched (have end_date)
+                    if not episode.end_date:
+                        continue
+
+                    # Get runtime for this episode
+                    try:
+                        runtime_minutes = stats._calculate_episode_time_from_cache(episode, logger)
+                        if runtime_minutes > 0:
+                            total_minutes += runtime_minutes
+                            episode_count += 1
+
+                            # Track first and last played dates
+                            if first_played is None or episode.end_date < first_played:
+                                first_played = episode.end_date
+                            if last_played is None or episode.end_date > last_played:
+                                last_played = episode.end_date
+                    except (ValueError, AttributeError):
+                        # Skip episodes without runtime data
+                        continue
+
+            # Only create play_stats if we have watched episodes
+            if episode_count > 0:
+                play_stats = {
+                    "first_played": first_played,
+                    "last_played": last_played,
+                    "total_minutes": total_minutes,
+                    "total_hours": total_minutes // 60,
+                    "total_minutes_remainder": total_minutes % 60,
+                    "episode_count": episode_count,
+                }
+        elif media_type == MediaTypes.ANIME.value:
+            # Flat anime entries track episode progress directly on the media row.
+            BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
+            aggregated_progress = getattr(current_instance, "aggregated_progress", None)
+            if aggregated_progress is None:
+                aggregated_progress = current_instance.progress or 0
+
+            play_stats = {
+                "first_played": getattr(current_instance, "aggregated_start_date", None)
+                or current_instance.start_date,
+                "last_played": getattr(current_instance, "aggregated_end_date", None)
+                or current_instance.end_date,
+            }
+            current_instance.subtitle_start_date = play_stats["first_played"]
+            current_instance.subtitle_end_date = play_stats["last_played"]
+
+            runtime_minutes = current_instance._get_known_item_runtime_minutes()
+            total_progress = int(aggregated_progress or 0)
+            if runtime_minutes and total_progress > 0:
+                total_minutes = runtime_minutes * total_progress
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                    },
+                )
+        else:
+            # Generic non-TV calculation based on aggregated item activity.
+            BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
+            aggregated_progress = getattr(current_instance, "aggregated_progress", None)
+            if aggregated_progress is None:
+                aggregated_progress = current_instance.progress or 0
+
+            play_stats = {
+                "first_played": getattr(current_instance, "aggregated_start_date", None)
+                or current_instance.start_date,
+                "last_played": getattr(current_instance, "aggregated_end_date", None)
+                or current_instance.end_date,
+            }
+
+            if media_type == MediaTypes.GAME.value:
+                total_minutes = int(aggregated_progress or 0)
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                    },
+                )
+                days_played = set()
+                total_minutes_for_avg = 0
+                for entry in user_medias:
+                    entry_minutes = entry.progress or 0
+                    if entry_minutes <= 0:
+                        continue
+                    total_minutes_for_avg += entry_minutes
+                    days_played.update(stats._get_entry_play_dates(entry))
+                total_days = len(days_played)
+                if total_days:
+                    avg_minutes = int(round(total_minutes_for_avg / total_days))
+                else:
+                    avg_minutes = 0
+                play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
+            elif media_type == MediaTypes.MOVIE.value:
+                total_plays = int(aggregated_progress or 0)
+                play_stats["total_plays"] = total_plays
+
+                range_start_candidates = []
+                range_end_candidates = []
+                for entry in user_medias:
+                    range_start = entry.start_date or entry.end_date or entry.created_at
+                    range_end = entry.end_date or entry.start_date or entry.created_at
+                    if range_start:
+                        range_start_candidates.append(range_start)
+                    if range_end:
+                        range_end_candidates.append(range_end)
+
+                if range_start_candidates:
+                    play_stats["first_played"] = min(range_start_candidates)
+                if range_end_candidates:
+                    play_stats["last_played"] = max(range_end_candidates)
+
+                first_played = play_stats.get("first_played")
+                last_played = play_stats.get("last_played")
+                if first_played and last_played:
+                    first_played_local = stats._localize_datetime(first_played)
+                    last_played_local = stats._localize_datetime(last_played)
+                    if first_played_local and last_played_local:
+                        play_stats["same_play_day"] = (
+                            first_played_local.date() == last_played_local.date()
+                        )
+
+                runtime_minutes = current_instance._get_known_item_runtime_minutes()
+                if runtime_minutes and total_plays > 0:
+                    total_minutes = runtime_minutes * total_plays
+                    play_stats.update(
+                        {
+                            "total_minutes": total_minutes,
+                            "total_hours": total_minutes // 60,
+                            "total_minutes_remainder": total_minutes % 60,
+                        },
+                    )
+            elif media_type == MediaTypes.MUSIC.value:
+                total_plays = int(aggregated_progress or 0)
+                play_stats["total_plays"] = total_plays
+
+                runtime_minutes = current_instance._get_known_item_runtime_minutes()
+                if runtime_minutes and total_plays > 0:
+                    total_minutes = runtime_minutes * total_plays
+                    play_stats.update(
+                        {
+                            "total_minutes": total_minutes,
+                            "total_hours": total_minutes // 60,
+                            "total_minutes_remainder": total_minutes % 60,
+                        },
+                    )
+            elif media_type == MediaTypes.PODCAST.value:
+                total_progress_seconds = int(aggregated_progress or 0)
+                total_minutes = total_progress_seconds // 60
+                completed_entries = sum(
+                    1
+                    for entry in user_medias
+                    if entry.end_date or entry.status == Status.COMPLETED.value
+                )
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                        "total_plays": completed_entries or len(user_medias),
+                    },
+                )
+            else:
+                play_stats["total_plays"] = int(aggregated_progress or 0)
+
+        activity_subtitle = _build_detail_activity_subtitle(
+            media_type,
+            media_metadata,
+            current_instance,
+            play_stats,
+        )
+
+    return play_stats, activity_subtitle
 
 
 def _detail_episode_number_for_pagination(episode):
@@ -5557,213 +5780,13 @@ def media_details(
                     reason="details_genres_update",
                 )
 
-    play_stats = None
-    activity_subtitle = None
-    if (
-        not public_view
-        and current_instance
-        and user_medias
-        and media_type
-        in [
-            MediaTypes.BOOK.value,
-            MediaTypes.COMIC.value,
-            MediaTypes.GAME.value,
-            MediaTypes.BOARDGAME.value,
-            MediaTypes.ANIME.value,
-            MediaTypes.MANGA.value,
-            MediaTypes.MOVIE.value,
-            MediaTypes.MUSIC.value,
-            MediaTypes.PODCAST.value,
-            MediaTypes.TV.value,
-        ]
-    ):
-        if media_type == MediaTypes.TV.value or (
-            media_type == MediaTypes.ANIME.value
-            and hasattr(current_instance, "seasons")
-        ):
-            # Calculate TV and grouped-anime play stats from watched episodes.
-            total_minutes = 0
-            episode_count = 0
-            first_played = None
-            last_played = None
-            
-            # Iterate through all seasons and episodes
-            seasons = current_instance.seasons.all().select_related("item").prefetch_related("episodes__item")
-            for season in seasons:
-                episodes = season.episodes.all().select_related("item")
-                for episode in episodes:
-                    # Only count episodes that have been watched (have end_date)
-                    if not episode.end_date:
-                        continue
-                    
-                    # Get runtime for this episode
-                    try:
-                        runtime_minutes = stats._calculate_episode_time_from_cache(episode, logger)
-                        if runtime_minutes > 0:
-                            total_minutes += runtime_minutes
-                            episode_count += 1
-                            
-                            # Track first and last played dates
-                            if first_played is None or episode.end_date < first_played:
-                                first_played = episode.end_date
-                            if last_played is None or episode.end_date > last_played:
-                                last_played = episode.end_date
-                    except (ValueError, AttributeError):
-                        # Skip episodes without runtime data
-                        continue
-            
-            # Only create play_stats if we have watched episodes
-            if episode_count > 0:
-                play_stats = {
-                    "first_played": first_played,
-                    "last_played": last_played,
-                    "total_minutes": total_minutes,
-                    "total_hours": total_minutes // 60,
-                    "total_minutes_remainder": total_minutes % 60,
-                    "episode_count": episode_count,
-                }
-        elif media_type == MediaTypes.ANIME.value:
-            # Flat anime entries track episode progress directly on the media row.
-            BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
-            aggregated_progress = getattr(current_instance, "aggregated_progress", None)
-            if aggregated_progress is None:
-                aggregated_progress = current_instance.progress or 0
-
-            play_stats = {
-                "first_played": getattr(current_instance, "aggregated_start_date", None)
-                or current_instance.start_date,
-                "last_played": getattr(current_instance, "aggregated_end_date", None)
-                or current_instance.end_date,
-            }
-            current_instance.subtitle_start_date = play_stats["first_played"]
-            current_instance.subtitle_end_date = play_stats["last_played"]
-
-            runtime_minutes = current_instance._get_known_item_runtime_minutes()
-            total_progress = int(aggregated_progress or 0)
-            if runtime_minutes and total_progress > 0:
-                total_minutes = runtime_minutes * total_progress
-                play_stats.update(
-                    {
-                        "total_minutes": total_minutes,
-                        "total_hours": total_minutes // 60,
-                        "total_minutes_remainder": total_minutes % 60,
-                    },
-                )
-        else:
-            # Generic non-TV calculation based on aggregated item activity.
-            BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
-            aggregated_progress = getattr(current_instance, "aggregated_progress", None)
-            if aggregated_progress is None:
-                aggregated_progress = current_instance.progress or 0
-
-            play_stats = {
-                "first_played": getattr(current_instance, "aggregated_start_date", None)
-                or current_instance.start_date,
-                "last_played": getattr(current_instance, "aggregated_end_date", None)
-                or current_instance.end_date,
-            }
-
-            if media_type == MediaTypes.GAME.value:
-                total_minutes = int(aggregated_progress or 0)
-                play_stats.update(
-                    {
-                        "total_minutes": total_minutes,
-                        "total_hours": total_minutes // 60,
-                        "total_minutes_remainder": total_minutes % 60,
-                    },
-                )
-                days_played = set()
-                total_minutes_for_avg = 0
-                for entry in user_medias:
-                    entry_minutes = entry.progress or 0
-                    if entry_minutes <= 0:
-                        continue
-                    total_minutes_for_avg += entry_minutes
-                    days_played.update(stats._get_entry_play_dates(entry))
-                total_days = len(days_played)
-                if total_days:
-                    avg_minutes = int(round(total_minutes_for_avg / total_days))
-                else:
-                    avg_minutes = 0
-                play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
-            elif media_type == MediaTypes.MOVIE.value:
-                total_plays = int(aggregated_progress or 0)
-                play_stats["total_plays"] = total_plays
-
-                range_start_candidates = []
-                range_end_candidates = []
-                for entry in user_medias:
-                    range_start = entry.start_date or entry.end_date or entry.created_at
-                    range_end = entry.end_date or entry.start_date or entry.created_at
-                    if range_start:
-                        range_start_candidates.append(range_start)
-                    if range_end:
-                        range_end_candidates.append(range_end)
-
-                if range_start_candidates:
-                    play_stats["first_played"] = min(range_start_candidates)
-                if range_end_candidates:
-                    play_stats["last_played"] = max(range_end_candidates)
-
-                first_played = play_stats.get("first_played")
-                last_played = play_stats.get("last_played")
-                if first_played and last_played:
-                    first_played_local = stats._localize_datetime(first_played)
-                    last_played_local = stats._localize_datetime(last_played)
-                    if first_played_local and last_played_local:
-                        play_stats["same_play_day"] = (
-                            first_played_local.date() == last_played_local.date()
-                        )
-
-                runtime_minutes = current_instance._get_known_item_runtime_minutes()
-                if runtime_minutes and total_plays > 0:
-                    total_minutes = runtime_minutes * total_plays
-                    play_stats.update(
-                        {
-                            "total_minutes": total_minutes,
-                            "total_hours": total_minutes // 60,
-                            "total_minutes_remainder": total_minutes % 60,
-                        },
-                    )
-            elif media_type == MediaTypes.MUSIC.value:
-                total_plays = int(aggregated_progress or 0)
-                play_stats["total_plays"] = total_plays
-
-                runtime_minutes = current_instance._get_known_item_runtime_minutes()
-                if runtime_minutes and total_plays > 0:
-                    total_minutes = runtime_minutes * total_plays
-                    play_stats.update(
-                        {
-                            "total_minutes": total_minutes,
-                            "total_hours": total_minutes // 60,
-                            "total_minutes_remainder": total_minutes % 60,
-                        },
-                    )
-            elif media_type == MediaTypes.PODCAST.value:
-                total_progress_seconds = int(aggregated_progress or 0)
-                total_minutes = total_progress_seconds // 60
-                completed_entries = sum(
-                    1
-                    for entry in user_medias
-                    if entry.end_date or entry.status == Status.COMPLETED.value
-                )
-                play_stats.update(
-                    {
-                        "total_minutes": total_minutes,
-                        "total_hours": total_minutes // 60,
-                        "total_minutes_remainder": total_minutes % 60,
-                        "total_plays": completed_entries or len(user_medias),
-                    },
-                )
-            else:
-                play_stats["total_plays"] = int(aggregated_progress or 0)
-
-        activity_subtitle = _build_detail_activity_subtitle(
-            media_type,
-            media_metadata,
-            current_instance,
-            play_stats,
-        )
+    play_stats, activity_subtitle = _build_detail_activity_state(
+        media_type,
+        media_metadata,
+        current_instance=current_instance,
+        user_medias=user_medias,
+        public_view=public_view,
+    )
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
@@ -8558,6 +8581,9 @@ def _render_standard_track_modal(
     form_override=None,
     bulk_form_override=None,
     initial_active_tab="general",
+    track_form_id=None,
+    return_url=None,
+    track_action_update=False,
 ):
     """Build and render the standard media track modal context."""
     instance_id = request.GET.get("instance_id") or request.POST.get("instance_id")
@@ -8833,7 +8859,13 @@ def _render_standard_track_modal(
         metadata_resolution_result=metadata_resolution_result,
     )
     episode_plays_tab_available = bool(episode_plays_domain)
-    return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
+    if return_url is None:
+        return_url = (
+            request.GET.get("return_url")
+            or request.GET.get("next")
+            or request.POST.get("return_url", "")
+            or request.POST.get("next", "")
+        )
     if episode_plays_tab_available:
         if bulk_form_override is not None:
             episode_plays_form = bulk_form_override
@@ -8847,7 +8879,7 @@ def _render_standard_track_modal(
     else:
         episode_plays_form = None
 
-    track_form_id = f"track-form-{uuid4().hex}"
+    track_form_id = track_form_id or f"track-form-{uuid4().hex}"
     release_date_shortcut = _track_modal_release_date_shortcut(
         getattr(metadata_item, "release_datetime", None) if metadata_item else None,
         (
@@ -8913,6 +8945,7 @@ def _render_standard_track_modal(
         ),
         "can_edit_custom_metadata": can_edit_custom_metadata,
         "track_form_id": track_form_id,
+        "track_action_update": track_action_update,
         "initial_active_tab": initial_active_tab,
         "episode_plays_tab_available": episode_plays_tab_available,
         "episode_plays_form": episode_plays_form,
@@ -8946,13 +8979,22 @@ def _render_podcast_show_track_modal(
     form_override=None,
     bulk_form_override=None,
     initial_active_tab="general",
+    track_form_id=None,
+    return_url=None,
+    track_action_update=False,
 ):
     """Build and render the podcast show tracking modal with bulk episode plays."""
     from app.forms import PodcastShowTrackerForm
     from app.models import PodcastShowTracker
 
     tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
-    return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
+    if return_url is None:
+        return_url = (
+            request.GET.get("return_url")
+            or request.GET.get("next")
+            or request.POST.get("return_url", "")
+            or request.POST.get("next", "")
+        )
 
     if form_override is not None:
         form = form_override
@@ -8992,7 +9034,7 @@ def _render_podcast_show_track_modal(
     else:
         episode_plays_form = None
 
-    track_form_id = f"track-form-{uuid4().hex}"
+    track_form_id = track_form_id or f"track-form-{uuid4().hex}"
     response = render(
         request,
         "app/components/fill_track.html",
@@ -9019,6 +9061,7 @@ def _render_podcast_show_track_modal(
             "release_date_shortcut": "",
             "release_date_runtime_minutes": "",
             "track_form_id": track_form_id,
+            "track_action_update": track_action_update,
             "initial_active_tab": initial_active_tab,
             "episode_plays_tab_available": episode_plays_tab_available,
             "episode_plays_form": episode_plays_form,
@@ -9052,6 +9095,10 @@ def track_modal(
     season_number=None,
 ):
     """Return the tracking form for a media item."""
+    track_action_update = (
+        request.GET.get("track_action_update") == "1"
+        or request.POST.get("track_action_update") == "1"
+    )
     standard_modal = (
         request.GET.get("standard_modal") == "1"
         or request.POST.get("standard_modal") == "1"
@@ -9243,6 +9290,7 @@ def track_modal(
         media_type,
         media_id,
         season_number=season_number,
+        track_action_update=track_action_update,
     )
 
 @require_POST
@@ -9378,15 +9426,125 @@ def media_save(request):
     # Validate the form and save the instance if it's valid
     form_class = get_form_class(tracking_media_type)
     form = form_class(request.POST, instance=instance, user=request.user)
+    media = instance
+    is_htmx = bool(request.headers.get("HX-Request"))
+    track_form_id = request.POST.get("track_form_id") or (
+        f"track-form-{uuid4().hex}"
+    )
+    return_url = quote(
+        request.GET.get("next") or request.POST.get("return_url") or "",
+        safe="",
+    )
+    action_verb = "Added" if not instance_id else "Updated"
     if form.is_valid():
         media = form.save()
+        BasicMedia.objects.annotate_max_progress([media], media_type)
         image_url = form.cleaned_data.get("image_url")
         if image_url and media.item.image != image_url:
             media.item.image = image_url
             media.item.save(update_fields=["image"])
         logger.info("%s saved successfully.", media)
+        display_title = (
+            media.item.get_display_title(request.user)
+            if hasattr(media.item, "get_display_title")
+            else media.item.title
+        ) or "item"
+        if is_htmx:
+            user_medias = list(
+                media.__class__.objects.filter(user=request.user, item=media.item).select_related(
+                    "item",
+                ),
+            )
+            play_stats, activity_subtitle = _build_detail_activity_state(
+                media_type,
+                {"max_progress": getattr(media, "max_progress", None)},
+                current_instance=media,
+                user_medias=user_medias,
+                public_view=False,
+            )
+            response = render(
+                request,
+                "app/components/detail_track_action.html",
+                {
+                    "media": media.item,
+                    "current_instance": media,
+                    "return_url": return_url,
+                    "track_action_update": True,
+                },
+            )
+            activity_subtitle_response = render(
+                request,
+                "app/components/detail_activity_subtitle_slot.html",
+                {
+                    "media": media.item,
+                    "media_type": media_type,
+                    "current_instance": media,
+                    "activity_subtitle": activity_subtitle,
+                    "play_stats": play_stats,
+                    "user": request.user,
+                    "activity_subtitle_slot_oob": True,
+                },
+            )
+            score_chip_response = render(
+                request,
+                "app/components/detail_score_chip_slot.html",
+                {
+                    "media": media.item,
+                    "current_instance": media,
+                    "media_type": media_type,
+                    "user": request.user,
+                    "user_medias": [media],
+                    "public_view": False,
+                    "csrf_token": request.META.get("CSRF_COOKIE", ""),
+                    "score_chip_slot_oob": True,
+                },
+            )
+            response.write(activity_subtitle_response.content.decode())
+            response.write(score_chip_response.content.decode())
+            response["HX-Trigger"] = json.dumps(
+                {
+                    "closeModal": {"formId": track_form_id},
+                    "showToast": {
+                        "message": f"{action_verb} {display_title}.",
+                        "type": "success",
+                    },
+                },
+            )
+            response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response["Pragma"] = "no-cache"
+            response["Expires"] = "0"
+            return response
+        messages.success(request, f"{action_verb} {display_title}.")
     else:
         logger.error(form.errors.as_json())
+        if is_htmx:
+            modal_response = _render_standard_track_modal(
+                request,
+                source,
+                media_type,
+                media_id,
+                season_number=season_number,
+                form_override=form,
+                track_form_id=track_form_id,
+                return_url=return_url,
+                track_action_update=True,
+            )
+            response = render(
+                request,
+                "app/components/detail_track_action.html",
+                {
+                    "media": media.item,
+                    "current_instance": media,
+                    "return_url": return_url,
+                    "track_open": True,
+                    "track_modal_content": modal_response.content.decode(),
+                    "track_action_update": True,
+                },
+            )
+            response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response["Pragma"] = "no-cache"
+            response["Expires"] = "0"
+            return response
         for field, errors in form.errors.items():
             for error in errors:
                 messages.error(
@@ -9420,12 +9578,17 @@ def media_delete(request):
     except model.DoesNotExist:
         logger.warning("The %s was already deleted before.", media_type)
 
-    return helpers.redirect_back(request)
+    redirect_response = helpers.redirect_back(request)
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=204, headers={"HX-Redirect": redirect_response.url})
+    return redirect_response
 
 
 @require_POST
 def episode_save(request):
     """Handle the creation, deletion, and updating of episodes for a season."""
+    from django.template.loader import render_to_string
+
     media_id = request.POST["media_id"]
     season_number = int(request.POST["season_number"])
     episode_number = int(request.POST["episode_number"])
@@ -9506,6 +9669,69 @@ def episode_save(request):
         related_season.related_tv.item.save(update_fields=["library_media_type"])
 
     related_season.watch(episode_number, form.cleaned_data["end_date"])
+
+    if request.headers.get("HX-Request"):
+        episode_history = list(
+            Episode.objects.filter(
+                related_season=related_season,
+                item__media_id=media_id,
+                item__source=source,
+                item__episode_number=episode_number,
+            )
+            .select_related("item", "related_season")
+            .order_by("-end_date", "-created_at")
+        )
+        if not episode_history:
+            return HttpResponse("Episode not found", status=404)
+
+        episode = episode_history[0]
+        episode.history = episode_history
+        episode.collection_entry = CollectionEntry.objects.filter(
+            item=episode.item,
+            user=request.user,
+        ).select_related("item").first()
+
+        response = HttpResponse()
+        response.write(
+            render_to_string(
+                "app/components/detail_episode_track_button.html",
+                {
+                    "episode": episode,
+                    "track_button_oob": True,
+                },
+                request=request,
+            ),
+        )
+        response.write(
+            render_to_string(
+                "app/components/detail_episode_history_line.html",
+                {
+                    "episode": episode,
+                    "user": request.user,
+                    "history_oob": True,
+                },
+                request=request,
+            ),
+        )
+        response.write(
+            f'<span id="season-progress-mobile-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+        )
+        response.write(
+            f'<span id="season-progress-desktop-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+        )
+        response["HX-Trigger"] = json.dumps(
+            {
+                "closeModal": {},
+                "showToast": {
+                    "message": f"Added watch for episode {episode_number}.",
+                    "type": "success",
+                },
+            },
+        )
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
 
     return helpers.redirect_back(request)
 
@@ -12870,8 +13096,12 @@ def podcast_show_save(request):
 
     next_url = request.GET.get("next", "")
     if next_url:
-        return redirect(next_url)
-    return redirect("podcast_show_detail", show_id=show.id)
+        redirect_response = redirect(next_url)
+    else:
+        redirect_response = redirect("podcast_show_detail", show_id=show.id)
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=204, headers={"HX-Redirect": redirect_response.url})
+    return redirect_response
 
 
 @require_POST
@@ -12895,8 +13125,12 @@ def podcast_show_delete(request):
 
     next_url = request.GET.get("next", "")
     if next_url:
-        return redirect(next_url)
-    return redirect("podcast_show_detail", show_id=show.id)
+        redirect_response = redirect(next_url)
+    else:
+        redirect_response = redirect("podcast_show_detail", show_id=show.id)
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=204, headers={"HX-Redirect": redirect_response.url})
+    return redirect_response
 
 
 @require_POST
@@ -13162,8 +13396,9 @@ def song_save(request):
     from django.shortcuts import get_object_or_404
     from django.utils import timezone
     from django.utils.dateparse import parse_date, parse_datetime
+    from django.template.loader import render_to_string
 
-    from app.models import Track
+    from app.models import AlbumTracker, CollectionEntry, Track
 
     recording_id = request.POST.get("recording_id")
     album_id = request.POST.get("album_id")
@@ -13259,6 +13494,100 @@ def song_save(request):
             end_date=end_date,
         )
         messages.success(request, f"Added {track.title if track else 'track'} to your library")
+
+    if request.headers.get("HX-Request"):
+        music = (
+            Music.objects.filter(
+                user=request.user,
+                album=album,
+                track=track,
+            )
+            .select_related("item", "track", "album")
+            .order_by("-created_at")
+            .first()
+        )
+        if music is None:
+            return HttpResponse("Music entry not found", status=404)
+
+        track_data = {
+            "track": track,
+            "music": music,
+            "history": list(music.history.all().order_by("-end_date")),
+            "collection_entry": CollectionEntry.objects.filter(
+                user=request.user,
+                item=music.item,
+            )
+            .select_related("item")
+            .first(),
+        }
+        user_music_entries = list(
+            Music.objects.filter(
+                user=request.user,
+                album=album,
+            ).select_related("item", "track"),
+        )
+        album_tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
+        first_listened, last_listened, collapse_same_day = _music_activity_date_range(
+            user_music_entries,
+        )
+        music_album_activity_subtitle = _build_music_album_activity_subtitle(
+            album,
+            album_tracker,
+            len(user_music_entries),
+            Track.objects.filter(album=album).count(),
+            first_listened,
+            last_listened,
+            collapse_same_day,
+        )
+
+        response = HttpResponse()
+        response.write(
+            render_to_string(
+                "app/components/detail_music_track_button.html",
+                {
+                    "track_data": track_data,
+                    "track_button_oob": True,
+                },
+                request=request,
+            ),
+        )
+        response.write(
+            render_to_string(
+                "app/components/detail_music_track_history_line.html",
+                {
+                    "track_data": track_data,
+                    "history_oob": True,
+                    "user": request.user,
+                },
+                request=request,
+            ),
+        )
+        if music_album_activity_subtitle:
+            response.write(
+                render_to_string(
+                    "app/components/detail_music_album_activity_subtitle.html",
+                    {
+                        "album": album,
+                        "music_album_activity_subtitle": music_album_activity_subtitle,
+                        "subtitle_oob": True,
+                        "user": request.user,
+                    },
+                    request=request,
+                ),
+            )
+        response["HX-Trigger"] = json.dumps(
+            {
+                "closeModal": {},
+                "showToast": {
+                    "message": f"Added listen for {track.title if track else 'track'}.",
+                    "type": "success",
+                },
+            },
+        )
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
 
     next_url = request.GET.get("next", "")
     if next_url:

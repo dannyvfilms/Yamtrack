@@ -4269,6 +4269,7 @@ class Episode(models.Model):
             )
             season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
             max_progress = len(season_metadata["episodes"])
+            self.related_season.max_progress = max_progress
         except (
             providers.services.ProviderAPIError,
             RequestException,

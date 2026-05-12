@@ -1,0 +1,14 @@
+{% load app_tags %}
+
+<div id="music-track-button-{{ track_data.track.id }}"
+     {% if track_button_oob %}hx-swap-oob="true"{% endif %}>
+  <button @click="trackOpen = true"
+          title="Track Song"
+          class="p-2 {% if track_data.music %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-500{% endif %} text-white rounded-full transition duration-300 cursor-pointer">
+    {% if track_data.music %}
+      {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
+    {% else %}
+      {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
+    {% endif %}
+  </button>
+</div>

@@ -1,0 +1,4 @@
+<div id="detail-activity-subtitle-slot-{{ media_type }}-{{ media.media_id }}-{{ media.source }}"
+     {% if activity_subtitle_slot_oob %}hx-swap-oob="outerHTML"{% endif %}>
+  {% include "app/components/detail_activity_subtitle.html" with activity_subtitle=activity_subtitle user=user only %}
+</div>

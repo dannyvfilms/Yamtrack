@@ -66,7 +66,7 @@
                 <h2 class="text-sm font-medium text-gray-400 md:hidden">{{ media.season_header_title|default:media.title }}</h2>
                 {% if not public_view|default:False and current_instance %}
                   <div class="mt-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:hidden">
-                    <span class="text-sm font-medium text-gray-400">
+                    <span id="season-progress-mobile-{{ current_instance.id }}" class="text-sm font-medium text-gray-400">
                       Progress: {{ current_instance.completed_episode_count }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
                     </span>
                     {% if current_instance.start_date or current_instance.end_date %}
@@ -87,7 +87,7 @@
                   <h2 class="text-sm font-medium text-gray-400">{{ media.season_header_title|default:media.title }}</h2>
                   {% if not public_view|default:False and current_instance %}
                     <span class="mx-2 text-gray-600">•</span>
-                    <span class="text-sm font-medium text-gray-400">
+                    <span id="season-progress-desktop-{{ current_instance.id }}" class="text-sm font-medium text-gray-400">
                       Progress: {{ current_instance.completed_episode_count }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
                     </span>
                     {% if current_instance.start_date or current_instance.end_date %}
@@ -185,80 +185,7 @@
             </div>
           </div>
         {% endwith %}
-        {% if activity_subtitle %}
-          <div class="mb-3 text-center text-sm font-medium text-gray-400 md:text-start">
-            <div class="{% if activity_subtitle.duration_text %}flex items-center justify-center gap-0.5 whitespace-nowrap text-[13px] tracking-[-0.01em] sm:hidden{% else %}flex flex-wrap items-center justify-center gap-y-1 sm:hidden{% endif %}">
-              {% if activity_subtitle.duration_text %}
-                <span class="inline-flex items-center">
-                  <span>
-                    {{ activity_subtitle.duration_text|cut:" watched"|cut:" played"|cut:" listened"|cut:" read" }}{% if activity_subtitle.primary_text %} ({{ activity_subtitle.primary_text|cut:"Progress: " }}){% endif %}
-                  </span>
-                </span>
-                {% if activity_subtitle.date_start or activity_subtitle.date_end %}
-                  <span class="mx-1 text-gray-600">•</span>
-                  <span>
-                    {% if activity_subtitle.date_start and activity_subtitle.date_end %}
-                      {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
-                        {{ activity_subtitle.date_start|user_date_format:user }}
-                      {% else %}
-                        {{ activity_subtitle.date_start|user_date_format:user }} - {{ activity_subtitle.date_end|user_date_format:user }}
-                      {% endif %}
-                    {% elif activity_subtitle.date_start %}
-                      {{ activity_subtitle.date_start|user_date_format:user }}
-                    {% else %}
-                      {{ activity_subtitle.date_end|user_date_format:user }}
-                    {% endif %}
-                  </span>
-                {% endif %}
-              {% else %}
-                {% if activity_subtitle.primary_text %}
-                  <span>{{ activity_subtitle.primary_text }}</span>
-                {% endif %}
-                {% if activity_subtitle.date_start or activity_subtitle.date_end %}
-                  <span class="mx-2 text-gray-600">•</span>
-                  <span>
-                    {% if activity_subtitle.date_start and activity_subtitle.date_end %}
-                      {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
-                        {{ activity_subtitle.date_start|user_date_format:user }}
-                      {% else %}
-                        {{ activity_subtitle.date_start|user_date_format:user }} - {{ activity_subtitle.date_end|user_date_format:user }}
-                      {% endif %}
-                    {% elif activity_subtitle.date_start %}
-                      {{ activity_subtitle.date_start|user_date_format:user }}
-                    {% else %}
-                      {{ activity_subtitle.date_end|user_date_format:user }}
-                    {% endif %}
-                  </span>
-                {% endif %}
-              {% endif %}
-            </div>
-            <div class="hidden flex-wrap items-center justify-center gap-y-1 sm:flex md:justify-start">
-              {% if activity_subtitle.primary_text %}
-                <span>{{ activity_subtitle.primary_text }}</span>
-              {% endif %}
-              {% if activity_subtitle.date_start or activity_subtitle.date_end %}
-                <span class="mx-2 text-gray-600">•</span>
-                <span>
-                  {% if activity_subtitle.date_start and activity_subtitle.date_end %}
-                    {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
-                      {{ activity_subtitle.date_start|user_date_format:user }}
-                    {% else %}
-                      {{ activity_subtitle.date_start|user_date_format:user }} - {{ activity_subtitle.date_end|user_date_format:user }}
-                    {% endif %}
-                  {% elif activity_subtitle.date_start %}
-                    {{ activity_subtitle.date_start|user_date_format:user }}
-                  {% else %}
-                    {{ activity_subtitle.date_end|user_date_format:user }}
-                  {% endif %}
-                </span>
-              {% endif %}
-              {% if activity_subtitle.duration_text %}
-                <span class="mx-2 text-gray-600">•</span>
-                <span>{{ activity_subtitle.duration_text }}</span>
-              {% endif %}
-            </div>
-          </div>
-        {% endif %}
+        {% include "app/components/detail_activity_subtitle_slot.html" with media=media media_type=media_type activity_subtitle=activity_subtitle user=user only %}
         {% if media.media_type == MediaTypes.BOOK.value and media.series_name %}
           <p class="text-indigo-400 font-medium mb-4 text-center md:text-start">
             {{ media.series_name }}
@@ -340,54 +267,7 @@
             </div>
           {% endif %}
 
-          {% if user_medias and current_instance and not public_view|default:False %}
-            <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, ratingScaleMax: {{ user|rating_scale_max }}, hoverRating: null, isHovering: false, formatRating(value) { if (value === null || value === undefined || value === '') { return ''; } return this.ratingScaleMax === 5 ? String(value) + '/5' : String(value); } }"
-                 class="relative shrink-0 sm:w-auto">
-              <button type="button"
-                      @click="showRatingPopup = !showRatingPopup"
-                      class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
-                <span class="sr-only">Your score</span>
-                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8">
-                  {% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 sm:h-4 sm:w-4" %}
-                </span>
-                <span class="inline-flex items-center gap-1 sm:gap-2">
-                  <span class="text-[12px] font-semibold text-white sm:text-sm {% if current_instance.score is None %}hidden{% endif %}"
-                        :class="rating ? '' : 'hidden'"
-                        x-text="formatRating(rating)">{% if current_instance.score is not None %}{% if user|rating_scale_max == 5 %}{{ current_instance.score|score_display:user }}/5{% else %}{{ current_instance.score|score_display:user }}{% endif %}{% endif %}</span>
-                  <span class="text-[12px] text-gray-500 sm:text-sm {% if current_instance.score is None %}hidden{% endif %}"
-                        :class="rating ? '' : 'hidden'">|</span>
-                  <span class="text-[12px] font-medium text-gray-200 sm:text-sm"
-                        x-text="rating ? 'Edit rating' : 'Add rating'">{% if current_instance.score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
-                </span>
-              </button>
-
-              <div x-show="showRatingPopup"
-                   @click.outside="showRatingPopup = false; isHovering = false"
-                   class="absolute left-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-10"
-                   @mouseenter="isHovering = true"
-                   @mouseleave="isHovering = false; hoverRating = null">
-                <div class="flex justify-between mb-1">
-                  {% with rating_range=user|rating_scale_max|get_range %}
-                    {% for rating_value in rating_range %}
-                      <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
-                              @mouseenter="hoverRating = {{ rating_value }}"
-                              hx-post="{% url 'update_media_score' media_type current_instance.id %}"
-                              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                              hx-vals='{"score": {{ rating_value }}, "toggle": true }'
-                              hx-trigger="click"
-                              hx-swap="none"
-                              class="focus:outline-none flex flex-col items-center cursor-pointer">
-                        <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
-                          {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
-                        </div>
-                        <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
-                      </button>
-                    {% endfor %}
-                  {% endwith %}
-                </div>
-              </div>
-            </div>
-          {% endif %}
+          {% include "app/components/detail_score_chip_slot.html" with media=media current_instance=current_instance media_type=media_type user=user user_medias=user_medias public_view=public_view csrf_token=csrf_token only %}
 
         </div>
       {% endif %}
@@ -497,33 +377,7 @@
                   </div>
                 </div>
               {% else %}
-                <button type="button"
-                        class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
-                        hx-get="{% media_view_url 'track_modal' media %}"
-                        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}}'
-                        hx-target="#{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"
-                        hx-trigger="click"
-                        @click="trackOpen = true">
-                  {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-                  <span class="font-medium">
-                    {% if user_medias %}
-                      {{ current_instance.status|media_status_readable }}
-                    {% else %}
-                      Add to tracker
-                    {% endif %}
-                  </span>
-                </button>
-
-                <div x-show="trackOpen"
-                     @keydown.escape.window="trackOpen = false"
-                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                  <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-                       style="width: min(96vw, 72rem);"
-                       @click.outside="trackOpen = false"
-                       @click.stop>
-                    <div id="{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"></div>
-                  </div>
-                </div>
+                {% include "app/components/detail_track_action.html" with media=media current_instance=current_instance return_url=request.get_full_path|urlencode track_action_update=True %}
               {% endif %}
             {% endif %}
           </div>
@@ -1415,16 +1269,7 @@
                             {% if not public_view|default:False and episode.actions_enabled %}
                             <div class="flex space-x-2">
                               <div x-data="{ trackOpen: false }">
-                                <button @click="trackOpen = true"
-                                        title="Track Episode"
-                                        class="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full transition duration-300 cursor-pointer">
-                                  {% if episode.history %}
-                                    {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
-                                  {% else %}
-                                    {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
-                                  {% endif %}
-                                </button>
-
+                                {% include "app/components/detail_episode_track_button.html" with episode=episode track_button_oob=False only %}
                                 {% include "app/components/fill_track_episode.html" with request=request media=episode episode=episode episode_title=episode.title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
                               </div>
 
@@ -1582,22 +1427,7 @@
                           </div>
                           {% endif %}
                         </div>
-                        {% if episode.history %}
-                          <p class="text-xs text-gray-400 mt-2 px-4">
-                            Ended:
-                            {% if episode.history.0.end_date %}
-                              {{ episode.history.0.end_date|user_date_format:user }}
-                            {% else %}
-                              No date provided
-                            {% endif %}
-                            {% if episode.history|length > 1 %}• Watched {{ episode.history|length }} times{% endif %}
-                            {% if episode.collection_entry and episode.collection_entry.resolution %}• Collected: {{ episode.collection_entry.resolution }}{% endif %}
-                          </p>
-                        {% elif episode.collection_entry and episode.collection_entry.resolution %}
-                          <p class="text-xs text-gray-400 mt-2 px-4">
-                            Collected: {{ episode.collection_entry.resolution }}
-                          </p>
-                        {% endif %}
+                        {% include "app/components/detail_episode_history_line.html" with episode=episode user=user history_oob=False only %}
                       </div>
                     </div>
                   </div>
@@ -1689,21 +1519,8 @@
 
   {% endif %}
 
-  {# Script to close track modal after successful podcast save via HTMX #}
   <script>
     (function() {
-      // Close modal after successful podcast save via HTMX
-      document.body.addEventListener('closeModal', function() {
-        // Find and close any open track modals
-        const modals = document.querySelectorAll('[x-data*="trackOpen"]');
-        modals.forEach(function(modal) {
-          const alpineData = Alpine.$data(modal);
-          if (alpineData && alpineData.trackOpen !== undefined) {
-            alpineData.trackOpen = false;
-          }
-        });
-      });
-
       // Reload when Safari's back/forward cache restores the page
       window.addEventListener('pageshow', function(event) {
         if (event.persisted) {

@@ -1,0 +1,19 @@
+{% load user_tags %}
+
+<p id="track-history-{{ track_data.track.id }}"
+   {% if history_oob %}hx-swap-oob="true"{% endif %}
+   class="text-xs text-gray-400 mt-2 px-4"
+   {% if not track_data.history and not track_data.collection_entry %}style="display: none;"{% endif %}>
+  {% if track_data.history %}
+    Last listened:
+    {% if track_data.history.0.end_date %}
+      {{ track_data.history.0.end_date|user_date_format:user }}
+    {% else %}
+      No date provided
+    {% endif %}
+    {% if track_data.history|length > 1 %}• Listened {{ track_data.history|length }} times{% endif %}
+    {% if track_data.collection_entry and track_data.collection_entry.audio_codec %}• Collected: {{ track_data.collection_entry.audio_codec }}{% endif %}
+  {% elif track_data.collection_entry and track_data.collection_entry.audio_codec %}
+    Collected: {{ track_data.collection_entry.audio_codec }}
+  {% endif %}
+</p>

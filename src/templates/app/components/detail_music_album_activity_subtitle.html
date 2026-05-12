@@ -1,0 +1,29 @@
+{% load user_tags %}
+
+{% if music_album_activity_subtitle %}
+  <div id="music-album-activity-subtitle-{{ album.id }}"
+       {% if subtitle_oob %}hx-swap-oob="true"{% endif %}
+       class="mb-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
+    <span>{{ music_album_activity_subtitle.title }}</span>
+    {% if music_album_activity_subtitle.progress_text %}
+      <span class="mx-2 text-gray-600">•</span>
+      <span>{{ music_album_activity_subtitle.progress_text }}</span>
+    {% endif %}
+    {% if music_album_activity_subtitle.date_start or music_album_activity_subtitle.date_end %}
+      <span class="mx-2 text-gray-600">•</span>
+      <span>
+        {% if music_album_activity_subtitle.date_start and music_album_activity_subtitle.date_end %}
+          {% if music_album_activity_subtitle.collapse_same_day or music_album_activity_subtitle.date_start == music_album_activity_subtitle.date_end %}
+            {{ music_album_activity_subtitle.date_start|user_date_format:user }}
+          {% else %}
+            {{ music_album_activity_subtitle.date_start|user_date_format:user }} - {{ music_album_activity_subtitle.date_end|user_date_format:user }}
+          {% endif %}
+        {% elif music_album_activity_subtitle.date_start %}
+          {{ music_album_activity_subtitle.date_start|user_date_format:user }}
+        {% else %}
+          {{ music_album_activity_subtitle.date_end|user_date_format:user }}
+        {% endif %}
+      </span>
+    {% endif %}
+  </div>
+{% endif %}

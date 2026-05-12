@@ -1,5 +1,7 @@
+import json
 import datetime
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -7,6 +9,9 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    Album,
+    Artist,
+    Game,
     TV,
     Anime,
     Book,
@@ -15,7 +20,9 @@ from app.models import (
     Item,
     Manga,
     MediaTypes,
+    Music,
     Movie,
+    Track,
     Season,
     Sources,
     Status,
@@ -378,6 +385,221 @@ class CreateMedia(TestCase):
 
     @patch("app.models.providers.services.get_media_metadata")
     @patch("app.views.services.get_media_metadata")
+    def test_create_episode_htmx_returns_inline_detail_updates(
+        self,
+        view_metadata_mock,
+        model_metadata_mock,
+    ):
+        """HTMX episode saves should refresh the season card counters in place."""
+        tv_metadata = {
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "title": "Friends",
+            "original_title": "Friends",
+            "localized_title": "Friends",
+            "image": "http://example.com/friends.jpg",
+            "details": {"seasons": 1},
+            "related": {
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "image": "http://example.com/friends-s1.jpg",
+                    },
+                ],
+            },
+        }
+        season_metadata = {
+            **tv_metadata,
+            "media_type": MediaTypes.SEASON.value,
+            "season_number": 1,
+            "season_title": "Season 1",
+            "details": {"episodes": 1},
+            "episodes": [
+                {
+                    "episode_number": 1,
+                    "air_date": "2023-06-01",
+                    "image": "http://example.com/friends-s1e1.jpg",
+                    "name": "The One Where Monica Gets a Roommate",
+                },
+            ],
+        }
+
+        def metadata_side_effect(media_type, media_id, source, season_numbers=None, **_kwargs):
+            self.assertEqual(media_id, "1668")
+            self.assertEqual(source, Sources.TMDB.value)
+            if media_type == "tv_with_seasons":
+                self.assertEqual(season_numbers, [1])
+                return {
+                    **tv_metadata,
+                    "season/1": season_metadata,
+                }
+            if media_type == MediaTypes.SEASON.value:
+                self.assertEqual(season_numbers, [1])
+                return season_metadata
+            if media_type == MediaTypes.TV.value:
+                return tv_metadata
+            error_message = f"Unexpected metadata request: {media_type}"
+            raise AssertionError(error_message)
+
+        view_metadata_mock.side_effect = metadata_side_effect
+        model_metadata_mock.side_effect = metadata_side_effect
+
+        create_response = self.client.post(
+            f"{reverse('episode_save')}?next=/details/tmdb/tv/1668/friends/season/1",
+            {
+                "media_id": "1668",
+                "season_number": 1,
+                "episode_number": 1,
+                "source": Sources.TMDB.value,
+                "end_date": "2023-06-01",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        response = self.client.post(
+            f"{reverse('episode_save')}?next=/details/tmdb/tv/1668/friends/season/1",
+            {
+                "media_id": "1668",
+                "season_number": 1,
+                "episode_number": 1,
+                "source": Sources.TMDB.value,
+                "end_date": "2023-06-02",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="episode-track-button-', html=False)
+        self.assertContains(response, 'id="episode-history-', html=False)
+        self.assertContains(response, 'hx-swap-oob="true"', html=False)
+        self.assertContains(response, "Watched 2 times")
+        self.assertContains(response, "season-progress-mobile-", html=False)
+        self.assertContains(response, "season-progress-desktop-", html=False)
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["closeModal"], {})
+        self.assertEqual(trigger["showToast"]["type"], "success")
+        self.assertIn("Added watch", trigger["showToast"]["message"])
+        self.assertEqual(
+            Episode.objects.filter(
+                item__media_id="1668",
+                related_season__user=self.user,
+                item__episode_number=1,
+            ).count(),
+            2,
+        )
+
+    def test_create_song_htmx_returns_inline_detail_updates(self):
+        """HTMX song saves should refresh album track state in place."""
+        artist = Artist.objects.create(name="The Futureheads")
+        album = Album.objects.create(title="The Futuristics", artist=artist)
+        track = Track.objects.create(
+            album=album,
+            title="Track 1",
+            track_number=1,
+            disc_number=1,
+            musicbrainz_recording_id="recording-1",
+            duration_ms=180000,
+        )
+
+        create_response = self.client.post(
+            f"{reverse('song_save')}?next=/details/music/artist/{artist.id}/the-futureheads/album/{album.id}/the-futuristics",
+            {
+                "recording_id": "recording-1",
+                "album_id": album.id,
+                "track_id": track.id,
+                "end_date": "2023-06-01T00:00",
+            },
+        )
+        self.assertEqual(create_response.status_code, 302)
+
+        response = self.client.post(
+            f"{reverse('song_save')}?next=/details/music/artist/{artist.id}/the-futureheads/album/{album.id}/the-futuristics",
+            {
+                "recording_id": "recording-1",
+                "album_id": album.id,
+                "track_id": track.id,
+                "end_date": "2023-06-02T00:00",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="music-track-button-', html=False)
+        self.assertContains(response, 'id="track-history-', html=False)
+        self.assertContains(response, 'hx-swap-oob="true"', html=False)
+        self.assertContains(response, "Listened 2 times")
+        self.assertContains(response, "music-album-activity-subtitle-", html=False)
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["closeModal"], {})
+        self.assertEqual(trigger["showToast"]["type"], "success")
+        self.assertIn("Added listen", trigger["showToast"]["message"])
+        self.assertEqual(
+            Music.objects.filter(
+                item__media_id="recording-1",
+                user=self.user,
+                track=track,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            Music.objects.get(
+                item__media_id="recording-1",
+                user=self.user,
+                track=track,
+            ).history.count(),
+            2,
+        )
+
+    @patch("app.views.ensure_item_metadata")
+    def test_create_game_htmx_returns_activity_subtitle_update(self, ensure_item_metadata_mock):
+        """HTMX game saves should refresh the shared activity subtitle in place."""
+        item = Item.objects.create(
+            media_id="game-123",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Tracked Game",
+            image="http://example.com/game.jpg",
+            provider_game_lengths={"igdb": {"summary": {"normally_seconds": 8100}}},
+            provider_game_lengths_source="igdb",
+        )
+        ensure_item_metadata_mock.return_value = SimpleNamespace(item=item)
+
+        response = self.client.post(
+            f"{reverse('media_save')}?next=/details/igdb/game/123/tracked-game",
+            {
+                "track_form_id": "track-form-test",
+                "media_id": "game-123",
+                "source": Sources.IGDB.value,
+                "media_type": MediaTypes.GAME.value,
+                "status": Status.PLANNING.value,
+                "progress": "3h25min",
+                "start_date": "2026-04-13T12:00",
+                "end_date": "2026-05-12T12:00",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="detail-activity-subtitle-slot-game-game-123-igdb"', html=False)
+        self.assertContains(response, "Progress: 3h 25min")
+        self.assertContains(response, "April 13, 2026 - May 12, 2026")
+        self.assertContains(response, 'data-track-action-root', html=False)
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["closeModal"]["formId"], "track-form-test")
+        self.assertEqual(trigger["showToast"]["type"], "success")
+        self.assertIn("Added", trigger["showToast"]["message"])
+        self.assertTrue(
+            Game.objects.filter(
+                item__media_id="game-123",
+                user=self.user,
+                progress=205,
+                status=Status.PLANNING.value,
+            ).exists(),
+        )
+
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("app.views.services.get_media_metadata")
     def test_create_grouped_anime_episode_uses_provider_source(
         self,
         view_metadata_mock,
@@ -603,7 +825,7 @@ class EditMedia(TestCase):
             end_date=datetime.datetime(2023, 6, 1, 0, 0, tzinfo=datetime.UTC),
         )
 
-        self.client.post(
+        response = self.client.post(
             reverse("media_save"),
             {
                 "instance_id": movie.id,
@@ -616,7 +838,164 @@ class EditMedia(TestCase):
                 "notes": "Nice",
             },
         )
+        self.assertEqual(response.status_code, 302)
         self.assertEqual(Movie.objects.get(item__media_id="10494").score, 10)
+
+    def test_edit_movie_htmx_returns_inline_detail_update(self):
+        """HTMX saves should update the detail tracker in place."""
+        item = Item.objects.create(
+            media_id="10494",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Perfect Blue",
+            image="http://example.com/image.jpg",
+        )
+        movie = Movie.objects.create(
+            item=item,
+            user=self.user,
+            score=9,
+            progress=1,
+            status=Status.IN_PROGRESS.value,
+            notes="Nice",
+            start_date=datetime.datetime(2023, 6, 1, 0, 0, tzinfo=datetime.UTC),
+            end_date=datetime.datetime(2023, 6, 1, 0, 0, tzinfo=datetime.UTC),
+        )
+        initial_status = Movie.objects.get(item__media_id="10494").status
+
+        response = self.client.post(
+            f"{reverse('media_save')}?next=/details/tmdb/movie/10494/perfect-blue",
+            {
+                "track_form_id": "track-form-test",
+                "instance_id": movie.id,
+                "media_id": "10494",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "score": 10,
+                "progress": 1,
+                "status": Status.COMPLETED.value,
+                "notes": "Nice",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-track-action-root', html=False)
+        self.assertContains(response, 'id="track-action-movie-10494"', html=False)
+        self.assertContains(response, f'id="detail-score-chip-{movie.id}"', html=False)
+        self.assertContains(response, "Edit rating")
+        self.assertContains(response, "Completed")
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["closeModal"]["formId"], "track-form-test")
+        self.assertEqual(trigger["showToast"]["type"], "success")
+        self.assertIn("Updated", trigger["showToast"]["message"])
+        self.assertTrue(
+            Movie.objects.filter(
+                item__media_id="10494",
+                score=10,
+                status=Status.COMPLETED.value,
+            ).exists(),
+        )
+
+    @patch("app.views.ensure_item_metadata")
+    def test_create_movie_htmx_inserts_score_chip_slot(self, ensure_item_metadata_mock):
+        """HTMX tracker creation should insert the score chip into the page."""
+        item = Item.objects.create(
+            media_id="10494",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Perfect Blue",
+            image="http://example.com/image.jpg",
+        )
+        ensure_item_metadata_mock.return_value = SimpleNamespace(item=item)
+
+        response = self.client.post(
+            f"{reverse('media_save')}?next=/details/tmdb/movie/10494/perfect-blue",
+            {
+                "track_form_id": "track-form-test",
+                "media_id": "10494",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "score": 8.7,
+                "progress": 1,
+                "status": Status.COMPLETED.value,
+                "notes": "Nice",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'id="detail-score-chip-slot-movie-10494-tmdb"',
+            html=False,
+        )
+        self.assertContains(response, f'id="detail-score-chip-{Movie.objects.get(item__media_id="10494").id}"', html=False)
+        self.assertContains(response, "Edit rating")
+        self.assertContains(response, "Completed")
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["closeModal"]["formId"], "track-form-test")
+        self.assertEqual(trigger["showToast"]["type"], "success")
+        self.assertIn("Added", trigger["showToast"]["message"])
+        self.assertTrue(
+            Movie.objects.filter(
+                item__media_id="10494",
+                score=8.7,
+                status=Status.COMPLETED.value,
+            ).exists(),
+        )
+
+    def test_edit_movie_htmx_validation_error_reopens_modal(self):
+        """Invalid HTMX saves should re-render the modal and reopen it."""
+        item = Item.objects.create(
+            media_id="10494",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Perfect Blue",
+            image="http://example.com/image.jpg",
+        )
+        movie = Movie.objects.create(
+            item=item,
+            user=self.user,
+            score=9,
+            progress=1,
+            status=Status.IN_PROGRESS.value,
+            notes="Nice",
+            start_date=datetime.datetime(2023, 6, 1, 0, 0, tzinfo=datetime.UTC),
+            end_date=datetime.datetime(2023, 6, 1, 0, 0, tzinfo=datetime.UTC),
+        )
+        initial_status = Movie.objects.get(item__media_id="10494").status
+
+        response = self.client.post(
+            f"{reverse('media_save')}?next=/details/tmdb/movie/10494/perfect-blue",
+            {
+                "track_form_id": "track-form-test",
+                "instance_id": movie.id,
+                "media_id": "10494",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "score": 10,
+                "progress": 1,
+                "status": "bogus",
+                "notes": "Nice",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-track-action-root', html=False)
+        self.assertContains(response, "trackOpen: true", html=False)
+        self.assertContains(response, "track-form-test")
+        self.assertContains(response, "data-track-modal-root", html=False)
+        self.assertContains(
+            response,
+            'hx-target="closest [data-track-action-root]"',
+            html=False,
+        )
+        self.assertContains(response, 'hx-swap="outerHTML"', html=False)
+        self.assertEqual(
+            Movie.objects.get(item__media_id="10494").status,
+            initial_status,
+        )
 
     def test_edit_movie_image_url(self):
         """Test overriding a movie image URL from the edit form."""

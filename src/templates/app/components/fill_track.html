@@ -9,27 +9,7 @@
     </div>
     <button type="button"
             class="text-gray-400 hover:text-white cursor-pointer shrink-0"
-            @click="
-              let node = $el.parentElement;
-              while (node) {
-                if (node.hasAttribute && node.hasAttribute('x-data')) {
-                  const modalState = Alpine.$data(node);
-                  if (modalState && modalState.createTrackOpen) {
-                    modalState.createTrackOpen = false;
-                    break;
-                  }
-                  if (modalState && modalState.editTrackOpen) {
-                    modalState.editTrackOpen = false;
-                    break;
-                  }
-                  if (modalState && modalState.trackOpen) {
-                    modalState.trackOpen = false;
-                    break;
-                  }
-                }
-                node = node.parentElement;
-              }
-            ">{% include "app/icons/x.svg" with classes="w-5 h-5" %}</button>
+            @click="closeTrackModal($el)">{% include "app/icons/x.svg" with classes="w-5 h-5" %}</button>
   </div>
 
   <div class="flex flex-col sm:flex-row min-h-[36rem]">
@@ -73,13 +53,18 @@
     </aside>
 
     <div class="flex-1 p-5 md:p-6 overflow-y-auto bg-[#262a2f]">
-      <section x-show="activeTab === 'general'" x-cloak>
-        <form id="{{ track_form_id }}"
-              method="post"
-              action="{{ general_submit_formaction }}"
-              x-data="mediaForm"
-              x-init="init">
+          <section x-show="activeTab === 'general'" x-cloak>
+            <form id="{{ track_form_id }}"
+                  method="post"
+                  action="{{ general_submit_formaction }}"
+                  hx-post="{{ general_submit_formaction }}"
+                  hx-target="{% if track_action_update %}closest [data-track-action-root]{% else %}closest [data-track-modal-root]{% endif %}"
+                  hx-swap="{% if track_action_update %}outerHTML{% else %}none{% endif %}"
+                  x-data="mediaForm"
+                  x-init="init"
+                  @submit="closeTrackModal($el)">
           {% csrf_token %}
+          <input type="hidden" name="track_form_id" value="{{ track_form_id }}">
           {% for hidden_field in general_hidden_fields %}
             {{ hidden_field }}
           {% endfor %}

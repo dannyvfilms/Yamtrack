@@ -1,0 +1,19 @@
+{% load user_tags %}
+
+<p id="episode-history-{{ episode.item.id }}"
+   {% if history_oob %}hx-swap-oob="true"{% endif %}
+   class="text-xs text-gray-400 mt-2 px-4"
+   {% if not episode.history and not episode.collection_entry %}style="display: none;"{% endif %}>
+  {% if episode.history %}
+    Ended:
+    {% if episode.history.0.end_date %}
+      {{ episode.history.0.end_date|user_date_format:user }}
+    {% else %}
+      No date provided
+    {% endif %}
+    {% if episode.history|length > 1 %}• Watched {{ episode.history|length }} times{% endif %}
+    {% if episode.collection_entry and episode.collection_entry.resolution %}• Collected: {{ episode.collection_entry.resolution }}{% endif %}
+  {% elif episode.collection_entry and episode.collection_entry.resolution %}
+    Collected: {{ episode.collection_entry.resolution }}
+  {% endif %}
+</p>

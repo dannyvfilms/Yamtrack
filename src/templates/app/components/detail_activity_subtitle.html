@@ -1,0 +1,76 @@
+{% load user_tags %}
+
+{% if activity_subtitle %}
+  <div class="mb-3 text-center text-sm font-medium text-gray-400 md:text-start">
+    <div class="{% if activity_subtitle.duration_text %}flex items-center justify-center gap-0.5 whitespace-nowrap text-[13px] tracking-[-0.01em] sm:hidden{% else %}flex flex-wrap items-center justify-center gap-y-1 sm:hidden{% endif %}">
+      {% if activity_subtitle.duration_text %}
+        <span class="inline-flex items-center">
+          <span>
+            {{ activity_subtitle.duration_text|cut:" watched"|cut:" played"|cut:" listened"|cut:" read" }}{% if activity_subtitle.primary_text %} ({{ activity_subtitle.primary_text|cut:"Progress: " }}){% endif %}
+          </span>
+        </span>
+        {% if activity_subtitle.date_start or activity_subtitle.date_end %}
+          <span class="mx-1 text-gray-600">•</span>
+          <span>
+            {% if activity_subtitle.date_start and activity_subtitle.date_end %}
+              {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
+                {{ activity_subtitle.date_start|user_date_format:user }}
+              {% else %}
+                {{ activity_subtitle.date_start|user_date_format:user }} - {{ activity_subtitle.date_end|user_date_format:user }}
+              {% endif %}
+            {% elif activity_subtitle.date_start %}
+              {{ activity_subtitle.date_start|user_date_format:user }}
+            {% else %}
+              {{ activity_subtitle.date_end|user_date_format:user }}
+            {% endif %}
+          </span>
+        {% endif %}
+      {% else %}
+        {% if activity_subtitle.primary_text %}
+          <span>{{ activity_subtitle.primary_text }}</span>
+        {% endif %}
+        {% if activity_subtitle.date_start or activity_subtitle.date_end %}
+          <span class="mx-2 text-gray-600">•</span>
+          <span>
+            {% if activity_subtitle.date_start and activity_subtitle.date_end %}
+              {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
+                {{ activity_subtitle.date_start|user_date_format:user }}
+              {% else %}
+                {{ activity_subtitle.date_start|user_date_format:user }} - {{ activity_subtitle.date_end|user_date_format:user }}
+              {% endif %}
+            {% elif activity_subtitle.date_start %}
+              {{ activity_subtitle.date_start|user_date_format:user }}
+            {% else %}
+              {{ activity_subtitle.date_end|user_date_format:user }}
+            {% endif %}
+          </span>
+        {% endif %}
+      {% endif %}
+    </div>
+    <div class="hidden flex-wrap items-center justify-center gap-y-1 sm:flex md:justify-start">
+      {% if activity_subtitle.primary_text %}
+        <span>{{ activity_subtitle.primary_text }}</span>
+      {% endif %}
+      {% if activity_subtitle.date_start or activity_subtitle.date_end %}
+        <span class="mx-2 text-gray-600">•</span>
+        <span>
+          {% if activity_subtitle.date_start and activity_subtitle.date_end %}
+            {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
+              {{ activity_subtitle.date_start|user_date_format:user }}
+            {% else %}
+              {{ activity_subtitle.date_start|user_date_format:user }} - {{ activity_subtitle.date_end|user_date_format:user }}
+            {% endif %}
+          {% elif activity_subtitle.date_start %}
+            {{ activity_subtitle.date_start|user_date_format:user }}
+          {% else %}
+            {{ activity_subtitle.date_end|user_date_format:user }}
+          {% endif %}
+        </span>
+      {% endif %}
+      {% if activity_subtitle.duration_text %}
+        <span class="mx-2 text-gray-600">•</span>
+        <span>{{ activity_subtitle.duration_text }}</span>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}

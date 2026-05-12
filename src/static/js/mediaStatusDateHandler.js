@@ -107,6 +107,226 @@ window.applyTrackModalReleaseDate = function applyTrackModalReleaseDate(
   trackModalDispatchInputEvents(startDateInput);
 };
 
+function trackModalResolveElement(target) {
+  if (typeof target === "string") {
+    return document.getElementById(target);
+  }
+
+  if (target instanceof Element) {
+    return target;
+  }
+
+  return null;
+}
+
+function trackModalGetStateKeyFromExpression(expression) {
+  if (!expression) {
+    return null;
+  }
+
+  if (expression.includes("createTrackOpen")) {
+    return "createTrackOpen";
+  }
+  if (expression.includes("editTrackOpen")) {
+    return "editTrackOpen";
+  }
+  if (expression.includes("trackOpen")) {
+    return "trackOpen";
+  }
+
+  return null;
+}
+
+function trackModalFindStateTarget(target) {
+  const element = trackModalResolveElement(target);
+  if (!element || !window.Alpine) {
+    return null;
+  }
+
+  let node = element;
+  while (node) {
+    if (node.hasAttribute?.("x-show")) {
+      const stateKey = trackModalGetStateKeyFromExpression(
+        node.getAttribute("x-show"),
+      );
+      if (stateKey) {
+        let host = node;
+        while (host && !host.hasAttribute?.("x-data")) {
+          host = host.parentElement;
+        }
+        if (host) {
+          return { host, stateKey };
+        }
+      }
+    }
+    node = node.parentElement;
+  }
+
+  node = element;
+  while (node) {
+    if (node.hasAttribute?.("x-data")) {
+      try {
+        const data = Alpine.$data(node);
+        if (data) {
+          if (Object.prototype.hasOwnProperty.call(data, "createTrackOpen")) {
+            return { host: node, stateKey: "createTrackOpen" };
+          }
+          if (Object.prototype.hasOwnProperty.call(data, "editTrackOpen")) {
+            return { host: node, stateKey: "editTrackOpen" };
+          }
+          if (Object.prototype.hasOwnProperty.call(data, "trackOpen")) {
+            return { host: node, stateKey: "trackOpen" };
+          }
+        }
+      } catch {
+        // Ignore Alpine lookup failures and keep searching.
+      }
+    }
+    node = node.parentElement;
+  }
+
+  return null;
+}
+
+function trackModalSetOpen(target, isOpen) {
+  const stateTarget = trackModalFindStateTarget(target);
+  if (!stateTarget || !window.Alpine) {
+    return false;
+  }
+
+  try {
+    const data = Alpine.$data(stateTarget.host);
+    if (!data || !(stateTarget.stateKey in data)) {
+      return false;
+    }
+    data[stateTarget.stateKey] = isOpen;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function trackModalOpenWhenReady(formId, attempt = 0) {
+  const form = document.getElementById(formId);
+  if (form && trackModalSetOpen(form, true)) {
+    return true;
+  }
+
+  if (attempt >= 10) {
+    return false;
+  }
+
+  window.setTimeout(() => {
+    trackModalOpenWhenReady(formId, attempt + 1);
+  }, 25);
+
+  return false;
+}
+
+function trackModalCloseAll() {
+  document.querySelectorAll("[x-show]").forEach((node) => {
+    if (node.querySelector("[data-track-modal-root]")) {
+      trackModalSetOpen(node, false);
+    }
+  });
+}
+
+function trackModalToastOutlet() {
+  const outlet = document.getElementById("htmx-toast-outlet");
+  return outlet?.firstElementChild || outlet;
+}
+
+function trackModalCreateToast(detail) {
+  const message = (detail && detail.message) || "";
+  if (!message) {
+    return null;
+  }
+
+  const type = (detail && detail.type) || "info";
+  const toast = document.createElement("div");
+  toast.className = `flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-${type} opacity-0`;
+  toast.setAttribute("role", type === "error" ? "alert" : "status");
+  toast.innerHTML = `
+    <p class="text-sm font-medium flex-1"></p>
+    <button type="button"
+            class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+            aria-label="Dismiss notification">x</button>
+  `;
+  toast.querySelector("p").textContent = message;
+  toast
+    .querySelector("button")
+    .addEventListener("click", () => toast.remove());
+
+  toast.classList.add(
+    "transition-all",
+    "duration-300",
+    "ease-out",
+    "transform",
+    "translate-y-[-1rem]",
+  );
+  window.setTimeout(() => {
+    toast.classList.add("opacity-100", "transform-none");
+  }, 10);
+
+  const duration = Number.parseInt(detail.duration, 10);
+  const timeout = Number.isFinite(duration)
+    ? duration
+    : type === "warning" || type === "error"
+      ? 8000
+      : 5000;
+  window.setTimeout(() => toast.remove(), timeout);
+  return toast;
+}
+
+window.closeTrackModal = function closeTrackModal(target) {
+  return trackModalSetOpen(target, false);
+};
+
+window.openTrackModal = function openTrackModal(target) {
+  return trackModalSetOpen(target, true);
+};
+
+window.showTrackToast = function showTrackToast(detail) {
+  const outlet = trackModalToastOutlet();
+  const toast = trackModalCreateToast(detail || {});
+  if (!outlet || !toast) {
+    return false;
+  }
+
+  outlet.appendChild(toast);
+  return true;
+};
+
+function trackModalHandleClose(event) {
+  const formId = event.detail?.formId;
+  if (formId) {
+    const form = document.getElementById(formId);
+    if (form) {
+      trackModalSetOpen(form, false);
+    }
+    return;
+  }
+
+  trackModalCloseAll();
+}
+
+function trackModalHandleOpen(event) {
+  const formId = event.detail?.formId;
+  if (!formId) {
+    return;
+  }
+
+  trackModalOpenWhenReady(formId);
+}
+
+function trackModalHandleToast(event) {
+  window.showTrackToast(event.detail || {});
+}
+
+document.addEventListener("closeModal", trackModalHandleClose);
+document.addEventListener("openModal", trackModalHandleOpen);
+document.addEventListener("showToast", trackModalHandleToast);
+
 document.addEventListener("alpine:init", () => {
   Alpine.data("mediaForm", () => ({
     autoFilled: {

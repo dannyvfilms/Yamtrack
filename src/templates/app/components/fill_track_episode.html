@@ -5,6 +5,7 @@
 {# Track Episode Modal #}
 <div x-show="trackOpen"
      x-cloak
+     data-track-modal-root
      @keydown.escape.window="trackOpen = false"
      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
   <div class="w-[400px] max-h-[90vh] px-4 md:px-0 relative z-60"
@@ -74,7 +75,10 @@
         {% endif %}
 
         <form method="post"
-              action="{% url 'episode_save' %}?next={{ request.path }}">
+              action="{% url 'episode_save' %}?next={{ request.path }}"
+              hx-post="{% url 'episode_save' %}?next={{ request.path }}"
+              hx-swap="none"
+              @submit="closeTrackModal($el)">
           {% csrf_token %}
           <input type="hidden" name="media_id" value="{{ media.media_id }}">
           <input type="hidden" name="season_number" value="{{ media.season_number }}">
