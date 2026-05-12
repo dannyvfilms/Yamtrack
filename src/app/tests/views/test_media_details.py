@@ -1963,6 +1963,36 @@ class MediaDetailsViewTests(TestCase):
         )
 
     @patch("app.providers.services.get_media_metadata")
+    def test_podcast_media_details_without_episode_context_does_not_crash(self, mock_get_metadata):
+        """Generic podcast details should skip the episode section when no episode list is available."""
+        mock_get_metadata.return_value = {
+            "media_id": "missing-show",
+            "title": "Fallback Podcast",
+            "media_type": MediaTypes.PODCAST.value,
+            "source": Sources.POCKETCASTS.value,
+            "image": "http://example.com/podcast.jpg",
+            "overview": "Podcast synopsis",
+            "related": {},
+            "details": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.POCKETCASTS.value,
+                    "media_type": MediaTypes.PODCAST.value,
+                    "media_id": "missing-show",
+                    "title": "fallback-podcast",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Fallback Podcast")
+        self.assertNotContains(response, 'id="episodes-list"', html=False)
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_edit_rating(self, mock_get_metadata):
         mock_get_metadata.return_value = {
             "media_id": "238",
