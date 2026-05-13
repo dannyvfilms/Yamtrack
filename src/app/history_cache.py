@@ -753,14 +753,32 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             models.Q(has_episode_person=True)
             | models.Q(has_season_person=True)
             | (
-                (models.Q(season_has_cast_credits=False) | models.Q(season_has_usable_credits=False))
+                (
+                    models.Q(season_has_cast_credits=False)
+                    | models.Q(
+                        related_season__item__source=Sources.TMDB.value,
+                        season_has_usable_credits=False,
+                    )
+                )
                 & models.Q(has_show_cast_person=True)
-                & models.Q(show_has_usable_credits=True)
+                & (
+                    ~models.Q(related_season__related_tv__item__source=Sources.TMDB.value)
+                    | models.Q(show_has_usable_credits=True)
+                )
             )
             | (
-                (models.Q(season_has_crew_credits=False) | models.Q(season_has_usable_credits=False))
+                (
+                    models.Q(season_has_crew_credits=False)
+                    | models.Q(
+                        related_season__item__source=Sources.TMDB.value,
+                        season_has_usable_credits=False,
+                    )
+                )
                 & models.Q(has_show_noncast_person=True)
-                & models.Q(show_has_usable_credits=True)
+                & (
+                    ~models.Q(related_season__related_tv__item__source=Sources.TMDB.value)
+                    | models.Q(show_has_usable_credits=True)
+                )
             ),
         )
     if target_media_id and target_source and (
