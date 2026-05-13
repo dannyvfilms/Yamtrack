@@ -13144,6 +13144,8 @@ def podcast_mark_all_played(request, show_id):
     from django.shortcuts import get_object_or_404
     from django.utils import timezone
 
+    import hashlib
+
     import events
     from app.mixins import disable_fetch_releases
     from app.models import (
@@ -13156,6 +13158,7 @@ def podcast_mark_all_played(request, show_id):
         Sources,
         Status,
     )
+    from integrations import podcast_rss
 
     show = get_object_or_404(PodcastShow, id=show_id)
 

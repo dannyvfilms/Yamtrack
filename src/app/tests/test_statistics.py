@@ -1386,6 +1386,24 @@ class ConsumptionStatisticsTests(TestCase):
             [2],
         )
 
+    def test_tv_consumption_stats_without_precomputed_minutes(self):
+        """TV consumption should infer minutes without needing a precomputed map."""
+        user_media, _ = statistics.get_user_media(
+            self.user,
+            self.start_date,
+            self.end_date,
+        )
+
+        tv_stats = statistics.get_tv_consumption_stats(
+            user_media,
+            self.start_date,
+            self.end_date,
+            minutes_per_type=None,
+        )
+
+        self.assertEqual(tv_stats["plays"]["total"], 2)
+        self.assertAlmostEqual(tv_stats["hours"]["total"], 1.5, places=2)
+
     def test_statistics_view_includes_consumption_context(self):
         """Statistics view should include the consumption breakdown data."""
         with patch("app.statistics._get_media_metadata_for_statistics") as metadata_mock:

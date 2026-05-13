@@ -2015,7 +2015,6 @@ def get_tv_consumption_stats(user_media, start_date, end_date, minutes_per_type=
             user_media or {},
             start_date,
             end_date,
-            user=user,
         )
 
     total_minutes = minutes_per_type.get(MediaTypes.TV.value, 0)

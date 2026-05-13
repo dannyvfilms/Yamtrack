@@ -5826,6 +5826,45 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Episode Two")
 
+    @patch("events.tasks.reload_calendar.apply_async")
+    @patch("integrations.podcast_rss.fetch_episodes_from_rss")
+    def test_podcast_mark_all_played_fetches_rss_episodes_without_name_errors(
+        self,
+        mock_fetch_episodes_from_rss,
+        mock_reload_calendar,
+    ):
+        """Mark-all-played should import RSS episodes and complete without missing imports."""
+        published_at = timezone.now() - timedelta(days=1)
+        show = PodcastShow.objects.create(
+            podcast_uuid="itunes:1002937871",
+            title="Rss Backfill Show",
+            author="Host",
+            image="http://example.com/podcast.jpg",
+            rss_feed_url="https://example.com/feed.xml",
+        )
+        mock_fetch_episodes_from_rss.return_value = [
+            {
+                "title": "Episode From RSS",
+                "published": published_at,
+                "duration": 1800,
+                "audio_url": "https://example.com/episode.mp3",
+                "episode_number": 7,
+                "season_number": 1,
+            },
+        ]
+
+        response = self.client.post(
+            reverse("podcast_mark_all_played", kwargs={"show_id": show.id}),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            PodcastEpisode.objects.filter(show=show, title="Episode From RSS").count(),
+            1,
+        )
+        self.assertEqual(Podcast.objects.filter(user=self.user, show=show).count(), 1)
+        mock_reload_calendar.assert_called_once()
+
     @patch("app.tasks.enqueue_genre_backfill_items", return_value=1)
     def test_media_details_genre_update_refreshes_reading_top_genres(self, _mock_enqueue_genre_backfill_items):
         """Saving reading genres from details should invalidate stale day caches."""

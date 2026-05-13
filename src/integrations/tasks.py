@@ -2080,7 +2080,6 @@ def update_collection_metadata_from_plex(library, user_id):
     """
     from integrations import plex as plex_api
     from app.collection_helpers import extract_collection_metadata_from_plex
-    from app.helpers import is_item_collected
     from app.models import Item
 
     User = get_user_model()

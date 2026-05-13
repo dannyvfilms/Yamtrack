@@ -689,7 +689,6 @@ class CustomList(models.Model):
         Returns the backdrop URL if suitable, None otherwise.
         """
         import logging
-        import requests
         from PIL import Image
         from io import BytesIO
         

@@ -79,7 +79,7 @@ def get_wikipedia_data(title):
             cache.set(cache_key, result, 60 * 60 * 24)  # Cache miss for 1 day
 
     except Exception as e:
-        logger.debug("Failed to fetch Wikipedia data for %s: %s", artist_name, e)
+        logger.debug("Failed to fetch Wikipedia data for %s: %s", title, e)
 
     return result
 
