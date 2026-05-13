@@ -263,6 +263,7 @@ class HomeRowEntry:
     use_podcast_show: bool = False
     podcast_show: object | None = None
     show_progress_controls: bool = True
+    subtitle_override: object | None = None
 
 
 def resolve_home_row_direction(sort_by: str, direction: str | None = None) -> str:
@@ -1443,6 +1444,12 @@ def _entry_date_added_timestamp(entry: HomeRowEntry):
     return dt_value.timestamp() if dt_value else None
 
 
+def _entry_release_date(item):
+    if not item:
+        return None
+    return getattr(item, "release_datetime", None) or getattr(item, "release_date", None)
+
+
 def _entry_release_timestamp(entry: HomeRowEntry):
     dt_value = _coerce_datetime(getattr(entry.item, "release_datetime", None))
     return dt_value.timestamp() if dt_value else None
@@ -1663,6 +1670,9 @@ def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
             use_podcast_show=bool(getattr(media_lookup.get(item.id), "use_podcast_show", False)),
             podcast_show=getattr(media_lookup.get(item.id), "show", None),
             show_progress_controls=media_lookup.get(item.id) is not None,
+            subtitle_override=_entry_release_date(item)
+            if status_filter == Status.PLANNING.value
+            else None,
         )
         for item in items
         if _item_matches_home_media_type(item, row.media_type)

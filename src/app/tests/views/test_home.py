@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 from django.conf import settings
@@ -22,7 +23,7 @@ from app.models import (
     Sources,
     Status,
 )
-from users.models import HomeScreenRow, HomeSortChoices
+from users.models import DateFormatChoices, HomeScreenRow, HomeSortChoices
 
 
 class HomeViewTests(TestCase):
@@ -140,6 +141,42 @@ class HomeViewTests(TestCase):
         self.assertContains(response, 'data-home-row="true"', html=False)
         self.assertNotContains(response, '<h2 class="text-2xl font-semibold">', html=False)
         self.assertNotContains(response, "Load All")
+
+    def test_home_view_planning_rows_show_full_release_date_subtitle(self):
+        """Planning rows should show the full release date instead of only the year."""
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+
+        movie_item = Item.objects.create(
+            media_id="planning-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Planning Movie",
+            image="http://example.com/planning-movie.jpg",
+            release_datetime=datetime(2026, 5, 12, 12, 0, tzinfo=UTC),
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+
+        self.client.get(reverse("home"))
+        movie_row = HomeScreenRow.objects.get(
+            user=self.user,
+            media_type=MediaTypes.MOVIE.value,
+            row_type="library_query",
+            position=0,
+        )
+        movie_row.filters = {
+            **(movie_row.filters or {}),
+            "status": Status.PLANNING.value,
+        }
+        movie_row.save(update_fields=["filters"])
+
+        response = self.client.get(reverse("home"))
+
+        self.assertContains(response, "2026-05-12")
 
     def test_home_podcast_cards_use_standard_card_width(self):
         """Podcast Home rows should use the same card width as other media rows."""
