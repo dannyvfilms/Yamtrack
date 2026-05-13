@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, time as datetime_time
+from datetime import datetime, time as datetime_time, timedelta
 from decimal import Decimal, InvalidOperation
 import math
 
@@ -432,6 +432,23 @@ class GameForm(MediaForm):
         """Bind form to model."""
 
         model = Game
+
+    def clean(self):
+        """Backfill a missing start date from the saved end date and progress."""
+        cleaned_data = super().clean()
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+        progress = cleaned_data.get("progress")
+
+        if (
+            not start_date
+            and isinstance(end_date, datetime)
+            and progress
+            and progress > 0
+        ):
+            cleaned_data["start_date"] = end_date - timedelta(minutes=progress)
+
+        return cleaned_data
 
 
 class BoardgameForm(MediaForm):

@@ -598,6 +598,40 @@ class CreateMedia(TestCase):
             ).exists(),
         )
 
+    @patch("app.views.ensure_item_metadata")
+    @override_settings(TRACK_TIME=True)
+    def test_create_game_backfills_start_date_from_progress(
+        self,
+        ensure_item_metadata_mock,
+    ):
+        """New game saves should infer start_date from progress when it is missing."""
+        item = Item.objects.create(
+            media_id="wordle-1",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Wordle",
+            image="http://example.com/wordle.jpg",
+        )
+        ensure_item_metadata_mock.return_value = SimpleNamespace(item=item)
+
+        response = self.client.post(
+            reverse("media_save"),
+            {
+                "media_id": "wordle-1",
+                "source": Sources.IGDB.value,
+                "media_type": MediaTypes.GAME.value,
+                "status": Status.PLANNING.value,
+                "progress": "5min",
+                "end_date": "2026-05-12T12:00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        game = Game.objects.get(item__media_id="wordle-1")
+        self.assertEqual(game.progress, 5)
+        self.assertIsNotNone(game.start_date)
+        self.assertEqual(game.start_date, game.end_date - datetime.timedelta(minutes=5))
+
     @patch("app.models.providers.services.get_media_metadata")
     @patch("app.views.services.get_media_metadata")
     def test_create_grouped_anime_episode_uses_provider_source(
@@ -895,6 +929,47 @@ class EditMedia(TestCase):
                 status=Status.COMPLETED.value,
             ).exists(),
         )
+
+    @override_settings(TRACK_TIME=True)
+    def test_edit_game_preserves_existing_start_date(self):
+        """Editing an existing game should not rewrite an already-set start date."""
+        item = Item.objects.create(
+            media_id="wordle-1",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Wordle",
+            image="http://example.com/wordle.jpg",
+        )
+        start_date = datetime.datetime(2026, 5, 12, 11, 40, tzinfo=datetime.UTC)
+        end_date = datetime.datetime(2026, 5, 12, 12, 0, tzinfo=datetime.UTC)
+        game = Game.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            progress=20,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        response = self.client.post(
+            reverse("media_save"),
+            {
+                "instance_id": game.id,
+                "media_id": "wordle-1",
+                "source": Sources.IGDB.value,
+                "media_type": MediaTypes.GAME.value,
+                "status": Status.PLANNING.value,
+                "progress": "10min",
+                "start_date": "2026-05-12T11:40",
+                "end_date": "2026-05-12T12:00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        game.refresh_from_db()
+        self.assertEqual(game.start_date, start_date)
+        self.assertEqual(game.end_date, end_date)
+        self.assertEqual(game.progress, 10)
 
     @patch("app.views.ensure_item_metadata")
     def test_create_movie_htmx_inserts_score_chip_slot(self, ensure_item_metadata_mock):
