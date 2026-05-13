@@ -6,10 +6,11 @@ Keep it simple. Simple is better than complex.
 Make the smallest maintainable change that solves the actual request.
 Prefer existing patterns over new abstractions.
 Avoid broad refactors, speculative helpers, and clever architecture unless clearly justified.
+Do not build for hypothetical future use. Implement the current need cleanly and stop there.
 Use judgment. Read enough surrounding code to understand the existing pattern, then avoid unnecessary exploration. Validate based on risk.
 Assume the user is a principal engineer.
 Optimize for correctness, speed, judgment, and token efficiency.
-Correct the user when appropriate .
+Correct the user when appropriate.
 
 ## Success Criteria
 
@@ -83,9 +84,21 @@ Before adding helpers, maps, files, abstractions, or validation layers, ask:
 3. Is this solving the exact issue?
 4. Is reuse or readability clearly improved?
 
+Do not create new abstractions, helper layers, provider interfaces, background tasks, docs, or config files unless the current task clearly needs them.
+Before adding a new function, class, setting, management command, or integration hook, check whether an existing pattern already solves the same problem.
+
 For bugs, patch the narrow failing path first.
 For small behavior changes, make the direct edit first.
 Avoid unrelated cleanup.
+
+Split work into reviewable patches when possible:
+
+- behavior change
+- mechanical refactor
+- tests
+- docs
+
+Do not mix these unless the user explicitly asks for a broad rewrite.
 
 For complex tasks:
 
@@ -99,6 +112,22 @@ For complex tasks:
 Match validation to risk.
 
 Skip validation by default for low-risk changes and say so plainly.
+
+Never skip validation when touching:
+
+- migrations
+- models
+- importers
+- webhooks
+- auth
+- permissions
+- settings
+- Celery tasks or background jobs
+- cache behavior
+- persisted data
+- external APIs
+- upgrade paths
+- any PR that spans more than one app boundary unless explicitly told not to validate
 
 Low-risk examples:
 
@@ -114,6 +143,8 @@ Also validate when:
 - a previous command failed
 - the user asked for validation
 - the change affects multiple routes, components, or packages
+
+Prefer targeted tests first, then `ruff check src`, then broader test runs only when risk justifies it.
 
 Prefer the cheapest useful check:
 
@@ -311,6 +342,8 @@ Conflict-resolution steps:
 
 ## PR / Commit Expectations
 - CI fails PRs that modify `.github/workflows/**` (see `.github/workflows/app-tests.yml`).
+- Large changes should be split into reviewable PRs or clearly justified if they cannot be.
+- Review summaries should call out behavior changes, files touched, validation run, and remaining risk.
 - Commit messages should use a short imperative title, then 1–3 bullet clarifications in the body. Optional issue lines: `Fixes #123` / `Refs #456`.
 
 ## Security / Safety Notes
