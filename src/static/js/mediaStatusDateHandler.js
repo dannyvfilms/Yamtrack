@@ -13,6 +13,70 @@ function trackModalDispatchInputEvents(input) {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function trackModalParseProgressMinutes(value) {
+  if (!value) {
+    return null;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  if (!normalizedValue) {
+    return null;
+  }
+
+  if (/^\d+(?:\.\d+)?$/.test(normalizedValue)) {
+    const convertedValue = Number.parseFloat(normalizedValue);
+    return Number.isFinite(convertedValue) && convertedValue >= 0
+      ? Math.trunc(convertedValue * 60)
+      : null;
+  }
+
+  if (normalizedValue.includes(":")) {
+    const chunks = normalizedValue.split(":");
+    if (chunks.length !== 2) {
+      return null;
+    }
+
+    const [hoursString, minutesString] = chunks;
+    if (!/^\d+$/.test(hoursString) || !/^\d+$/.test(minutesString)) {
+      return null;
+    }
+
+    const minutes = Number.parseInt(minutesString, 10);
+    if (minutes < 0 || minutes > 59) {
+      return null;
+    }
+
+    return Number.parseInt(hoursString, 10) * 60 + minutes;
+  }
+
+  const unitPattern = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|hr|h|minutes?|mins?|min)/g;
+  const matches = [...normalizedValue.matchAll(unitPattern)];
+  if (!matches.length) {
+    return null;
+  }
+
+  if (normalizedValue.replace(unitPattern, "").trim()) {
+    return null;
+  }
+
+  let totalMinutes = 0;
+  for (const match of matches) {
+    const amount = Number.parseFloat(match[1]);
+    if (!Number.isFinite(amount)) {
+      return null;
+    }
+
+    const unit = match[2];
+    if (unit.startsWith("h") || unit.startsWith("hr")) {
+      totalMinutes += amount * 60;
+    } else {
+      totalMinutes += amount;
+    }
+  }
+
+  return Math.trunc(totalMinutes);
+}
+
 function trackModalClearAutoFilledField(form, fieldName) {
   if (!form || !window.Alpine) {
     return;
@@ -333,6 +397,7 @@ document.addEventListener("alpine:init", () => {
       start_date: false,
       end_date: false,
     },
+    manualStartDate: false,
     // Track original values to detect intentionally empty dates
     original: {
       status: null,
@@ -340,10 +405,58 @@ document.addEventListener("alpine:init", () => {
       end_date: null,
     },
 
+    syncStartDateFromProgress() {
+      const progressField = this.$el.querySelector('[name="progress"]');
+      const startDateField = this.$el.querySelector('[name="start_date"]');
+      const endDateField = this.$el.querySelector('[name="end_date"]');
+
+      if (
+        !progressField ||
+        progressField.type !== "text" ||
+        !startDateField ||
+        !endDateField ||
+        this.manualStartDate
+      ) {
+        return;
+      }
+
+      const progressValue = progressField.value.trim();
+      if (!progressValue) {
+        if (this.autoFilled.start_date) {
+          startDateField.value = "";
+          this.autoFilled.start_date = false;
+          trackModalDispatchInputEvents(startDateField);
+        }
+        return;
+      }
+
+      const progressMinutes = trackModalParseProgressMinutes(progressValue);
+      if (progressMinutes === null || progressMinutes <= 0) {
+        return;
+      }
+
+      const endDateTime = trackModalParseLocalDateTime(endDateField.value);
+      if (!endDateTime) {
+        return;
+      }
+
+      const nextStartDate = trackModalFormatLocalDateTime(
+        new Date(endDateTime.getTime() - progressMinutes * 60000),
+      );
+      if (startDateField.value === nextStartDate) {
+        return;
+      }
+
+      startDateField.value = nextStartDate;
+      this.autoFilled.start_date = true;
+      trackModalDispatchInputEvents(startDateField);
+    },
+
     init() {
       const statusField = this.$el.querySelector('[name="status"]');
       const endDateField = this.$el.querySelector('[name="end_date"]');
       const startDateField = this.$el.querySelector('[name="start_date"]');
+      const progressField = this.$el.querySelector('[name="progress"]');
       const instanceIdField = this.$el.querySelector('[name="instance_id"]');
 
       // Check if this is a new form (no instance_id) vs editing existing record
@@ -394,6 +507,31 @@ document.addEventListener("alpine:init", () => {
           },
           { capture: true },
         );
+      }
+
+      if (
+        progressField &&
+        progressField.type === "text" &&
+        startDateField &&
+        endDateField
+      ) {
+        const syncStartDateFromProgress = () => this.syncStartDateFromProgress();
+        progressField.addEventListener("input", syncStartDateFromProgress);
+        endDateField.addEventListener("input", syncStartDateFromProgress);
+        startDateField.addEventListener("input", (event) => {
+          if (!event.isTrusted) {
+            return;
+          }
+
+          this.manualStartDate = Boolean(startDateField.value);
+          if (this.manualStartDate) {
+            this.autoFilled.start_date = false;
+          }
+        });
+
+        if (progressField.value.trim() && endDateField.value) {
+          this.syncStartDateFromProgress();
+        }
       }
 
       // Initial load handling - only auto-fill for new forms
@@ -462,6 +600,10 @@ document.addEventListener("alpine:init", () => {
           ) {
             startDateField.value = this.getCurrentDateTime(startDateField);
             this.autoFilled.start_date = true;
+          }
+
+          if (status === "Completed") {
+            this.syncStartDateFromProgress();
           }
         });
       }

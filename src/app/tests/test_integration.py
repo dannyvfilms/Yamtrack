@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from playwright.sync_api import expect, sync_playwright
 
-from app.models import Item, MediaTypes, Movie, Sources, Status
+from app.models import Game, Item, MediaTypes, Movie, Sources, Status
 from users.models import DateFormatChoices
 
 
@@ -280,3 +280,75 @@ class IntegrationTest(StaticLiveServerTestCase):
         expect(edit_modal).to_be_visible()
         edit_modal.locator("button[type='button']").first.click()
         expect(self.page.locator("[data-track-modal-root]:visible")).to_have_count(0)
+
+    @patch("app.models.Item.fetch_releases")
+    @patch("app.views._should_queue_game_lengths_refresh", return_value=False)
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_progress_live_updates_start_date(
+        self,
+        mock_get_metadata,
+        _mock_should_queue_game_lengths_refresh,
+        _mock_fetch_releases,
+    ):
+        """Game progress should backfill the start date immediately in the modal."""
+        mock_get_metadata.return_value = {
+            "media_id": "186090",
+            "title": "Wordle",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "http://example.com/wordle.jpg",
+            "details": {
+                "release_date": "2021-06-21",
+            },
+            "related": {},
+            "score": 8.5,
+            "score_count": 17,
+        }
+        item = Item.objects.create(
+            media_id="186090",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Wordle",
+            image="http://example.com/wordle.jpg",
+            release_datetime=datetime(2021, 6, 21, 12, 0, tzinfo=UTC),
+        )
+        Game.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            progress=0,
+            end_date=datetime(2026, 5, 12, 19, 47, tzinfo=UTC),
+        )
+
+        self.page.goto(
+            self.live_server_url
+            + reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "186090",
+                    "title": "wordle",
+                },
+            ),
+        )
+
+        expect(self.page.get_by_role("main")).to_contain_text("Wordle")
+        self.page.get_by_role("button", name="Planning", exact=True).click()
+
+        modal = self.page.locator("[data-track-modal-root]:visible").first
+        expect(modal).to_be_visible()
+
+        end_date_input = modal.locator('input[name="end_date"]')
+        start_date_input = modal.locator('input[name="start_date"]')
+        progress_input = modal.locator('input[name="progress"]')
+
+        end_date_value = end_date_input.input_value()
+        self.assertIn("T", end_date_value)
+        end_dt = datetime.strptime(end_date_value, "%Y-%m-%dT%H:%M")
+
+        progress_input.fill("5min")
+
+        expect(start_date_input).to_have_value(
+            (end_dt - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M"),
+        )
