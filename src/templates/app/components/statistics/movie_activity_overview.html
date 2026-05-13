@@ -1,0 +1,248 @@
+{% load app_tags %}
+{% load user_tags %}
+
+      <!-- Movies Consumption Section -->
+      {% if movie_consumption.has_data %}
+      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
+        <div class="flex flex-col space-y-1">
+          <span class="text-sm uppercase tracking-widest text-gray-400">Movies</span>
+          <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
+          <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+        </div>
+
+        <div class="space-y-4 sm:space-y-6">
+          <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Hours Watched</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.total|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Movie Plays</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.total|floatformat:0 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Movies</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Movies</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Movies</p>
+            </div>
+          </div>
+
+          {% if show_year_charts %}
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Year</h3>
+            {% if movie_consumption.charts.by_year.labels %}
+              <div class="h-64">
+                <canvas id="moviePlaysByYearChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No movie plays available for this range.</p>
+              </div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Month</h3>
+              {% if movie_consumption.charts.by_month.labels %}
+                <div class="h-64">
+                  <canvas id="moviePlaysByMonthChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No monthly movie plays recorded.</p>
+                </div>
+              {% endif %}
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Day of Week</h3>
+              {% if movie_consumption.charts.by_weekday.labels %}
+                <div class="h-64">
+                  <canvas id="moviePlaysByWeekdayChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No weekday data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Time of Day</h3>
+            {% if movie_consumption.charts.by_time_of_day.labels %}
+              <div class="h-64">
+                <canvas id="moviePlaysByTimeChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No time-of-day data available.</p>
+              </div>
+            {% endif %}
+          </div>
+
+          <!-- Top 3 Cards: Most Played, Top Genres, Top Rated -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+            <!-- Most Played -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Most Played</h3>
+              {% if top_played.movie %}
+                <div class="overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for item in top_played.movie %}
+                  <a href="{{ item.media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if item.media.item.image and item.media.item.image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ item.media.item.title }}</p>
+                      <p class="text-xs text-gray-500">{{ item.formatted_duration }} · {{ item.play_count }} play{{ item.play_count|pluralize }}</p>
+                    </div>
+                  </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No movie data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top Genres -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ movie_consumption.top_genres|length|default:0 }} Genres</h3>
+              {% if movie_consumption.top_genres %}
+                <div class="overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for genre in movie_consumption.top_genres %}
+                  <a href="{% url 'history' %}?genre={{ genre.name|urlencode }}&media_type=movie{% if start_date_str and start_date_str != 'all' %}&start-date={{ start_date_str }}{% endif %}{% if end_date_str and end_date_str != 'all' %}&end-date={{ end_date_str }}{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-sm font-semibold uppercase">
+                      {{ genre.name|slice:":2" }}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ genre.formatted_duration }} · {{ genre.plays }} play{{ genre.plays|pluralize }}</p>
+                    </div>
+                  </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No genre data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top Rated -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Rated</h3>
+              {% if top_rated_movie %}
+                <div class="overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for media in top_rated_movie %}
+                  <a href="{{ media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if media.item.image and media.item.image != IMG_NONE %}
+                    <img src="{{ IMG_NONE }}" data-src="{{ media.item.image }}" alt="{{ media.item.title }}" class="lazyload w-10 h-10 rounded object-cover bg-[#2a2f35]">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ media.item.title }}</p>
+                      <p class="text-xs text-gray-500">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 inline text-yellow-400 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                        </svg>
+                        {% if media.aggregated_score is not None %}
+                          {{ media.aggregated_score|score_display:user }}
+                        {% else %}
+                          {{ media.score|score_display:user }}
+                        {% endif %}
+                      </p>
+                    </div>
+                  </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No ratings yet.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
