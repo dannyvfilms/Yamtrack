@@ -110,6 +110,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "test-movie",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -127,6 +128,185 @@ class MediaDetailsViewTests(TestCase):
             MediaTypes.MOVIE.value,
             "238",
             Sources.TMDB.value,
+        )
+
+    @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
+    @patch("app.views.helpers.enrich_items_with_user_data")
+    @patch("app.views.run_retryable_db_operation")
+    @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_shell_defers_secondary_content(
+        self,
+        mock_get_metadata,
+        _mock_apply_item_metadata,
+        mock_run_retryable_db_operation,
+        mock_enrich_items,
+        mock_fetch_delay,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test overview",
+            "max_progress": 1,
+            "details": {},
+            "related": {
+                "recommendations": [
+                    {
+                        "media_id": "550",
+                        "title": "Fight Club",
+                        "media_type": MediaTypes.MOVIE.value,
+                        "source": Sources.TMDB.value,
+                        "image": "http://example.com/fight-club.jpg",
+                    }
+                ],
+            },
+            "cast": [
+                {
+                    "name": "Actor One",
+                    "image": "http://example.com/person.jpg",
+                    "role": "Lead",
+                }
+            ],
+            "crew": [],
+            "studios_full": [],
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2026, 3, 20, 18, 0, tzinfo=UTC),
+            notes="## Great notes\n\nThis movie rules.",
+        )
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="plex-token",
+            plex_username="plex-user",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": item.media_id,
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/media_details.html")
+        self.assertContains(response, 'id="detail-secondary-content"', html=False)
+        self.assertContains(response, "fragment=secondary")
+        self.assertNotContains(response, "Your Notes")
+        self.assertNotContains(response, "<h2 class=\"text-xl font-bold\">Collection</h2>", html=False)
+        mock_run_retryable_db_operation.assert_not_called()
+        mock_enrich_items.assert_not_called()
+        mock_fetch_delay.assert_not_called()
+
+    @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
+    @patch("app.views.credits.sync_item_credits_from_metadata")
+    @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_secondary_fragment_renders_deferred_sections(
+        self,
+        mock_get_metadata,
+        _mock_apply_item_metadata,
+        _mock_sync_credits,
+        mock_fetch_delay,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test overview",
+            "max_progress": 1,
+            "details": {},
+            "related": {
+                "recommendations": [
+                    {
+                        "media_id": "550",
+                        "title": "Fight Club",
+                        "media_type": MediaTypes.MOVIE.value,
+                        "source": Sources.TMDB.value,
+                        "image": "http://example.com/fight-club.jpg",
+                    }
+                ],
+            },
+            "cast": [
+                {
+                    "name": "Actor One",
+                    "image": "http://example.com/person.jpg",
+                    "role": "Lead",
+                }
+            ],
+            "crew": [],
+            "studios_full": [],
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2026, 3, 20, 18, 0, tzinfo=UTC),
+            notes="## Great notes\n\nThis movie rules.",
+        )
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="plex-token",
+            plex_username="plex-user",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": item.media_id,
+                    "title": "test-movie",
+                },
+            ),
+            {"fragment": "secondary"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/detail_secondary_content.html")
+        self.assertContains(response, "<h2 class=\"text-xl font-bold\">Your Notes</h2>", html=False)
+        self.assertContains(response, "<h2 class=\"text-xl font-bold\">Collection</h2>", html=False)
+        self.assertContains(response, "<h2 class=\"text-xl font-bold\">Cast</h2>", html=False)
+        self.assertNotContains(
+            response,
+            'class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8"',
+            html=False,
+        )
+        mock_fetch_delay.assert_called_once_with(
+            user_id=self.user.id,
+            item_id=item.id,
+            lookup_policy="cached_only",
         )
 
     @patch("app.providers.services.session.get")
@@ -273,11 +453,11 @@ class MediaDetailsViewTests(TestCase):
                     "title": "test-show",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8"', content)
         self.assertIn('class="flex flex-col-reverse md:flex-row gap-0 md:gap-10"', content)
         self.assertIn('class="detail-media-grid"', content)
         self.assertIn("window.matchMedia('(max-width: 768px)').matches", content)
@@ -336,9 +516,11 @@ class MediaDetailsViewTests(TestCase):
                     "title": "test-movie",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/detail_secondary_content.html")
         content = response.content.decode()
         self.assertContains(response, '<h2 class="text-xl font-bold">Your Notes</h2>', html=False)
         self.assertContains(response, 'aria-label="Edit notes"', html=False)
@@ -352,7 +534,6 @@ class MediaDetailsViewTests(TestCase):
             ":style=\"isExpanded ? 'max-height: none; overflow: visible;' : 'max-height: 12rem; overflow: hidden;'\"",
             html=False,
         )
-        self.assertLess(content.index("Test overview"), content.index("Your Notes"))
         self.assertLess(content.index("Your Notes"), content.index("Cast"))
         self.assertNotIn(">Edit<", content)
         self.assertNotIn("YOUR NOTES", content)
@@ -1055,7 +1236,7 @@ class MediaDetailsViewTests(TestCase):
             "studios_full": [],
         }
 
-        response = self.client.get(
+        shell_response = self.client.get(
             reverse(
                 "media_details",
                 kwargs={
@@ -1066,10 +1247,23 @@ class MediaDetailsViewTests(TestCase):
                 },
             ),
         )
+        fragment_response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "81189",
+                    "title": "sword-art-online",
+                },
+            ),
+            {"fragment": "secondary"},
+        )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Sōdo Āto Onrain")
-        self.assertNotContains(response, "{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}")
+        self.assertEqual(shell_response.status_code, 200)
+        self.assertContains(shell_response, "Sōdo Āto Onrain")
+        self.assertNotContains(shell_response, "{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}")
+        self.assertEqual(fragment_response.status_code, 200)
 
         item.refresh_from_db()
         self.assertEqual(item.title, "Sōdo Āto Onrain")
@@ -1106,7 +1300,7 @@ class MediaDetailsViewTests(TestCase):
             "studios_full": [],
         }
 
-        response = self.client.get(
+        shell_response = self.client.get(
             reverse(
                 "media_details",
                 kwargs={
@@ -1117,9 +1311,22 @@ class MediaDetailsViewTests(TestCase):
                 },
             ),
         )
+        fragment_response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TVDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "259640",
+                    "title": "sword-art-online",
+                },
+            ),
+            {"fragment": "secondary"},
+        )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Sword Art Online")
+        self.assertEqual(shell_response.status_code, 200)
+        self.assertContains(shell_response, "Sword Art Online")
+        self.assertEqual(fragment_response.status_code, 200)
 
         item.refresh_from_db()
         self.assertEqual(item.title, "Sword Art Online")
@@ -1165,6 +1372,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "test-movie",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2221,10 +2429,6 @@ class MediaDetailsViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Tracking Source")
-        self.assertContains(response, "Metadata Source")
-        self.assertContains(response, "https://myanimelist.net/anime/52991")
-        self.assertContains(response, "https://www.thetvdb.com/dereferrer/series/9350138")
         self.assertNotContains(response, "Metadata Provider")
         self.assertNotContains(response, "Grouped Series Preview")
         self.assertNotContains(response, "Migrate to Grouped Series")
@@ -2293,6 +2497,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "frieren",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2367,6 +2572,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "pokemon",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2540,6 +2746,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "pokemon",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2674,6 +2881,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "frieren",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -2831,6 +3039,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "pokemon",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(page_one.status_code, 200)
@@ -2850,7 +3059,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "pokemon",
                 },
             ),
-            {"episode_page": 2},
+            {"fragment": "secondary", "episode_page": 2},
         )
 
         self.assertEqual(page_two.status_code, 200)
@@ -3312,6 +3521,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "iron-meat",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -3434,6 +3644,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "dispatch",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -3480,6 +3691,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "dispatch",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -3549,6 +3761,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "dispatch",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -3593,15 +3806,18 @@ class MediaDetailsViewTests(TestCase):
                     "title": "dispatch",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Add to tracker")
-        self.assertContains(
+        self.assertTemplateUsed(response, "app/components/detail_secondary_content.html")
+        self.assertContains(response, 'id="detail-secondary-content"', html=False)
+        self.assertNotContains(
             response,
             "Some metadata updates were deferred because the database is busy.",
         )
         self.assertTrue(response.context["detail_persistence_deferred"])
+        _mock_sleep.assert_not_called()
         self.assertFalse(
             Item.objects.filter(
                 media_id="325609",
@@ -3655,14 +3871,16 @@ class MediaDetailsViewTests(TestCase):
                     "title": "frieren",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
+        self.assertNotContains(
             response,
             "Some metadata updates were deferred because the database is busy.",
         )
         self.assertTrue(response.context["detail_persistence_deferred"])
+        _mock_sleep.assert_not_called()
 
     def test_game_media_details_renders_when_metadata_save_hits_retryable_lock(self):
         item = Item.objects.create(
@@ -3691,7 +3909,7 @@ class MediaDetailsViewTests(TestCase):
         }
 
         with (
-            patch("app.db_retry.time.sleep"),
+            patch("app.db_retry.time.sleep") as mock_sleep,
             patch("app.providers.services.get_media_metadata", return_value=base_metadata),
             patch("app.views.metadata_utils.apply_item_metadata", return_value=["genres"]),
             patch("app.views.Item.save", side_effect=OperationalError("database is locked")),
@@ -3706,14 +3924,16 @@ class MediaDetailsViewTests(TestCase):
                         "title": "dispatch",
                     },
                 ),
+                {"fragment": "secondary"},
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
+        self.assertNotContains(
             response,
             "Some metadata updates were deferred because the database is busy.",
         )
         self.assertTrue(response.context["detail_persistence_deferred"])
+        mock_sleep.assert_not_called()
 
     @patch("app.db_retry.time.sleep")
     @patch("app.views.credits.sync_item_credits_from_metadata")
@@ -3770,14 +3990,16 @@ class MediaDetailsViewTests(TestCase):
                     "title": "breaking-bad",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
+        self.assertNotContains(
             response,
             "Some metadata updates were deferred because the database is busy.",
         )
         self.assertTrue(response.context["detail_persistence_deferred"])
+        _mock_sleep.assert_not_called()
 
     @patch("app.views._queue_game_lengths_refresh", side_effect=RuntimeError("queue unavailable"))
     @patch("app.providers.services.get_media_metadata")
@@ -3821,10 +4043,11 @@ class MediaDetailsViewTests(TestCase):
                     "title": "dispatch",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
+        self.assertNotContains(
             response,
             "Some metadata updates were deferred because the database is busy.",
         )
@@ -3833,7 +4056,7 @@ class MediaDetailsViewTests(TestCase):
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
     def test_season_details_view(self, mock_process_episodes, mock_get_metadata):
-        """Test the season details view."""
+        """Season details should render the shell before deferred episode work."""
         mock_get_metadata.side_effect = lambda *_args, **_kwargs: {
             "title": "Test TV Show",
             "media_id": "1668",
@@ -3874,23 +4097,19 @@ class MediaDetailsViewTests(TestCase):
                     "season_number": 1,
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/media_details.html")
-
         self.assertIn("media", response.context)
         self.assertEqual(response.context["media"]["title"], "Season 1")
-        self.assertEqual(len(response.context["media"]["episodes"]), 1)
+        self.assertContains(response, 'id="detail-secondary-content"', html=False)
+        self.assertContains(response, "fragment=secondary")
+        self.assertNotContains(response, "Episode 1")
         self.assertEqual(response.context["display_provider"], Sources.TMDB.value)
         self.assertEqual(response.context["identity_provider"], Sources.TMDB.value)
-        self.assertContains(
-            response,
-            reverse(
-                "lists_modal",
-                args=[Sources.TMDB.value, MediaTypes.EPISODE.value, "1668", 1, 1],
-            ),
-        )
+        mock_process_episodes.assert_not_called()
 
         mock_get_metadata.assert_called_once_with(
             "tv_with_seasons",
@@ -3898,6 +4117,73 @@ class MediaDetailsViewTests(TestCase):
             Sources.TMDB.value,
             [1],
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_secondary_fragment_renders_episodes(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        mock_get_metadata.side_effect = lambda *_args, **_kwargs: {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Season 1",
+                "season_title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "episodes": [],
+            },
+        }
+
+        mock_process_episodes.return_value = [
+            {
+                "media_id": "1668",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "season_number": 1,
+                "episode_number": 1,
+                "title": "Episode 1",
+                "air_date": "2023-01-01",
+                "actions_enabled": False,
+            },
+        ]
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+            {"fragment": "secondary"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/detail_secondary_content.html")
+        self.assertContains(response, "Episode 1")
+        self.assertContains(
+            response,
+            reverse(
+                "lists_modal",
+                args=[Sources.TMDB.value, MediaTypes.EPISODE.value, "1668", 1, 1],
+            ),
+        )
+        self.assertNotContains(
+            response,
+            'class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8"',
+            html=False,
+        )
+        mock_process_episodes.assert_called_once()
 
     @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
     @patch("app.providers.tmdb.get_tvdb_episode_image_map")
@@ -3975,6 +4261,7 @@ class MediaDetailsViewTests(TestCase):
                     "season_number": 16,
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -4078,6 +4365,7 @@ class MediaDetailsViewTests(TestCase):
                     "season_number": 16,
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -4188,6 +4476,7 @@ class MediaDetailsViewTests(TestCase):
                     "season_number": 1,
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -4250,6 +4539,7 @@ class MediaDetailsViewTests(TestCase):
                     "season_number": 1,
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(page_one.status_code, 200)
@@ -4269,7 +4559,7 @@ class MediaDetailsViewTests(TestCase):
                     "season_number": 1,
                 },
             ),
-            {"episode_page": 2},
+            {"fragment": "secondary", "episode_page": 2},
         )
 
         self.assertEqual(page_two.status_code, 200)
@@ -4364,13 +4654,12 @@ class MediaDetailsViewTests(TestCase):
                     "season_number": 1,
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "trakt-logo.svg")
-        self.assertContains(response, "7.8")
-        self.assertNotContains(response, "7.88048")
-        self.assertContains(response, "1,849 ratings")
+        self.assertEqual(response.context["trakt_score"]["rating"], "7.8")
+        self.assertEqual(response.context["trakt_score"]["rating_count"], 1849)
         mock_refresh_trakt_popularity.assert_called_once()
         self.assertTrue(
             Item.objects.filter(
@@ -4738,6 +5027,135 @@ class MediaDetailsViewTests(TestCase):
         self.assertIsNone(response.context["item_id_for_polling"])
         mock_fetch_delay.assert_not_called()
 
+    @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
+    @patch("app.views.credits.sync_item_credits_from_metadata")
+    @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
+    @patch("app.providers.services.get_media_metadata")
+    def test_movie_details_queue_cached_only_collection_autofetch(
+        self,
+        mock_get_metadata,
+        _mock_apply_item_metadata,
+        _mock_sync_credits,
+        mock_fetch_delay,
+    ):
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/movie.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": item.media_id,
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "image": "http://example.com/movie.jpg",
+            "synopsis": "Test synopsis",
+            "details": {},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="plex-token",
+            plex_username="plex-user",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": item.media_id,
+                    "title": "test-movie",
+                },
+            ),
+            {"fragment": "secondary"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["fetching_collection_data"])
+        self.assertEqual(response.context["item_id_for_polling"], item.id)
+        mock_fetch_delay.assert_called_once_with(
+            user_id=self.user.id,
+            item_id=item.id,
+            lookup_policy="cached_only",
+        )
+
+    @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
+    @patch("app.providers.tmdb.process_episodes", return_value=[])
+    @patch("app.providers.services.get_media_metadata")
+    def test_season_details_queue_cached_only_collection_autofetch(
+        self,
+        mock_get_metadata,
+        _mock_process_episodes,
+        mock_fetch_delay,
+    ):
+        show_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+        )
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Season 1",
+            image="http://example.com/season.jpg",
+        )
+        mock_get_metadata.side_effect = lambda *_args, **_kwargs: {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/show.jpg",
+            "season/1": {
+                "title": "Season 1",
+                "season_title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "episodes": [],
+            },
+        }
+
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="plex-token",
+            plex_username="plex-user",
+        )
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["fetching_collection_data"])
+        self.assertEqual(response.context["item_id_for_polling"], show_item.id)
+        mock_fetch_delay.assert_called_once_with(
+            user_id=self.user.id,
+            item_id=show_item.id,
+            lookup_policy="cached_only",
+        )
+
     @patch("app.views._should_queue_game_lengths_refresh", return_value=False)
     @patch("app.providers.services.get_media_metadata")
     def test_game_details_backfills_studio_credits_and_renders_links(
@@ -4802,6 +5220,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "the-witcher-3-wild-hunt",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -5171,6 +5590,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "chainsaw-man",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -5426,6 +5846,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "pokemon",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -5496,6 +5917,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "linked-book",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -5562,6 +5984,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "metadata-only-manga",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -5649,6 +6072,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "cached-book",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -5761,6 +6185,7 @@ class MediaDetailsViewTests(TestCase):
                     "title": "breaking-bad",
                 },
             ),
+            {"fragment": "secondary"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -5911,6 +6336,7 @@ class MediaDetailsViewTests(TestCase):
                         "title": "the-lord-of-the-rings",
                     },
                 ),
+                {"fragment": "secondary"},
             )
         self.assertEqual(response.status_code, 200)
 

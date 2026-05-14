@@ -6,6 +6,7 @@ from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
+from app.interactive_requests import INTERACTIVE_REQUEST_CACHE_KEY, INTERACTIVE_REQUEST_TTL_SECONDS
 from app import tasks
 from app.models import (
     BasicMedia,
@@ -34,6 +35,88 @@ User = get_user_model()
 
 
 class MetadataBackfillTaskTests(TestCase):
+    def setUp(self):
+        cache.delete(INTERACTIVE_REQUEST_CACHE_KEY)
+        super().setUp()
+
+    def tearDown(self):
+        cache.delete(INTERACTIVE_REQUEST_CACHE_KEY)
+        super().tearDown()
+
+    @patch("app.tasks._fetch_item_metadata")
+    def test_backfill_item_metadata_task_skips_when_interactive_request_active(
+        self,
+        mock_fetch_item_metadata,
+    ):
+        Item.objects.create(
+            media_id="interactive-skip",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Interactive Skip",
+            image="https://example.com/interactive-skip.jpg",
+        )
+        cache.set(
+            INTERACTIVE_REQUEST_CACHE_KEY,
+            True,
+            timeout=INTERACTIVE_REQUEST_TTL_SECONDS,
+        )
+
+        result = tasks.backfill_item_metadata_task(batch_size=1)
+
+        self.assertEqual(
+            result["reason"],
+            "interactive_request_active",
+        )
+        self.assertTrue(result["skipped"])
+        self.assertEqual(result["success_count"], 0)
+        mock_fetch_item_metadata.assert_not_called()
+
+    @patch("app.tasks.metadata_utils.apply_item_metadata", return_value=[])
+    @patch("app.tasks._fetch_item_metadata")
+    def test_backfill_item_metadata_task_defers_mid_batch_when_interactive_request_starts(
+        self,
+        mock_fetch_item_metadata,
+        _mock_apply_item_metadata,
+    ):
+        Item.objects.create(
+            media_id="interactive-defer-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Interactive Defer 1",
+            image="https://example.com/interactive-defer-1.jpg",
+        )
+        Item.objects.create(
+            media_id="interactive-defer-2",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Interactive Defer 2",
+            image="https://example.com/interactive-defer-2.jpg",
+        )
+
+        def _fetch_and_mark(item):
+            cache.set(
+                INTERACTIVE_REQUEST_CACHE_KEY,
+                True,
+                timeout=INTERACTIVE_REQUEST_TTL_SECONDS,
+            )
+            return {
+                "media_id": item.media_id,
+                "source": item.source,
+                "media_type": item.media_type,
+                "title": item.title,
+                "image": item.image,
+                "details": {},
+            }
+
+        mock_fetch_item_metadata.side_effect = _fetch_and_mark
+
+        result = tasks.backfill_item_metadata_task(batch_size=2)
+
+        self.assertTrue(result["deferred"])
+        self.assertEqual(result["reason"], "interactive_request_active")
+        self.assertEqual(result["success_count"], 1)
+        self.assertEqual(mock_fetch_item_metadata.call_count, 1)
+
     @patch("events.calendar.tv.cache_utils.clear_time_left_cache_for_user")
     @patch("events.calendar.tv.tmdb.tv_with_seasons")
     @patch("app.tasks._fetch_item_metadata")
@@ -1014,6 +1097,41 @@ class MetadataBackfillTaskTests(TestCase):
             batch_size=25,
         )
         self.assertEqual(result, {"selected": 3, "enqueued": 3})
+
+    @patch("app.tasks.reconcile_genre_backfill")
+    def test_ensure_genre_backfill_reconcile_skips_when_interactive_request_active(
+        self,
+        mock_reconcile_genre_backfill,
+    ):
+        cache.set(
+            INTERACTIVE_REQUEST_CACHE_KEY,
+            True,
+            timeout=INTERACTIVE_REQUEST_TTL_SECONDS,
+        )
+
+        result = tasks.ensure_genre_backfill_reconcile()
+
+        self.assertEqual(result, {"skipped": True, "reason": "interactive_request_active"})
+        mock_reconcile_genre_backfill.assert_not_called()
+
+    def test_warm_discover_api_cache_skips_when_interactive_request_active(self):
+        cache.set(
+            INTERACTIVE_REQUEST_CACHE_KEY,
+            True,
+            timeout=INTERACTIVE_REQUEST_TTL_SECONDS,
+        )
+
+        result = tasks.warm_discover_api_cache()
+
+        self.assertEqual(
+            result,
+            {
+                "skipped": True,
+                "reason": "interactive_request_active",
+                "warmed": 0,
+                "failed": 0,
+            },
+        )
 
     @patch("app.tasks.reconcile_genre_backfill")
     def test_ensure_genre_backfill_reconcile_skips_pending_startup_run(

@@ -8,6 +8,7 @@ from django.urls import reverse
 from app.db_retry import is_retryable_error
 from app.discover import tab_cache as discover_tab_cache
 from app.error_views import format_exception_traceback, render_error_page
+from app.interactive_requests import mark_interactive_request, should_mark_interactive_request
 from app.models import Sources
 from app.providers import services
 
@@ -166,7 +167,16 @@ class DiscoverWarmupMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        """Queue Discover warmup for eligible authenticated page requests."""
+        """Mark active browsing and queue Discover warmup when eligible."""
+        if should_mark_interactive_request(request):
+            try:
+                mark_interactive_request()
+            except Exception as error:  # noqa: BLE001
+                logger.debug(
+                    "Skipping interactive-request marker for %s due to error: %s",
+                    request.path,
+                    error,
+                )
         if self._should_warm_discover(request):
             try:
                 discover_tab_cache.maybe_schedule_user_warmup(request.user)

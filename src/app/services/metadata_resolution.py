@@ -318,6 +318,7 @@ def upsert_provider_links(
     episode_offset: int | None = None,
     extra_metadata: dict[str, Any] | None = None,
     persistence_mode: str = "required",
+    retry_max_retries: int | None = None,
     on_deferred: Callable[[Exception], None] | None = None,
 ) -> dict[str, str]:
     """Persist cross-provider IDs discovered in provider metadata."""
@@ -334,6 +335,11 @@ def upsert_provider_links(
 
     external_ids = _normalize_external_ids(metadata, provider=normalized_provider)
     metadata_payload = dict(extra_metadata) if extra_metadata else {}
+    retry_kwargs = (
+        {"max_retries": retry_max_retries}
+        if retry_max_retries is not None
+        else {}
+    )
 
     if normalized_provider and metadata.get("media_id"):
         link_defaults = {
@@ -355,6 +361,7 @@ def upsert_provider_links(
             operation_name="item provider-link upsert",
             operation_logger=logger,
             on_deferred=on_deferred,
+            **retry_kwargs,
         )
         provider_link, _ = provider_link_outcome.value
         external_key = (
@@ -391,6 +398,7 @@ def upsert_provider_links(
             operation_name=f"{candidate_provider} provider-link upsert",
             operation_logger=logger,
             on_deferred=on_deferred,
+            **retry_kwargs,
         )
 
     if external_ids:
@@ -403,6 +411,7 @@ def upsert_provider_links(
                 operation_name="item provider-external-id save",
                 operation_logger=logger,
                 on_deferred=on_deferred,
+                **retry_kwargs,
             )
 
     return external_ids
@@ -415,6 +424,7 @@ def resolve_provider_media_id(
     route_media_type: str,
     season_number: int | None = None,
     persistence_mode: str = "required",
+    retry_max_retries: int | None = None,
     on_deferred: Callable[[Exception], None] | None = None,
 ) -> str | None:
     """Return the mapped provider ID for a tracked item."""
@@ -428,6 +438,12 @@ def resolve_provider_media_id(
 
     if item.source == provider and item.media_type == provider_media_type:
         return str(item.media_id)
+
+    retry_kwargs = (
+        {"max_retries": retry_max_retries}
+        if retry_max_retries is not None
+        else {}
+    )
 
     provider_link = (
         ItemProviderLink.objects.filter(
@@ -471,6 +487,7 @@ def resolve_provider_media_id(
                 operation_name="grouped-anime provider-link upsert",
                 operation_logger=logger,
                 on_deferred=on_deferred,
+                **retry_kwargs,
             )
             return str(mapped_series_id)
 
@@ -769,6 +786,7 @@ def resolve_detail_metadata(
     source: str,
     base_metadata: dict,
     persistence_mode: str = "required",
+    retry_max_retries: int | None = None,
     on_persistence_deferred: Callable[[Exception], None] | None = None,
 ) -> MetadataResolutionResult:
     """Resolve the detail-page display provider and overlay metadata when mapped."""
@@ -811,6 +829,7 @@ def resolve_detail_metadata(
             provider,
             route_media_type=route_media_type,
             persistence_mode=persistence_mode,
+            retry_max_retries=retry_max_retries,
             on_deferred=on_persistence_deferred,
         )
         if provider_media_id:
@@ -867,6 +886,7 @@ def resolve_detail_metadata(
                 source=identity_provider,
             ),
             persistence_mode=persistence_mode,
+            retry_max_retries=retry_max_retries,
             on_deferred=on_persistence_deferred,
         )
 

@@ -13,6 +13,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from app import credits as credit_helpers, helpers, history_cache, metadata_utils
+from app.interactive_requests import interactive_request_active
 from app.log_safety import exception_summary
 from app.models import (
     CREDITS_BACKFILL_VERSION,
@@ -1617,6 +1618,10 @@ def ensure_genre_backfill_reconcile(
     batch_size: int = NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE,
 ):
     """Retry the current genre strategy reconcile until it has completed."""
+    if interactive_request_active():
+        logger.info("ensure_genre_backfill_reconcile skipped reason=interactive_request_active")
+        return {"skipped": True, "reason": "interactive_request_active"}
+
     resolved_strategy_version = int(strategy_version or GENRE_BACKFILL_VERSION)
     version_key = f"genre_backfill_reconciled_v{resolved_strategy_version}"
     status = cache.get(version_key)
@@ -3226,6 +3231,20 @@ def backfill_item_metadata_task(batch_size: int = 10, game_length_batch_size: in
     else:
         game_length_batch_size = max(int(game_length_batch_size), 0)
 
+    if interactive_request_active():
+        logger.info("metadata_backfill_skipped reason=interactive_request_active")
+        return {
+            "skipped": True,
+            "reason": "interactive_request_active",
+            "success_count": 0,
+            "error_count": 0,
+            "remaining_metadata": _initial_metadata_items_queryset().count(),
+            "remaining_release": count_release_backfill_items(),
+            "remaining_discover_movie_metadata": count_discover_movie_metadata_backfill_items(),
+            "remaining_game_lengths": count_game_length_backfill_items(),
+            "message": "Skipped metadata backfill while an interactive request was active",
+        }
+
     initial_items = list(_initial_metadata_items_queryset().order_by("id")[:batch_size])
     initial_item_ids = [item.id for item in initial_items]
     remaining_slots = max(batch_size - len(initial_items), 0)
@@ -3279,8 +3298,17 @@ def backfill_item_metadata_task(batch_size: int = 10, game_length_batch_size: in
     processed_movie_discover_items: list[Item] = []
     discover_item_ids = {item.id for item in discover_backfill_items}
     game_length_item_ids = {item.id for item in game_length_backfill_items}
+    deferred_for_interactive_request = False
 
-    for item in items:
+    for index, item in enumerate(items):
+        if index > 0 and interactive_request_active():
+            deferred_for_interactive_request = True
+            logger.info(
+                "metadata_backfill_deferred reason=interactive_request_active processed=%s remaining=%s",
+                success_count + error_count,
+                len(items) - index,
+            )
+            break
         initial_metadata_backfill = item.metadata_fetched_at is None
         discover_metadata_backfill = item.id in discover_item_ids
         game_lengths_backfill = item.id in game_length_item_ids
@@ -3413,7 +3441,7 @@ def backfill_item_metadata_task(batch_size: int = 10, game_length_batch_size: in
     if processed_movie_discover_items:
         _schedule_discover_refresh_for_movie_items(processed_movie_discover_items)
 
-    return {
+    result = {
         "success_count": success_count,
         "release_updated_count": release_updated_count,
         "error_count": error_count,
@@ -3430,6 +3458,10 @@ def backfill_item_metadata_task(batch_size: int = 10, game_length_batch_size: in
             f"{remaining_game_lengths} game-length items remaining"
         ),
     }
+    if deferred_for_interactive_request:
+        result["deferred"] = True
+        result["reason"] = "interactive_request_active"
+    return result
 
 
 @shared_task(name="Refresh Discover Rows")
@@ -3616,6 +3648,15 @@ def refresh_discover_profiles(user_ids: list[int] | None = None, media_types: li
 @shared_task(name="Warm Discover API Cache")
 def warm_discover_api_cache():
     """Warm provider-backed Discover API cache for core TMDb and Trakt rows."""
+    if interactive_request_active():
+        logger.info("warm_discover_api_cache skipped reason=interactive_request_active")
+        return {
+            "skipped": True,
+            "reason": "interactive_request_active",
+            "warmed": 0,
+            "failed": 0,
+        }
+
     from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
     from app.discover.providers.tmdb_adapter import TMDbDiscoverAdapter
 

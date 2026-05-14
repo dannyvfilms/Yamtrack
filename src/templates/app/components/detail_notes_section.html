@@ -12,7 +12,7 @@
                 class="inline-flex items-center justify-center rounded-md p-1.5 text-gray-300 transition-colors duration-200 hover:bg-gray-700 hover:text-white cursor-pointer"
                 title="Edit notes"
                 aria-label="Edit notes"
-                hx-get="{% if detail_notes_modal_url %}{{ detail_notes_modal_url }}{% else %}{% media_view_url 'track_modal' media %}{% endif %}?instance_id={{ notes_entry.id }}&return_url={{ request.get_full_path|urlencode }}"
+                hx-get="{% if detail_notes_modal_url %}{{ detail_notes_modal_url }}{% else %}{% media_view_url 'track_modal' media %}{% endif %}?instance_id={{ notes_entry.id }}&return_url={{ detail_return_url|urlencode }}"
                 hx-target="#{{ notes_modal_target_id }}"
                 hx-trigger="click"
                 @click="trackOpen = true">
@@ -60,7 +60,7 @@
                 class="inline-flex items-center justify-center rounded-md p-1.5 text-gray-300 transition-colors duration-200 hover:bg-gray-700 hover:text-white cursor-pointer"
                 title="Edit notes"
                 aria-label="Edit notes"
-                hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ notes_entry.id }}&return_url={{ request.get_full_path|urlencode }}"
+                hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ notes_entry.id }}&return_url={{ detail_return_url|urlencode }}"
                 hx-target="#{{ notes_modal_target_id }}"
                 hx-trigger="click"
                 @click="trackOpen = true">

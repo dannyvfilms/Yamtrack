@@ -251,6 +251,7 @@ LOCAL_ONLY_MISSING_SEASON_BANNER = (
     "This page is built from local activity and the linked show may be mismatched."
 )
 DETAIL_EPISODES_PER_PAGE = 25
+DETAIL_SECONDARY_FRAGMENT = "secondary"
 
 MEDIA_RATING_CHOICES = (
     ("all", "All"),
@@ -1344,6 +1345,18 @@ def _normalize_detail_episode_actions(episodes):
             continue
         normalized_episodes.append(episode)
     return normalized_episodes
+
+
+def _detail_request_url(request, *, fragment: str | None = None) -> str:
+    """Return the current detail URL with an optional fragment query override."""
+    query = request.GET.copy()
+    query.pop("fragment", None)
+    if fragment:
+        query["fragment"] = fragment
+    querystring = query.urlencode()
+    if not querystring:
+        return request.path
+    return f"{request.path}?{querystring}"
 
 
 def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
@@ -3706,6 +3719,20 @@ def media_details(
     request, source, media_type, media_id, title,
 ):
     """Return the details page for a media item."""
+    detail_view_started_at = time.perf_counter()
+    render_secondary_only = (
+        request.GET.get("fragment") == DETAIL_SECONDARY_FRAGMENT
+        and media_type != MediaTypes.PODCAST.value
+    )
+    defer_detail_secondary = (
+        not render_secondary_only and media_type != MediaTypes.PODCAST.value
+    )
+    detail_return_url = _detail_request_url(request)
+    detail_secondary_fragment_url = _detail_request_url(
+        request,
+        fragment=DETAIL_SECONDARY_FRAGMENT,
+    )
+
     # Treat all anonymous views as public (no user-specific data/actions)
     is_anonymous = not request.user.is_authenticated
     public_view = is_anonymous
@@ -3715,25 +3742,24 @@ def media_details(
     list_owner = None
     if public_list_view:
         try:
-            # Get or create the Item for this media
-            item, _ = Item.objects.get_or_create(
+            item = Item.objects.filter(
                 media_id=media_id,
                 source=source,
                 media_type=media_type,
-                defaults={"title": "", "image": settings.IMG_NONE},
-            )
-            # Find a public list containing this item
-            public_list = CustomList.objects.filter(
-                visibility="public",
-                items=item,
-            ).select_related("owner").first()
-            if public_list:
-                list_owner = public_list.owner
+            ).first()
+            if item:
+                public_list = CustomList.objects.filter(
+                    visibility="public",
+                    items=item,
+                ).select_related("owner").first()
+                if public_list:
+                    list_owner = public_list.owner
         except Exception:
             # If we can't find a list owner, list_owner stays None
             pass
 
     detail_persistence_deferred = False
+    detail_db_max_retries = 0
 
     def _mark_detail_persistence_deferred(_error=None):
         nonlocal detail_persistence_deferred
@@ -3746,6 +3772,7 @@ def media_details(
             fallback=fallback,
             operation_name=operation_name,
             operation_logger=logger,
+            max_retries=detail_db_max_retries,
             on_deferred=_mark_detail_persistence_deferred,
         )
 
@@ -4340,7 +4367,8 @@ def media_details(
     detail_item = Item.objects.filter(**detail_item_lookup).first()
 
     if (
-        detail_item is None
+        render_secondary_only
+        and detail_item is None
         and source == Sources.IGDB.value
         and media_type == MediaTypes.GAME.value
         and isinstance(media_metadata, dict)
@@ -4376,7 +4404,7 @@ def media_details(
         and isinstance(media_metadata, dict)
         and not media_metadata.get("original_title")
     )
-    if should_refresh_tmdb_titles:
+    if render_secondary_only and should_refresh_tmdb_titles:
         cache.delete(tmdb_detail_cache_key)
         media_metadata = services.get_media_metadata(media_type, media_id, source)
         if isinstance(media_metadata, dict):
@@ -4389,7 +4417,7 @@ def media_details(
         and not media_metadata.get("cast")
         and not media_metadata.get("crew")
     )
-    if should_refresh_tmdb_tv_credits:
+    if render_secondary_only and should_refresh_tmdb_tv_credits:
         cache.delete(tmdb_detail_cache_key)
         media_metadata = services.get_media_metadata(media_type, media_id, source)
         if isinstance(media_metadata, dict):
@@ -4397,7 +4425,7 @@ def media_details(
 
     identity_media_metadata = media_metadata
 
-    if detail_item and isinstance(media_metadata, dict):
+    if render_secondary_only and detail_item and isinstance(media_metadata, dict):
         title_fields = Item.title_fields_from_metadata(
             media_metadata,
             fallback_title=detail_item.title,
@@ -4425,7 +4453,11 @@ def media_details(
             )
 
     # Persist series info for books if available
-    if media_type == MediaTypes.BOOK.value and isinstance(media_metadata, dict):
+    if (
+        render_secondary_only
+        and media_type == MediaTypes.BOOK.value
+        and isinstance(media_metadata, dict)
+    ):
         try:
             item = Item.objects.get(
                 media_id=media_id,
@@ -4469,7 +4501,7 @@ def media_details(
             or custom_metadata.supports_custom_provider(media_type)
         )
     )
-    if should_resolve_metadata:
+    if render_secondary_only and should_resolve_metadata:
         metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
             request.user if request.user.is_authenticated else None,
             item=detail_item,
@@ -4478,6 +4510,7 @@ def media_details(
             source=source,
             base_metadata=media_metadata,
             persistence_mode="best_effort",
+            retry_max_retries=detail_db_max_retries,
             on_persistence_deferred=_mark_detail_persistence_deferred,
         )
         media_metadata = metadata_resolution_result.header_metadata
@@ -4495,7 +4528,8 @@ def media_details(
         media_metadata["media_id"] = media_id
 
     if (
-        source == Sources.TMDB.value
+        render_secondary_only
+        and source == Sources.TMDB.value
         and tracking_media_type in (
             MediaTypes.MOVIE.value,
             MediaTypes.TV.value,
@@ -4532,14 +4566,15 @@ def media_details(
         and detail_item is not None
         and igdb_game_studios_missing
     )
-    if should_refresh_igdb_game_studios:
+    if render_secondary_only and should_refresh_igdb_game_studios:
         cache.delete(f"{source}_{tracking_media_type}_{media_id}")
         media_metadata = services.get_media_metadata(media_type, media_id, source)
         if isinstance(media_metadata, dict):
             media_metadata.update(Item.title_fields_from_metadata(media_metadata))
 
     if (
-        detail_item
+        render_secondary_only
+        and detail_item
         and source == Sources.IGDB.value
         and tracking_media_type == MediaTypes.GAME.value
         and isinstance(media_metadata, dict)
@@ -4569,7 +4604,8 @@ def media_details(
     identity_media_metadata = media_metadata
 
     if (
-        source == Sources.IGDB.value
+        render_secondary_only
+        and source == Sources.IGDB.value
         and tracking_media_type == MediaTypes.GAME.value
         and detail_item
         and isinstance(media_metadata, dict)
@@ -4602,7 +4638,7 @@ def media_details(
         game_lengths["source_url"] = media_metadata["source_url"]
     game_lengths_fetch_queued = False
     game_lengths_refresh_pending = False
-    if _should_queue_game_lengths_refresh(detail_item):
+    if render_secondary_only and _should_queue_game_lengths_refresh(detail_item):
         game_lengths_refresh_pending = (
             _get_game_lengths_refresh_lock(
                 detail_item,
@@ -4634,7 +4670,8 @@ def media_details(
     author_detail_keys = ("author", "authors", "people")
     authors_linked = []
     if (
-        media_type in (
+        render_secondary_only
+        and media_type in (
             MediaTypes.BOOK.value,
             MediaTypes.COMIC.value,
             MediaTypes.MANGA.value,
@@ -4759,7 +4796,7 @@ def media_details(
 
         return linked
 
-    if isinstance(media_metadata, dict):
+    if render_secondary_only and isinstance(media_metadata, dict):
         studios_linked = _collect_studios_linked(media_metadata)
 
     # Prefer a stored poster/cover override when the tracked item has one.
@@ -4786,7 +4823,12 @@ def media_details(
         has_specials = any(season.get("season_number") == 0 for season in seasons)
         show_title = Item._normalize_title_value(media_metadata.get("title"))
 
-        if source == Sources.TMDB.value and media_metadata.get("tvdb_id") and not has_specials:
+        if (
+            render_secondary_only
+            and source == Sources.TMDB.value
+            and media_metadata.get("tvdb_id")
+            and not has_specials
+        ):
             try:
                 specials_metadata = services.get_media_metadata(
                     "tv_with_seasons",
@@ -4806,7 +4848,7 @@ def media_details(
                     media_id,
                 )
 
-        if seasons and source in {Sources.TMDB.value, Sources.TVDB.value}:
+        if render_secondary_only and seasons and source in {Sources.TMDB.value, Sources.TVDB.value}:
             season_numbers = sorted(
                 {
                     season_number
@@ -4884,12 +4926,13 @@ def media_details(
             if fallback_runtime:
                 details["runtime"] = fallback_runtime
 
-        tv_poster = media_metadata.get("image")
-        if tv_poster:
-            for season in seasons:
-                season_image = season.get("image")
-                if not season_image or season_image == settings.IMG_NONE:
-                    season["image"] = tv_poster
+        if render_secondary_only:
+            tv_poster = media_metadata.get("image")
+            if tv_poster:
+                for season in seasons:
+                    season_image = season.get("image")
+                    if not season_image or season_image == settings.IMG_NONE:
+                        season["image"] = tv_poster
 
     # For public views, we don't need user media data
     if public_view:
@@ -4965,7 +5008,8 @@ def media_details(
             current_instance.score = latest_rating
 
     if (
-        not public_view
+        render_secondary_only
+        and not public_view
         and current_instance
         and media_type in (
             MediaTypes.GAME.value,
@@ -5020,7 +5064,7 @@ def media_details(
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
-    if media_metadata.get("related"):
+    if render_secondary_only and media_metadata.get("related"):
         for section_name, related_items in media_metadata["related"].items():
             if related_items:
                 enriched_related_items = helpers.enrich_items_with_user_data(
@@ -5070,7 +5114,7 @@ def media_details(
         music_album = getattr(current_instance, "album", None)
 
     notes_entry = None
-    if not public_view and user_medias:
+    if render_secondary_only and not public_view and user_medias:
         if current_instance and current_instance.notes and current_instance.notes.strip():
             notes_entry = current_instance
         else:
@@ -5079,13 +5123,18 @@ def media_details(
                     notes_entry = entry
                     break
 
-    if media_type == MediaTypes.ANIME.value and not media_metadata.get("episodes"):
+    if (
+        render_secondary_only
+        and media_type == MediaTypes.ANIME.value
+        and not media_metadata.get("episodes")
+    ):
         flat_anime_episode_preview = _build_flat_anime_episode_preview(
             request,
             detail_item=detail_item,
             media_id=media_id,
             base_metadata=media_metadata,
             metadata_resolution_result=metadata_resolution_result,
+            retry_max_retries=detail_db_max_retries,
             on_persistence_deferred=_mark_detail_persistence_deferred,
         )
         if flat_anime_episode_preview:
@@ -5098,7 +5147,11 @@ def media_details(
     fetching_collection_data = False
     item_id_for_polling = None
 
-    if not public_view and media_type != MediaTypes.PODCAST.value:
+    if (
+        render_secondary_only
+        and not public_view
+        and media_type != MediaTypes.PODCAST.value
+    ):
         from app.helpers import get_item_collection_entries, get_tv_show_collection_stats
 
         try:
@@ -5122,6 +5175,7 @@ def media_details(
                         lambda: fetch_collection_metadata_for_item.delay(
                             user_id=request.user.id,
                             item_id=item.id,
+                            lookup_policy="cached_only",
                         ),
                         operation_name="collection metadata auto-fetch",
                         fallback=None,
@@ -5147,7 +5201,8 @@ def media_details(
     if media_type in [MediaTypes.TV.value, MediaTypes.MOVIE.value, MediaTypes.ANIME.value]:
         watch_provider_payload = media_metadata.get("providers")
         if (
-            detail_item
+            render_secondary_only
+            and detail_item
             and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
             and (not watch_provider_payload or source == Sources.TVDB.value)
         ):
@@ -5156,6 +5211,7 @@ def media_details(
                 Sources.TMDB.value,
                 route_media_type=media_type,
                 persistence_mode="best_effort",
+                retry_max_retries=detail_db_max_retries,
                 on_deferred=_mark_detail_persistence_deferred,
             )
             if tmdb_media_id:
@@ -5210,7 +5266,8 @@ def media_details(
     migrated_grouped_item = None
     migrated_grouped_title = None
     if (
-        not public_view
+        render_secondary_only
+        and not public_view
         and media_type == MediaTypes.ANIME.value
         and detail_item is not None
     ):
@@ -5239,7 +5296,11 @@ def media_details(
         )
 
     episode_load_more = None
-    if media_type != MediaTypes.PODCAST.value and media_metadata.get("episodes"):
+    if (
+        render_secondary_only
+        and media_type != MediaTypes.PODCAST.value
+        and media_metadata.get("episodes")
+    ):
         media_metadata["episodes"] = _normalize_detail_episode_actions(
             media_metadata["episodes"],
         )
@@ -5306,8 +5367,28 @@ def media_details(
         "migrated_grouped_title": migrated_grouped_title,
         "episode_load_more": episode_load_more,
         "detail_persistence_deferred": detail_persistence_deferred,
+        "detail_return_url": detail_return_url,
+        "detail_secondary_fragment_url": detail_secondary_fragment_url,
+        "defer_detail_secondary": defer_detail_secondary,
+        "render_secondary_only": render_secondary_only,
     }
-    return render(request, "app/media_details.html", context)
+    logger.info(
+        "detail_render_complete path=%s phase=%s media_type=%s source=%s duration_ms=%.2f",
+        request.path,
+        "secondary" if render_secondary_only else "shell",
+        media_type,
+        source,
+        (time.perf_counter() - detail_view_started_at) * 1000,
+    )
+    return render(
+        request,
+        (
+            "app/components/detail_secondary_content.html"
+            if render_secondary_only
+            else "app/media_details.html"
+        ),
+        context,
+    )
 
 
 @login_required
@@ -6065,6 +6146,7 @@ def _build_flat_anime_episode_preview(
     media_id,
     base_metadata,
     metadata_resolution_result=None,
+    retry_max_retries: int | None = None,
     on_persistence_deferred=None,
 ):
     """Return a read-only mapped episode slice for flat MAL anime details."""
@@ -6113,6 +6195,7 @@ def _build_flat_anime_episode_preview(
                     candidate,
                     route_media_type=MediaTypes.ANIME.value,
                     persistence_mode="best_effort",
+                    retry_max_retries=retry_max_retries,
                     on_deferred=on_persistence_deferred,
                 )
                 if detail_item is not None
@@ -6354,6 +6437,15 @@ def season_details(
     request, source, media_id, title, season_number,
 ):
     """Return the details page for a season."""
+    detail_view_started_at = time.perf_counter()
+    render_secondary_only = request.GET.get("fragment") == DETAIL_SECONDARY_FRAGMENT
+    defer_detail_secondary = not render_secondary_only
+    detail_return_url = _detail_request_url(request)
+    detail_secondary_fragment_url = _detail_request_url(
+        request,
+        fragment=DETAIL_SECONDARY_FRAGMENT,
+    )
+
     # Treat all anonymous views as public (no user-specific data/actions)
     is_anonymous = not request.user.is_authenticated
     public_view = is_anonymous
@@ -6363,21 +6455,19 @@ def season_details(
     list_owner = None
     if public_list_view:
         try:
-            # Get or create the Item for this season
-            item, _ = Item.objects.get_or_create(
+            item = Item.objects.filter(
                 media_id=media_id,
                 source=source,
                 media_type=MediaTypes.SEASON.value,
                 season_number=season_number,
-                defaults={"title": "", "image": settings.IMG_NONE},
-            )
-            # Find a public list containing this item
-            public_list = CustomList.objects.filter(
-                visibility="public",
-                items=item,
-            ).select_related("owner").first()
-            if public_list:
-                list_owner = public_list.owner
+            ).first()
+            if item:
+                public_list = CustomList.objects.filter(
+                    visibility="public",
+                    items=item,
+                ).select_related("owner").first()
+                if public_list:
+                    list_owner = public_list.owner
         except Exception:
             # If we can't find a list owner, list_owner stays None
             pass
@@ -6515,7 +6605,7 @@ def season_details(
         if latest_rating is not None:
             current_instance.score = latest_rating
 
-    if season_item is None:
+    if render_secondary_only and season_item is None:
         season_defaults = {
             **Item.title_fields_from_metadata(
                 season_metadata if isinstance(season_metadata, dict) else {},
@@ -6540,7 +6630,7 @@ def season_details(
             season_number=season_number,
             defaults=season_defaults,
         )
-    elif season_metadata_missing and season_number > 0:
+    elif render_secondary_only and season_metadata_missing and season_number > 0:
         season_item = _save_provider_metadata_status(
             season_item,
             ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
@@ -6549,7 +6639,8 @@ def season_details(
     # Save episode runtimes from raw metadata before processing for display
     # This ensures runtime data is persisted when viewing the season page
     if (
-        not season_metadata_missing
+        render_secondary_only
+        and not season_metadata_missing
         and source != Sources.MANUAL.value
         and season_metadata.get("episodes")
     ):
@@ -6629,7 +6720,7 @@ def season_details(
             for user_id in tracking_users:
                 clear_time_left_cache_for_user(user_id)
 
-    if not season_metadata_missing:
+    if render_secondary_only and not season_metadata_missing:
         if source == Sources.MANUAL.value:
             season_metadata["episodes"] = manual.process_episodes(
                 season_metadata,
@@ -6650,13 +6741,19 @@ def season_details(
         season_metadata["image"] = season_item.image
 
     season_provider_metadata_status = (
-        season_item.provider_metadata_status if season_item is not None else ""
+        season_item.provider_metadata_status
+        if season_item is not None
+        else (
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+            if season_metadata_missing and season_number > 0
+            else ""
+        )
     )
     if isinstance(season_metadata, dict):
         season_metadata["provider_metadata_status"] = season_provider_metadata_status
 
     # Add collection_entry data to each episode (if not public view)
-    if not public_view and season_metadata.get("episodes"):
+    if render_secondary_only and not public_view and season_metadata.get("episodes"):
         from app.models import Item as ItemModel, CollectionEntry
         
         # Get all episode items for this season
@@ -6706,7 +6803,7 @@ def season_details(
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
-    if season_metadata.get("related"):
+    if render_secondary_only and season_metadata.get("related"):
         for section_name, related_items in season_metadata["related"].items():
             if related_items:
                 season_metadata["related"][section_name] = (
@@ -6724,7 +6821,7 @@ def season_details(
     season_collection_stats = None
     fetching_collection_data = False
     item_id_for_polling = None
-    if not public_view:
+    if render_secondary_only and not public_view:
         from app.helpers import (
             get_item_collection_entries,
             get_season_collection_metadata,
@@ -6761,7 +6858,11 @@ def season_details(
                         try:
                             from integrations.tasks import fetch_collection_metadata_for_item
                             # Trigger background task to fetch collection data for the show
-                            result = fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=show_item.id)
+                            result = fetch_collection_metadata_for_item.delay(
+                                user_id=request.user.id,
+                                item_id=show_item.id,
+                                lookup_policy="cached_only",
+                            )
                             logger.info("Triggered background collection fetch for show %s - %s (item_id=%s) from season page (task_id=%s)", 
                                        request.user.username, show_item.title, show_item.id, result.id if result else "None")
                             # TODO(issue-166): Re-enable a user-facing collection-fetching banner only
@@ -6824,7 +6925,8 @@ def season_details(
             pass
 
     if (
-        season_item
+        render_secondary_only
+        and season_item
         and current_instance
         and season_number > 0
         and season_item.provider_metadata_status
@@ -6854,7 +6956,7 @@ def season_details(
         MediaTypes.SEASON.value,
     )
     episode_load_more = None
-    if season_metadata.get("episodes"):
+    if render_secondary_only and season_metadata.get("episodes"):
         season_metadata["episodes"] = _normalize_detail_episode_actions(
             season_metadata["episodes"],
         )
@@ -6907,8 +7009,28 @@ def season_details(
             season_provider_metadata_status
             == ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
         ),
+        "detail_return_url": detail_return_url,
+        "detail_secondary_fragment_url": detail_secondary_fragment_url,
+        "defer_detail_secondary": defer_detail_secondary,
+        "render_secondary_only": render_secondary_only,
     }
-    return render(request, "app/media_details.html", context)
+    logger.info(
+        "detail_render_complete path=%s phase=%s media_type=%s source=%s duration_ms=%.2f",
+        request.path,
+        "secondary" if render_secondary_only else "shell",
+        MediaTypes.SEASON.value,
+        source,
+        (time.perf_counter() - detail_view_started_at) * 1000,
+    )
+    return render(
+        request,
+        (
+            "app/components/detail_secondary_content.html"
+            if render_secondary_only
+            else "app/media_details.html"
+        ),
+        context,
+    )
 
 
 @require_POST
