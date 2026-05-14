@@ -37,6 +37,36 @@ class ImportDataViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "users/import_data.html")
 
+    @patch("users.models.User.get_import_tasks")
+    def test_import_data_defers_import_activity_loading(self, mock_get_import_tasks):
+        """The initial page should not block on import activity queries."""
+        response = self.client.get(reverse("import_data"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("import_data_activity"))
+        mock_get_import_tasks.assert_not_called()
+
+    def test_import_data_activity_renders_history_and_schedules(self):
+        """The async activity panel should still render import status details."""
+        TaskResult.objects.create(
+            task_id="task-recurring",
+            task_name="Import from Audiobookshelf (Recurring)",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result='["child-task-id", null]',
+        )
+
+        response = self.client.get(
+            reverse("import_data_activity"),
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "users/components/import_activity.html")
+        self.assertContains(response, "Active Periodic Imports")
+        self.assertContains(response, "Import History")
+
     def test_import_data_shows_lastfm_history_status_and_action(self):
         """Last.fm card should render history backfill status and rerun controls."""
         LastFMAccount.objects.create(
@@ -61,7 +91,7 @@ class ImportDataViewTests(TestCase):
         response = self.client.get(reverse("import_data"))
 
         self.assertContains(response, 'x-data="{ traktProfileType: \'public\' }"', html=False)
-        self.assertContains(response, '<label class="block text-sm text-gray-400 mb-2">Profile</label>', html=False)
+        self.assertContains(response, '<label class="block text-sm text-gray-300 mb-2">Profile</label>', html=False)
         self.assertContains(response, '<option value="public">Public profile</option>', html=False)
         self.assertContains(response, '<option value="private">Private profile (OAuth)</option>', html=False)
 

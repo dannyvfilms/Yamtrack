@@ -35,6 +35,11 @@ urlpatterns = [
     path("settings/integrations", views.integrations, name="integrations"),
     path("settings/import", views.import_data, name="import_data"),
     path(
+        "settings/import/activity",
+        views.import_data_activity,
+        name="import_data_activity",
+    ),
+    path(
         "settings/import/plex-status",
         views.import_data_plex_status,
         name="import_data_plex_status",

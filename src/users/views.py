@@ -148,6 +148,18 @@ def _get_stored_plex_account(user):
     return plex_account
 
 
+def _get_import_data_user(user):
+    """Load the Import Data page's account relations in a single query."""
+    return user._meta.model.objects.select_related(
+        "plex_account",
+        "audiobookshelf_account",
+        "pocketcasts_account",
+        "lastfm_account",
+        "radarr_account",
+        "sonarr_account",
+    ).get(pk=user.pk)
+
+
 def _refresh_cached_plex_sections(account: PlexAccount) -> tuple[list[dict], str | None]:
     """Refresh and persist Plex library sections when the cache is stale."""
     cached_sections = account.sections or []
@@ -889,31 +901,20 @@ def integrations(request):
 @require_GET
 def import_data(request):
     """Render the import data settings page."""
-    import_tasks = request.user.get_import_tasks()
-    plex_account = _get_stored_plex_account(request.user)
+    user = _get_import_data_user(request.user)
+    plex_account = _get_stored_plex_account(user)
     plex_sections = plex_account.sections or [] if plex_account else []
 
     # Get Audiobookshelf account
-    audiobookshelf_account = getattr(request.user, "audiobookshelf_account", None)
-    if audiobookshelf_account:
-        audiobookshelf_account.refresh_from_db()
+    audiobookshelf_account = getattr(user, "audiobookshelf_account", None)
 
     # Get Pocket Casts account
-    pocketcasts_account = getattr(request.user, "pocketcasts_account", None)
-    # Refresh from DB to get latest connection_broken status
-    if pocketcasts_account:
-        pocketcasts_account.refresh_from_db()
+    pocketcasts_account = getattr(user, "pocketcasts_account", None)
 
     # Get Last.fm account
-    lastfm_account = getattr(request.user, "lastfm_account", None)
-    if lastfm_account:
-        lastfm_account.refresh_from_db()
-    radarr_account = getattr(request.user, "radarr_account", None)
-    if radarr_account:
-        radarr_account.refresh_from_db()
-    sonarr_account = getattr(request.user, "sonarr_account", None)
-    if sonarr_account:
-        sonarr_account.refresh_from_db()
+    lastfm_account = getattr(user, "lastfm_account", None)
+    radarr_account = getattr(user, "radarr_account", None)
+    sonarr_account = getattr(user, "sonarr_account", None)
 
     # Get Last.fm periodic task status
     lastfm_periodic_task = None
@@ -949,8 +950,7 @@ def import_data(request):
             lastfm_history_button_label = "Reimport full history"
 
     context = {
-        "user": request.user,
-        "import_tasks": import_tasks,
+        "user": user,
         "plex_account": plex_account,
         "plex_sections": plex_sections,
         "plex_sections_json": json.dumps(plex_sections),
@@ -968,6 +968,17 @@ def import_data(request):
         "lastfm_history_button_label": lastfm_history_button_label,
     }
     return render(request, "users/import_data.html", context)
+
+
+@require_GET
+def import_data_activity(request):
+    """Render import schedules and history after the page loads."""
+    user = _get_import_data_user(request.user)
+    context = {
+        "user": user,
+        "import_tasks": user.get_import_tasks(),
+    }
+    return render(request, "users/components/import_activity.html", context)
 
 
 @require_GET

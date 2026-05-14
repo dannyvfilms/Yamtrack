@@ -183,7 +183,7 @@
             <label class="block text-sm text-gray-400 mb-2">Import Frequency</label>
             <div class="relative">
               <select x-model="importFrequency"
-                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
+                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
                 <option value="once">One Time Import</option>
                 <option value="daily">Every Day</option>
                 <option value="2days">Every 2 Days</option>
@@ -193,7 +193,7 @@
             <div x-cloak class="mt-4" x-show="importFrequency !== 'once'">
               <label class="block text-sm text-gray-400 mb-2">Import Time</label>
               <input x-model="importTime"
-                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 scheme-dark"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 scheme-dark"
                      type="time">
             </div>
           </div>
@@ -201,7 +201,7 @@
             <label class="block text-sm text-gray-400 mb-2">Import Mode</label>
             <div class="relative">
               <select x-model="importMode"
-                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
+                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
                 <option value="new">Only Sync New Items</option>
                 <option value="overwrite">Sync New Items and Overwrite Existing</option>
                 <option value="watchlist">Import Watchlist Data Only</option>
@@ -371,7 +371,7 @@
                 <label class="block text-sm text-gray-300 mb-2">Library</label>
                 <div class="relative">
                   <select name="library"
-                          class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none disabled:opacity-50"
+                          class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none disabled:opacity-50"
                           :disabled="plexSubmitDisabled()">
                     <option value="all">All libraries</option>
                     <template x-for="section in plexSections"
@@ -401,7 +401,7 @@
                 <input name="plex_usernames"
                        value="{{ request.user.plex_usernames }}"
                        placeholder="username 1, username 2"
-                       class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                        type="text">
                 <button type="submit"
                         class="px-4 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
@@ -489,12 +489,12 @@
               {% csrf_token %}
               <input name="base_url"
                      placeholder="https://radarr.local:7878"
-                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="url"
                      required>
               <input name="api_key"
                      placeholder="Radarr API key"
-                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="password"
                      required>
               <button type="submit"
@@ -559,12 +559,12 @@
               {% csrf_token %}
               <input name="base_url"
                      placeholder="https://sonarr.local:8989"
-                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="url"
                      required>
               <input name="api_key"
                      placeholder="Sonarr API key"
-                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="password"
                      required>
               <button type="submit"
@@ -629,13 +629,13 @@
               <div>
                 <label class="block text-sm text-gray-400 mb-2">Base URL</label>
                 <input type="url" name="base_url" required
-                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                        placeholder="https://abs.example.com">
               </div>
               <div>
                 <label class="block text-sm text-gray-400 mb-2">API Token</label>
                 <input type="password" name="api_token" required
-                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                        placeholder="Audiobookshelf API token">
               </div>
               <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
@@ -707,7 +707,7 @@
                 <label class="block text-sm text-gray-400 mb-2">Email</label>
                 <input type="email"
                        name="email"
-                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                        placeholder="your.email@example.com"
                        required>
               </div>
@@ -716,7 +716,7 @@
                 <label class="block text-sm text-gray-400 mb-2">Password</label>
                 <input type="password"
                        name="password"
-                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                        placeholder="Your Pocket Casts password"
                        required>
               </div>
@@ -849,7 +849,7 @@
                   <input type="text"
                          name="lastfm_username"
                          required
-                         class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                         class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                          placeholder="your_username">
                 </div>
                 <button type="submit"
@@ -873,7 +873,7 @@
             <label class="block text-sm text-gray-300 mb-2">Profile</label>
             <div class="relative">
               <select x-model="traktProfileType"
-                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
+                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
                 <option value="public">Public profile</option>
                 <option value="private">Private profile (OAuth)</option>
               </select>
@@ -910,7 +910,7 @@
             <div class="flex w-full">
               <input placeholder="Public Trakt username"
                      name="user"
-                     class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="text"
                      required>
               <button type="submit"
@@ -976,7 +976,7 @@
             <div class="flex w-full">
               <input placeholder="MAL username"
                      name="user"
-                     class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="text">
               <button type="submit"
                       class="px-3 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1000,7 +1000,7 @@
             <label class="flex items-center text-sm text-gray-300">
               <input type="checkbox"
                      x-model="usePrivateImport"
-                     class="mr-2 rounded bg-[#2a2f35] border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0">
+                     class="mr-2 rounded bg-[#2a2f35] border-gray-600 text-indigo-600 focus:outline-none focus:ring-indigo-500 focus:ring-offset-0">
               Import private profile (requires authentication)
             </label>
           </div>
@@ -1017,7 +1017,7 @@
             <div class="flex w-full">
               <input placeholder="Public AniList username"
                      name="user"
-                     class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="relative w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="text"
                      required>
               <button type="submit"
@@ -1063,7 +1063,7 @@
             <div class="relative flex-1">
               <input placeholder="Kitsu user ID"
                      name="user"
-                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="text">
               <div class="group absolute right-2 top-1/2 -translate-y-1/2">
                 {% include "app/icons/info.svg" with classes="w-4 h-4 text-gray-400" %}
@@ -1163,7 +1163,7 @@
             <div class="relative flex-1">
               <input placeholder="Steam 64-bit ID"
                      name="user"
-                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-l-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                      type="text">
               <div class="group absolute right-2 top-1/2 -translate-y-1/2">
                 {% include "app/icons/info.svg" with classes="w-4 h-4 text-gray-400" %}
@@ -1276,117 +1276,24 @@
       </div>
     </div>
 
-    {# Active Periodic Imports #}
-    <div class="bg-[#2a2f35] rounded-lg p-6">
-      <div class="flex items-center mb-4">
-        {% include "app/icons/clock.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
-        <h2 class="text-xl font-semibold">Active Periodic Imports</h2>
+    <div id="import-activity-panel"
+         class="space-y-6"
+         hx-get="{% url 'import_data_activity' %}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div class="bg-[#2a2f35] rounded-lg p-6">
+        <div class="flex items-center mb-4">
+          {% include "app/icons/clock.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+          <h2 class="text-xl font-semibold">Active Periodic Imports</h2>
+        </div>
+        <p class="text-gray-400 text-sm">Loading scheduled import activity...</p>
       </div>
-      <p class="text-gray-400 mb-5 text-sm">
-        Automated imports that run on a schedule. These will continue to sync your media until disabled.
-      </p>
-      <div class="space-y-3">
-        {% for periodic_import in import_tasks.schedules %}
-          <div class="bg-[#39404b] rounded-lg p-4">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-3">
-                {% source_display periodic_import.source %}
-                <span class="text-sm text-gray-400">{{ periodic_import.schedule }}</span>
-              </div>
-              <form action="{% url 'delete_import_schedule' %}" method="post">
-                {% csrf_token %}
-                <input type="hidden"
-                       name="task_name"
-                       value="{{ periodic_import.task.name }}">
-                <button class="text-red-400 hover:text-white p-2 rounded-md transition-all duration-200 hover:bg-red-500 cursor-pointer">
-                  {% include "app/icons/trashcan.svg" with classes="w-4 h-4" %}
-                </button>
-              </form>
-            </div>
-            <div class="text-sm text-gray-400 space-y-1">
-              {% if periodic_import.username %}
-              <div>Username: {{ periodic_import.username }}</div>
-              {% endif %}
-              <div>Mode: {{ periodic_import.mode }}</div>
-              <div>Last Import: {{ periodic_import.last_run|user_datetime_format:user }}</div>
-              <div>Next Import: {{ periodic_import.next_run|user_datetime_format:user }}</div>
-            </div>
-          </div>
-        {% empty %}
-          <div class="bg-[#39404b] rounded-lg p-6 text-center">
-            <p class="text-gray-400 text-sm">No periodic imports configured</p>
-            <p class="text-gray-500 text-xs mt-1">Enable a recurring import or Plex watchlist sync to see it here</p>
-          </div>
-        {% endfor %}
-      </div>
-    </div>
-
-    {# Import History #}
-    <div class="bg-[#2a2f35] rounded-lg p-6">
-      <div class="flex items-center mb-4">
-        {% include "app/icons/clock-reversing.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
-        <h2 class="text-xl font-semibold">Import History</h2>
-      </div>
-
-      <p class="text-gray-400 mb-5 text-sm">Showing import activity from the last 7 days.</p>
-
-      <div class="space-y-3">
-        {% for result in import_tasks.results %}
-          <div class="bg-[#39404b] rounded-lg p-4">
-            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
-              <div class="flex items-center gap-3">
-                {% if result.status == "SUCCESS" %}
-                  {% if result.errors %}
-                    <span class="px-2 py-1 rounded text-xs font-medium text-emerald-400 bg-emerald-400/10">Finished</span>
-                  {% else %}
-                    <span class="px-2 py-1 rounded text-xs font-medium text-green-400 bg-green-400/10">Success</span>
-
-                  {% endif %}
-                {% elif result.status == "STARTED" %}
-                  <span class="px-2 py-1 rounded text-xs font-medium text-blue-400 bg-blue-400/10">Started</span>
-                {% elif result.status == "FAILURE" %}
-                  <span class="px-2 py-1 rounded text-xs font-medium text-red-400 bg-red-400/10">Failed</span>
-                {% else %}
-                  <span class="px-2 py-1 rounded text-xs font-medium text-yellow-400 bg-yellow-400/10">Pending</span>
-                {% endif %}
-
-                {% source_display result.source %}
-              </div>
-              <span class="text-xs text-gray-400">{{ result.date|user_datetime_format:user }}</span>
-            </div>
-
-            {% if result.status %}
-              {% if result.summary %}<div class="text-sm text-gray-200">{{ result.summary }}</div>{% endif %}
-
-              <div class="mt-2" x-data="{ showDetails: false }" x-cloak>
-                {% if result.errors %}
-                  {% if result.status == "SUCCESS" %}
-                    <button @click="showDetails = !showDetails"
-                            class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
-                            x-text="showDetails ? 'Hide failed items' : 'Show failed items'">Show failed items</button>
-
-                  {% elif result.status == "FAILURE" %}
-                    <button @click="showDetails = !showDetails"
-                            class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
-                            x-text="showDetails ? 'Hide traceback' : 'Show traceback'">Show traceback</button>
-                  {% endif %}
-
-                  <div class="mt-2 space-y-1 text-sm bg-[#2a2f35] p-3 rounded overflow-x-auto break-words"
-                       x-show="showDetails">
-                    <div class="text-xs space-y-1 text-red-400">
-                      {% for error in result.errors.splitlines %}<div>{{ error }}</div>{% endfor %}
-                    </div>
-                  </div>
-                {% endif %}
-              </div>
-            {% endif %}
-          </div>
-        {% empty %}
-          <div class="bg-[#39404b] rounded-lg p-6 text-center">
-            <p class="text-gray-400 text-sm">No imports in the last 7 days</p>
-            <p class="text-gray-500 text-xs mt-1">Import your media from any source to see the history here</p>
-          </div>
-        {% endfor %}
+      <div class="bg-[#2a2f35] rounded-lg p-6">
+        <div class="flex items-center mb-4">
+          {% include "app/icons/clock-reversing.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+          <h2 class="text-xl font-semibold">Import History</h2>
+        </div>
+        <p class="text-gray-400 text-sm">Loading recent import history...</p>
       </div>
     </div>
   </div>
