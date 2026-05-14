@@ -3354,6 +3354,54 @@ class TV(Media):
         dates = self._season_activity_dates("end_date", include_specials=True)
         return max(dates) if dates else None
 
+    def _get_quick_update_season(self, operation):
+        """Return the season that should handle quick TV progress updates."""
+        seasons = sorted(
+            (
+                season
+                for season in self.seasons.all()
+                if season.item.season_number != 0
+            ),
+            key=lambda season: season.item.season_number,
+        )
+
+        for season in seasons:
+            if season.status == Status.IN_PROGRESS.value:
+                return season
+
+        if operation == "increase" and self._start_next_available_season():
+            return (
+                self.seasons.filter(
+                    item__season_number__gt=0,
+                    status=Status.IN_PROGRESS.value,
+                )
+                .order_by("item__season_number")
+                .first()
+            )
+
+        if operation == "decrease":
+            for season in reversed(seasons):
+                if season.progress > 0:
+                    return season
+
+        return None
+
+    def increase_progress(self):
+        """Increase TV progress by advancing the active season."""
+        season = self._get_quick_update_season("increase")
+        if season is None:
+            logger.info("No season available to increase progress for %s", self)
+            return
+        season.increase_progress()
+
+    def decrease_progress(self):
+        """Decrease TV progress by rewinding the relevant season."""
+        season = self._get_quick_update_season("decrease")
+        if season is None:
+            logger.info("No season available to decrease progress for %s", self)
+            return
+        season.decrease_progress()
+
     def _season_activity_dates(self, attr_name, include_specials=False):
         """Collect season activity dates, optionally including specials."""
         dates = []
