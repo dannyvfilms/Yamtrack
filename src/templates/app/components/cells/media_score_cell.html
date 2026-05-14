@@ -1,5 +1,7 @@
 {% load app_tags %}
-{% if media.aggregated_score is not None %}
+{% if media.is_untracked %}
+  <span class="text-gray-500">-</span>
+{% elif media.aggregated_score is not None %}
   <div class="flex items-center justify-center">
     <svg xmlns="http://www.w3.org/2000/svg"
          width="24"

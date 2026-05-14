@@ -5,6 +5,7 @@ import math
 import re
 import time
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
@@ -258,9 +259,51 @@ MEDIA_RATING_CHOICES = (
     ("rated", "Rated"),
     # "not_rated" is handled in logic but not shown in dropdown (toggle behavior)
 )
+MEDIA_LIST_NO_STATUS = "no_status"
+MEDIA_LIST_NO_STATUS_LABEL = "No Status"
 RECENTLY_NOT_RATED_KEY = "recently_not_rated"
 RECENTLY_NOT_RATED_LABEL = "Recently Played - Not Rated"
 RECENTLY_NOT_RATED_DAYS = 7
+
+
+@dataclass
+class MediaListEntry:
+    """Template-facing list entry that may or may not have a tracker row."""
+
+    item: object
+    media: object | None = None
+
+    @classmethod
+    def from_media(cls, media):
+        return cls(item=getattr(media, "item", None), media=media)
+
+    @property
+    def is_untracked(self) -> bool:
+        return self.media is None
+
+    @property
+    def item_id(self):
+        if self.media is not None:
+            return getattr(self.media, "item_id", None)
+        return getattr(self.item, "id", None)
+
+    def __bool__(self):
+        return self.media is not None
+
+    def __getattr__(self, attr):
+        if self.media is None:
+            return None
+        return getattr(self.media, attr, None)
+
+
+def _tracked_media_entries(entries):
+    """Return the tracker-backed objects from mixed media-list entries."""
+    tracked_entries = []
+    for entry in entries:
+        tracked_media = getattr(entry, "media", entry)
+        if tracked_media is not None:
+            tracked_entries.append(tracked_media)
+    return tracked_entries
 
 class _EmptyHistoryProxy:
     """Minimal queryset-like history object for empty podcast wrappers."""
@@ -1815,10 +1858,33 @@ def media_list(request, media_type):
         else:
             direction = BasicMedia.objects.resolve_direction(sort_filter, direction_pref)
         request.user.update_preference(direction_field, direction)
-    status_filter = request.user.update_preference(
-        f"{media_type}_status",
-        request.GET.get("status"),
-    )
+    supports_untracked_status_filter = media_type not in {
+        MediaTypes.MUSIC.value,
+        MediaTypes.PODCAST.value,
+    }
+    raw_status_filter = request.GET.get("status")
+    valid_statuses = {choice[0] for choice in MediaStatusChoices.choices}
+    persisted_status_filter = getattr(request.user, f"{media_type}_status", MediaStatusChoices.ALL)
+
+    if raw_status_filter in valid_statuses:
+        status_filter = request.user.update_preference(
+            f"{media_type}_status",
+            raw_status_filter,
+        )
+    elif raw_status_filter is None:
+        status_filter = persisted_status_filter
+    elif (
+        supports_untracked_status_filter
+        and raw_status_filter == MEDIA_LIST_NO_STATUS
+    ):
+        status_filter = MEDIA_LIST_NO_STATUS
+    else:
+        status_filter = persisted_status_filter
+
+    status_choices = list(MediaStatusChoices.choices)
+    if supports_untracked_status_filter:
+        status_choices.insert(1, (MEDIA_LIST_NO_STATUS, MEDIA_LIST_NO_STATUS_LABEL))
+
     rating_filter = request.GET.get("rating", "all")
     # Allow "not_rated" even though it's not in display choices (toggle behavior)
     valid_rating_filters = {"all", "rated", "not_rated"}
@@ -1877,6 +1943,12 @@ def media_list(request, media_type):
         """Filter against each item's latest aggregated status."""
         if not filter_value or filter_value == MediaStatusChoices.ALL:
             return media_items
+        if filter_value == MEDIA_LIST_NO_STATUS:
+            return [
+                media
+                for media in media_items
+                if getattr(media, "media", media) is None
+            ]
         filtered_items = []
         for media in media_items:
             latest_status = (
@@ -1948,13 +2020,27 @@ def media_list(request, media_type):
         if filter_value == "all" or media_type not in progress_media_types:
             return media_items
 
-        if any(getattr(media, "max_progress", None) is None for media in media_items):
-            BasicMedia.objects.annotate_max_progress(media_items, media_type)
+        tracked_media_items = _tracked_media_entries(media_items)
+        if tracked_media_items and any(
+            getattr(media, "max_progress", None) is None
+            for media in tracked_media_items
+        ):
+            BasicMedia.objects.annotate_max_progress(tracked_media_items, media_type)
 
         if filter_value == "caught_up":
-            return [media for media in media_items if _is_caught_up_media(media)]
+            return [
+                media
+                for media in media_items
+                if getattr(media, "media", media) is not None
+                and _is_caught_up_media(media)
+            ]
         if filter_value == "not_caught_up":
-            return [media for media in media_items if not _is_caught_up_media(media)]
+            return [
+                media
+                for media in media_items
+                if getattr(media, "media", media) is not None
+                and not _is_caught_up_media(media)
+            ]
         return media_items
 
     def _normalize_filter_value(value):
@@ -2417,16 +2503,6 @@ def media_list(request, media_type):
         "tag_excluded_ids": tag_excluded_ids,
     }
 
-    media_queryset = BasicMedia.objects.get_media_list(
-        user=request.user,
-        media_type=media_type,
-        status_filter=status_filter,
-        sort_filter=query_sort_filter,
-        search=search_query,
-        direction=direction,
-        list_sql_filters=list_sql_filters,
-    )
-
     anime_library_mode = getattr(
         request.user,
         "anime_library_mode",
@@ -2440,6 +2516,152 @@ def media_list(request, media_type):
         MediaTypes.TV.value,
         "both",
     }
+
+    tracked_status_filter = (
+        MediaStatusChoices.ALL
+        if status_filter == MEDIA_LIST_NO_STATUS
+        else status_filter
+    )
+
+    def _item_matches_requested_media_type(item):
+        if not item:
+            return False
+        if media_type == MediaTypes.ANIME.value:
+            if item.media_type == MediaTypes.ANIME.value:
+                return True
+            return (
+                include_grouped_anime_in_anime
+                and item.media_type == MediaTypes.TV.value
+                and getattr(item, "library_media_type", None) == MediaTypes.ANIME.value
+            )
+        if media_type == MediaTypes.TV.value:
+            if item.media_type != MediaTypes.TV.value:
+                return False
+            return (
+                include_grouped_anime_in_tv
+                or getattr(item, "library_media_type", None) != MediaTypes.ANIME.value
+            )
+        return item.media_type == media_type
+
+    def _build_untracked_media_entries(tracked_item_ids, *, ignore_platform_filter=False):
+        if not supports_untracked_status_filter:
+            return []
+
+        collected_item_ids = set(
+            CollectionEntry.objects.filter(user=request.user).values_list("item_id", flat=True),
+        )
+        if not collected_item_ids:
+            return []
+
+        candidate_item_ids = set(collected_item_ids)
+        if media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
+            episode_pairs = {
+                (str(media_id), str(source))
+                for media_id, source in Item.objects.filter(
+                    id__in=collected_item_ids,
+                    media_type=MediaTypes.EPISODE.value,
+                ).values_list("media_id", "source")
+            }
+            if episode_pairs:
+                show_media_ids = {media_id for media_id, _source in episode_pairs}
+                show_sources = {source for _media_id, source in episode_pairs}
+                for show_item in Item.objects.filter(
+                    media_type__in=(MediaTypes.TV.value, MediaTypes.ANIME.value),
+                    media_id__in=show_media_ids,
+                    source__in=show_sources,
+                ).only("id", "media_id", "source"):
+                    if (str(show_item.media_id), str(show_item.source)) in episode_pairs:
+                        candidate_item_ids.add(show_item.id)
+
+        candidate_item_ids -= tracked_item_ids
+        if not candidate_item_ids:
+            return []
+
+        if media_type == MediaTypes.GAME.value:
+            for item_id, collection_platform in CollectionEntry.objects.filter(
+                user=request.user,
+                item_id__in=candidate_item_ids,
+            ).values_list("item_id", "resolution"):
+                platform_value = str(collection_platform or "").strip()
+                if platform_value:
+                    collection_platforms_by_item_id[item_id].add(platform_value)
+
+        if media_type in author_media_types:
+            for item_id, collection_format in CollectionEntry.objects.filter(
+                user=request.user,
+                item_id__in=candidate_item_ids,
+            ).exclude(media_type="").values_list("item_id", "media_type"):
+                normalized_collection_format = _normalize_filter_value(collection_format)
+                if normalized_collection_format:
+                    collection_formats_by_item_id[item_id].add(normalized_collection_format)
+
+        effective_platform_filter = "" if ignore_platform_filter else platform_filter
+        today = timezone.localdate()
+        filtered_items = []
+        candidate_items = list(
+            Item.objects.filter(id__in=candidate_item_ids).order_by("title", "id"),
+        )
+        for item in candidate_items:
+            if not _item_matches_requested_media_type(item):
+                continue
+            if search_query:
+                normalized_search = _normalize_filter_value(search_query)
+                if normalized_search not in _normalize_filter_value(item.title) and normalized_search not in _normalize_filter_value(item.media_id):
+                    continue
+            if genre_filter:
+                normalized_genre = _normalize_filter_value(genre_filter)
+                if not any(
+                    _normalize_filter_value(genre) == normalized_genre
+                    for genre in (getattr(item, "genres", None) or [])
+                ):
+                    continue
+            normalized_year = _normalize_filter_value(year_filter)
+            if normalized_year == "unknown" and getattr(item, "release_datetime", None):
+                continue
+            if normalized_year.isdigit():
+                release_value = getattr(item, "release_datetime", None)
+                release_year = getattr(release_value, "year", None) if release_value else None
+                if release_year != int(normalized_year):
+                    continue
+            if source_filter and getattr(item, "source", None) != source_filter:
+                continue
+            if not _matches_release_filter_value(
+                getattr(item, "release_datetime", None),
+                release_filter,
+                today,
+            ):
+                continue
+            if language_filter and not any(
+                _normalize_filter_value(language) == _normalize_filter_value(language_filter)
+                for language in _extract_item_languages(item)
+            ):
+                continue
+            if country_filter and _normalize_filter_value(_extract_item_country(item)) != _normalize_filter_value(country_filter):
+                continue
+            if effective_platform_filter and media_type == MediaTypes.GAME.value:
+                normalized_platform = _normalize_filter_value(effective_platform_filter)
+                if not any(
+                    _normalize_filter_value(platform) == normalized_platform
+                    for platform in _extract_item_platforms_with_collection(item)
+                ):
+                    continue
+            if tag_included_ids is not None and item.id not in tag_included_ids:
+                continue
+            if tag_excluded_ids is not None and item.id in tag_excluded_ids:
+                continue
+            filtered_items.append(MediaListEntry(item=item, media=None))
+
+        return filtered_items
+
+    media_queryset = BasicMedia.objects.get_media_list(
+        user=request.user,
+        media_type=media_type,
+        status_filter=tracked_status_filter,
+        sort_filter=query_sort_filter,
+        search=search_query,
+        direction=direction,
+        list_sql_filters=list_sql_filters,
+    )
 
     # Convert to list for filtering (rating and collection filters work on lists)
     media_list = list(media_queryset)
@@ -2455,7 +2677,7 @@ def media_list(request, media_type):
             BasicMedia.objects.get_media_list(
                 user=request.user,
                 media_type=MediaTypes.TV.value,
-                status_filter=status_filter,
+                status_filter=tracked_status_filter,
                 sort_filter=query_sort_filter,
                 search=search_query,
                 direction=direction,
@@ -2471,21 +2693,43 @@ def media_list(request, media_type):
         _mark_grouped_anime_route(grouped_anime_media)
         media_list.extend(grouped_anime_media)
 
+    tracked_item_ids = {
+        media.item_id
+        for media in media_list
+        if getattr(media, "item_id", None)
+    }
+    untracked_media_entries = []
+    if status_filter in {MediaStatusChoices.ALL, MEDIA_LIST_NO_STATUS}:
+        untracked_media_entries = _build_untracked_media_entries(tracked_item_ids)
+
+    media_list = [MediaListEntry.from_media(media) for media in media_list]
+    media_list.extend(untracked_media_entries)
+
     media_list = apply_latest_status_filter(media_list, status_filter)
     filter_data_source_items = media_list
     if media_type == MediaTypes.GAME.value and platform_filter:
         filter_sql_filters = {**list_sql_filters, "platform": ""}
-        filter_data_source_items = list(
-            BasicMedia.objects.get_media_list(
-                user=request.user,
-                media_type=media_type,
-                status_filter=status_filter,
-                sort_filter=query_sort_filter,
-                search=search_query,
-                direction=direction,
-                list_sql_filters=filter_sql_filters,
-            ),
-        )
+        filter_data_source_items = [
+            MediaListEntry.from_media(media)
+            for media in list(
+                BasicMedia.objects.get_media_list(
+                    user=request.user,
+                    media_type=media_type,
+                    status_filter=tracked_status_filter,
+                    sort_filter=query_sort_filter,
+                    search=search_query,
+                    direction=direction,
+                    list_sql_filters=filter_sql_filters,
+                ),
+            )
+        ]
+        if status_filter in {MediaStatusChoices.ALL, MEDIA_LIST_NO_STATUS}:
+            filter_data_source_items.extend(
+                _build_untracked_media_entries(
+                    tracked_item_ids,
+                    ignore_platform_filter=True,
+                ),
+            )
         filter_data_source_items = apply_latest_status_filter(
             filter_data_source_items,
             status_filter,
@@ -2553,12 +2797,18 @@ def media_list(request, media_type):
     if sort_filter == "author" and media_type in author_media_types:
         media_list = sort_media_items_by_author(media_list, direction)
     if sort_filter == "runtime" and media_type in runtime_media_types:
-        BasicMedia.objects.annotate_max_progress(media_list, media_type)
+        BasicMedia.objects.annotate_max_progress(
+            _tracked_media_entries(media_list),
+            media_type,
+        )
         media_list = sort_media_items_by_runtime(media_list, direction)
     if sort_filter == "plays" and media_type in plays_media_types:
         media_list = sort_media_items_by_plays(media_list, direction)
     if sort_filter == "time_watched" and media_type in runtime_media_types:
-        BasicMedia.objects.annotate_max_progress(media_list, media_type)
+        BasicMedia.objects.annotate_max_progress(
+            _tracked_media_entries(media_list),
+            media_type,
+        )
         media_list = sort_media_items_by_time_watched(media_list, direction)
     if sort_filter == "time_to_beat" and media_type == MediaTypes.GAME.value:
         media_list = sort_media_items_by_game_time_to_beat(media_list, direction)
@@ -2653,7 +2903,10 @@ def media_list(request, media_type):
             logger.debug(f"DEBUG: Got {len(media_list)} media objects after filtering")
 
             # Annotate max_progress first
-            BasicMedia.objects.annotate_max_progress(media_list, media_type)
+            BasicMedia.objects.annotate_max_progress(
+                _tracked_media_entries(media_list),
+                media_type,
+            )
             logger.debug("DEBUG: Annotated max_progress for all media")
 
             # Apply time_left sorting
@@ -2675,7 +2928,13 @@ def media_list(request, media_type):
         # Log the first few items on this page to see what's being displayed
         logger.debug(f"DEBUG: First 5 items on page {page}:")
         for i, media in enumerate(media_page[:5]):
-            episodes_left = media.max_progress - media.progress if hasattr(media, "max_progress") else 0
+            max_progress = getattr(media, "max_progress", None)
+            progress_value = getattr(media, "progress", None)
+            episodes_left = (
+                max_progress - progress_value
+                if max_progress is not None and progress_value is not None
+                else 0
+            )
             logger.debug(f"  {i+1}. {media.item.title} - Episodes left: {episodes_left}, Status: {getattr(media, 'status', 'Unknown')}")
 
         # Additional debug info for pagination issues
@@ -2689,7 +2948,7 @@ def media_list(request, media_type):
         media_page = paginator.get_page(page)
 
         BasicMedia.objects.annotate_max_progress(
-            media_page.object_list,
+            _tracked_media_entries(media_page.object_list),
             media_type,
         )
 
@@ -2722,7 +2981,7 @@ def media_list(request, media_type):
         "current_tag": tag_filter,
         "current_tag_exclude": tag_exclude_filter,
         "sort_choices": sorted_media_sort_choices,
-        "status_choices": MediaStatusChoices.choices,
+        "status_choices": status_choices,
         "rating_choices": MEDIA_RATING_CHOICES,
         "filter_data": filter_data,
         "is_artist_list": False,
@@ -2733,7 +2992,7 @@ def media_list(request, media_type):
     # For podcasts, show tracked shows instead of individual episodes
     # This parallels TV which shows TV shows, not seasons/episodes
     if media_type == MediaTypes.PODCAST.value:
-        from app.models import Item, PodcastShowTracker
+        from app.models import PodcastShowTracker
 
         show_trackers = (
             PodcastShowTracker.objects.filter(user=request.user)
@@ -2919,7 +3178,7 @@ def media_list(request, media_type):
             "current_platform": platform_filter,
             "current_origin": origin_filter,
             "sort_choices": sorted_media_sort_choices,
-            "status_choices": MediaStatusChoices.choices,
+            "status_choices": status_choices,
             "rating_choices": MEDIA_RATING_CHOICES,
             "search_query": search_query,
             "filter_data": filter_data,

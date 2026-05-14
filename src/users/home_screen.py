@@ -625,12 +625,15 @@ def _author_options_for_media_type(user, media_type: str) -> list[dict]:
     if media_type not in AUTHOR_MEDIA_TYPES:
         return []
 
-    try:
-        actual_model = apps.get_model("app", media_type)
-    except LookupError:  # pragma: no cover - defensive
-        return []
-
-    item_ids = set(actual_model.objects.filter(user=user).values_list("item_id", flat=True))
+    normalized_rules = smart_rules.normalize_rule_payload(
+        {"media_types": [media_type], "status": "all"},
+        user,
+    )
+    item_ids = smart_rules.collect_matching_item_ids(
+        user,
+        normalized_rules,
+        include_collection_only_untracked=True,
+    )
     authors = set()
     for item in Item.objects.filter(id__in=item_ids).only("authors"):
         authors.update(smart_rules._extract_authors(item))
@@ -642,7 +645,13 @@ def _author_options_for_media_type(user, media_type: str) -> list[dict]:
 
 def build_filter_field_data(user, media_type: str) -> list[dict]:
     """Return template-friendly filter field definitions for a media type."""
-    filter_data = smart_rules.build_rule_filter_data(user, [media_type], "all", "")
+    filter_data = smart_rules.build_rule_filter_data(
+        user,
+        [media_type],
+        "all",
+        "",
+        include_collection_only_untracked=True,
+    )
     filter_data["authors"] = _author_options_for_media_type(user, media_type)
     filter_data["show_authors"] = media_type in AUTHOR_MEDIA_TYPES
 
@@ -1493,7 +1502,7 @@ def _apply_progress_filter(entries: list[HomeRowEntry], media_type: str, progres
     if normalized_progress == "caught_up":
         return [entry for entry in entries if entry.media and _is_caught_up_media(entry.media)]
     if normalized_progress == "not_caught_up":
-        return [entry for entry in entries if not entry.media or not _is_caught_up_media(entry.media)]
+        return [entry for entry in entries if entry.media and not _is_caught_up_media(entry.media)]
     return entries
 
 
@@ -1653,6 +1662,7 @@ def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
     item_ids = smart_rules.collect_matching_item_ids(
         user,
         smart_rules.normalize_rule_payload(rule_payload, user),
+        include_collection_only_untracked=True,
     )
     if not item_ids:
         return []

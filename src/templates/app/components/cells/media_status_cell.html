@@ -1,5 +1,7 @@
 {% load app_tags %}
-{% if media.aggregated_status %}
+{% if media.is_untracked %}
+  <span class="text-gray-300">No Status</span>
+{% elif media.aggregated_status %}
   <div class="font-medium">{{ media.aggregated_status|media_status_readable }}</div>
   {% if media.repeats > 1 %}
     {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}

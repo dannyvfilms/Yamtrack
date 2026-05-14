@@ -6,6 +6,7 @@ import datetime
 from collections.abc import Iterable
 
 from django.apps import apps
+from django.db.models import Q
 from django.utils import timezone
 
 from app.models import CollectionEntry, Item, ItemTag, MediaTypes, Sources, Status
@@ -459,6 +460,58 @@ def _collection_filter_context(owner) -> tuple[set[int], set[tuple[str, str]]]:
     return collected_item_ids, collected_episode_pairs
 
 
+def _collection_only_item_ids(
+    owner,
+    media_type: str,
+    tracked_item_ids: set[int] | None = None,
+    *,
+    search_query: str = "",
+) -> set[int]:
+    """Return collected item ids that do not already have a tracker row."""
+    tracked_item_ids = tracked_item_ids or set()
+    collected_item_ids, _collected_episode_pairs = _collection_filter_context(owner)
+    if not collected_item_ids:
+        return set()
+
+    direct_type_match = Q(media_type=media_type) | Q(library_media_type=media_type)
+    candidate_item_ids = set(
+        Item.objects.filter(id__in=collected_item_ids)
+        .filter(direct_type_match)
+        .values_list("id", flat=True),
+    )
+
+    if media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
+        episode_pairs = {
+            (str(media_id), str(source))
+            for media_id, source in Item.objects.filter(
+                id__in=collected_item_ids,
+                media_type=MediaTypes.EPISODE.value,
+            ).values_list("media_id", "source")
+        }
+        if episode_pairs:
+            show_media_ids = {media_id for media_id, _source in episode_pairs}
+            show_sources = {source for _media_id, source in episode_pairs}
+            show_queryset = Item.objects.filter(
+                media_type__in=(MediaTypes.TV.value, MediaTypes.ANIME.value),
+                media_id__in=show_media_ids,
+                source__in=show_sources,
+            ).filter(direct_type_match)
+            for item in show_queryset.only("id", "media_id", "source"):
+                if (str(item.media_id), str(item.source)) in episode_pairs:
+                    candidate_item_ids.add(item.id)
+
+    candidate_item_ids -= tracked_item_ids
+    if not candidate_item_ids:
+        return set()
+
+    candidate_queryset = Item.objects.filter(id__in=candidate_item_ids)
+    if search_query:
+        candidate_queryset = candidate_queryset.filter(
+            Q(title__icontains=search_query) | Q(media_id__icontains=search_query),
+        )
+    return set(candidate_queryset.values_list("id", flat=True))
+
+
 def _filter_item_ids_by_rating(
     owner,
     media_type: str,
@@ -486,7 +539,12 @@ def _filter_item_ids_by_rating(
     return candidate_item_ids
 
 
-def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
+def collect_matching_item_ids(
+    owner,
+    normalized_rules: dict,
+    *,
+    include_collection_only_untracked: bool = False,
+) -> set[int]:
     """Return matching Item IDs for a normalized smart-rule definition."""
     target_media_types = _target_media_types(owner, normalized_rules.get("media_types", []))
     if not target_media_types:
@@ -529,16 +587,31 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
             status_filter=normalized_rules.get("status", "all"),
             search_query=normalized_rules.get("search", ""),
         )
+        queryset_item_ids = set(queryset.values_list("item_id", flat=True))
 
         if not item_scan_required:
-            matched_ids.update(queryset.values_list("item_id", flat=True))
+            matched_ids.update(queryset_item_ids)
+            if (
+                include_collection_only_untracked
+                and normalized_rules.get("status", "all") == "all"
+                and collection_filter != "not_collected"
+                and rating_filter != "rated"
+            ):
+                matched_ids.update(
+                    _collection_only_item_ids(
+                        owner,
+                        media_type,
+                        queryset_item_ids,
+                        search_query=normalized_rules.get("search", ""),
+                    ),
+                )
             continue
 
         if rating_filter != "all":
             candidate_item_ids = _filter_item_ids_by_rating(
                 owner,
                 media_type,
-                queryset.values_list("item_id", flat=True),
+                queryset_item_ids,
                 rating_filter,
             )
             if not candidate_item_ids:
@@ -569,6 +642,28 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
                 continue
 
             matched_ids.add(item.id)
+
+        if (
+            include_collection_only_untracked
+            and normalized_rules.get("status", "all") == "all"
+            and collection_filter != "not_collected"
+            and rating_filter != "rated"
+        ):
+            collection_only_ids = _collection_only_item_ids(
+                owner,
+                media_type,
+                queryset_item_ids,
+                search_query=normalized_rules.get("search", ""),
+            )
+            if collection_only_ids:
+                for item in Item.objects.filter(id__in=collection_only_ids).iterator():
+                    if not _matches_item_filters(item, normalized_rules, today):
+                        continue
+                    if tag_included_ids is not None and item.id not in tag_included_ids:
+                        continue
+                    if tag_excluded_ids is not None and item.id in tag_excluded_ids:
+                        continue
+                    matched_ids.add(item.id)
 
     return matched_ids
 
@@ -717,7 +812,14 @@ def sync_smart_lists_for_item(owner, item: Item) -> dict[str, int]:
     }
 
 
-def build_rule_filter_data(owner, media_types: list[str], status: str, search: str):
+def build_rule_filter_data(
+    owner,
+    media_types: list[str],
+    status: str,
+    search: str,
+    *,
+    include_collection_only_untracked: bool = False,
+):
     """Build menu options for smart-rule filters from matched candidate media."""
     target_media_types = _target_media_types(owner, media_types)
 
@@ -729,7 +831,17 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
             status_filter=status,
             search_query=search,
         )
-        item_ids.update(queryset.values_list("item_id", flat=True))
+        queryset_item_ids = set(queryset.values_list("item_id", flat=True))
+        item_ids.update(queryset_item_ids)
+        if include_collection_only_untracked and status == "all":
+            item_ids.update(
+                _collection_only_item_ids(
+                    owner,
+                    media_type,
+                    queryset_item_ids,
+                    search_query=search,
+                ),
+            )
 
     items = Item.objects.filter(id__in=item_ids).only(
         "genres",

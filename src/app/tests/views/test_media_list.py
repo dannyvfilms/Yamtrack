@@ -1051,6 +1051,238 @@ class MediaListViewTests(TestCase):
         self.assertEqual(self.user.movie_sort, "score")
         self.assertEqual(self.user.movie_layout, "table")
 
+    def test_status_all_includes_collected_untracked_items(self):
+        tracked_item = Item.objects.create(
+            media_id="status-all-collected-tracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Status All Collected Tracked",
+            image="http://example.com/status-all-tracked.jpg",
+        )
+        Movie.objects.create(
+            item=tracked_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        untracked_item = Item.objects.create(
+            media_id="status-all-collected-untracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Status All Collected Untracked",
+            image="http://example.com/status-all-untracked.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_item,
+            media_type="digital",
+        )
+
+        url = reverse("medialist", args=[MediaTypes.MOVIE.value])
+        response = self.client.get(url, {"search": "Status All Collected"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [entry.item.title for entry in response.context["media_list"].object_list],
+            [
+                "Status All Collected Tracked",
+                "Status All Collected Untracked",
+            ],
+        )
+
+        in_progress_response = self.client.get(
+            url,
+            {
+                "search": "Status All Collected",
+                "status": Status.IN_PROGRESS.value,
+            },
+        )
+        self.assertEqual(in_progress_response.status_code, 200)
+        self.assertEqual(
+            [entry.item.title for entry in in_progress_response.context["media_list"].object_list],
+            ["Status All Collected Tracked"],
+        )
+
+    def test_no_status_filter_shows_only_collected_untracked_without_persisting_preference(self):
+        self.user.movie_status = Status.COMPLETED.value
+        self.user.save(update_fields=["movie_status"])
+
+        tracked_item = Item.objects.create(
+            media_id="no-status-tracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="No Status Filter Tracked",
+            image="http://example.com/no-status-tracked.jpg",
+        )
+        Movie.objects.create(
+            item=tracked_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+        )
+
+        untracked_item = Item.objects.create(
+            media_id="no-status-untracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="No Status Filter Untracked",
+            image="http://example.com/no-status-untracked.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_item,
+            media_type="digital",
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]),
+            {
+                "search": "No Status Filter",
+                "status": "no_status",
+                "layout": "table",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_status"], "no_status")
+        self.assertEqual(
+            [entry.item.title for entry in response.context["media_list"].object_list],
+            ["No Status Filter Untracked"],
+        )
+        self.assertContains(response, "No Status")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.movie_status, Status.COMPLETED.value)
+
+    def test_not_rated_filter_includes_collected_untracked_items(self):
+        rated_item = Item.objects.create(
+            media_id="rating-split-tracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Rating Split Tracked",
+            image="http://example.com/rating-split-tracked.jpg",
+        )
+        Movie.objects.create(
+            item=rated_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+            score=9,
+        )
+
+        untracked_item = Item.objects.create(
+            media_id="rating-split-untracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Rating Split Untracked",
+            image="http://example.com/rating-split-untracked.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_item,
+            media_type="digital",
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]),
+            {
+                "search": "Rating Split",
+                "rating": "not_rated",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_rating"], "not_rated")
+        self.assertEqual(
+            [entry.item.title for entry in response.context["media_list"].object_list],
+            ["Rating Split Untracked"],
+        )
+
+    def test_tv_episode_collection_items_appear_for_all_and_no_status(self):
+        show_item = Item.objects.create(
+            media_id="tv-episode-collected-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Episode Collected Library Show",
+            image="http://example.com/episode-collected-show.jpg",
+        )
+        episode_item = Item.objects.create(
+            media_id="tv-episode-collected-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode Collected Library Show Episode 1",
+            image="http://example.com/episode-collected-ep.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=episode_item,
+            media_type="digital",
+        )
+
+        url = reverse("medialist", args=[MediaTypes.TV.value])
+        all_response = self.client.get(url, {"search": "Episode Collected Library"})
+        no_status_response = self.client.get(
+            url,
+            {"search": "Episode Collected Library", "status": "no_status"},
+        )
+
+        self.assertEqual(show_item.id, no_status_response.context["media_list"].object_list[0].item.id)
+        self.assertEqual(
+            [entry.item.title for entry in all_response.context["media_list"].object_list],
+            ["Episode Collected Library Show"],
+        )
+        self.assertEqual(
+            [entry.item.title for entry in no_status_response.context["media_list"].object_list],
+            ["Episode Collected Library Show"],
+        )
+
+    def test_progress_filters_exclude_collected_untracked_items(self):
+        self._create_tv_runtime_entry(
+            "progress-filter-tracked-tv",
+            "Progress Filter Tracked TV",
+            [24, 24, 24],
+            progress=1,
+        )
+        episode_item = Item.objects.create(
+            media_id="progress-filter-untracked-tv",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Progress Filter Untracked TV Episode 1",
+            image="http://example.com/progress-filter-untracked-ep.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Item.objects.create(
+            media_id="progress-filter-untracked-tv",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Progress Filter Untracked TV",
+            image="http://example.com/progress-filter-untracked-show.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=episode_item,
+            media_type="digital",
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.TV.value]),
+            {
+                "search": "Progress Filter",
+                "status": "All",
+                "progress": "not_caught_up",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [entry.item.title for entry in response.context["media_list"].object_list],
+            ["Progress Filter Tracked TV"],
+        )
+
     def test_progress_filter_is_visible_only_for_tv_and_anime(self):
         """Progress filtering should render only where caught-up semantics are supported."""
         movie_response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))

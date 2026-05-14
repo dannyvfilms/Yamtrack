@@ -9,10 +9,12 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    CollectionEntry,
     Episode,
     Game,
     Item,
     MediaTypes,
+    Movie,
     Season,
     Sources,
     Status,
@@ -202,6 +204,192 @@ class HomeScreenViewTests(TestCase):
         self.assertEqual(
             [entry.item.title for entry in groups[0]["rows"][0]["items"]],
             ["Still In Progress TV"],
+        )
+
+    def test_library_row_status_all_includes_collected_untracked_items(self):
+        self._set_enabled_media_types(MediaTypes.MOVIE.value)
+
+        tracked_item = Item.objects.create(
+            title="Home Library Tracked Movie",
+            media_id="home-library-tracked-movie",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-library-tracked.jpg",
+        )
+        Movie.objects.create(
+            item=tracked_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        untracked_item = Item.objects.create(
+            title="Home Library Untracked Movie",
+            media_id="home-library-untracked-movie",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-library-untracked.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_item,
+            media_type="digital",
+        )
+
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.MOVIE.value,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=MediaSortChoices.TITLE,
+            direction=DirectionChoices.ASC,
+            filters={"status": "all"},
+        )
+
+        groups = home_screen.build_home_page_groups(self.user, items_limit=10)
+
+        self.assertEqual(
+            [entry.item.title for entry in groups[0]["rows"][0]["items"]],
+            [
+                "Home Library Tracked Movie",
+                "Home Library Untracked Movie",
+            ],
+        )
+
+    def test_home_progress_filter_excludes_collected_untracked_items(self):
+        self._set_enabled_media_types(MediaTypes.TV.value)
+
+        tracked_item = Item.objects.create(
+            title="Home Progress Tracked TV",
+            media_id="home-progress-tracked-tv",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-progress-tracked.jpg",
+        )
+        tracked_tv = TV.objects.create(
+            item=tracked_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        tracked_season_item = Item.objects.create(
+            media_id=tracked_item.media_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Home Progress Tracked TV Season 1",
+            image="https://example.com/home-progress-season.jpg",
+            season_number=1,
+        )
+        tracked_season = Season.objects.create(
+            item=tracked_season_item,
+            user=self.user,
+            related_tv=tracked_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        for episode_number in range(1, 4):
+            episode_item = Item.objects.create(
+                media_id=tracked_item.media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title=f"Home Progress Tracked TV Episode {episode_number}",
+                image="https://example.com/home-progress-episode.jpg",
+                season_number=1,
+                episode_number=episode_number,
+                release_datetime=timezone.now() - timedelta(days=episode_number),
+            )
+            if episode_number == 1:
+                Episode.objects.create(
+                    item=episode_item,
+                    related_season=tracked_season,
+                    end_date=timezone.now() - timedelta(days=episode_number),
+                )
+
+        Item.objects.create(
+            title="Home Progress Untracked TV",
+            media_id="home-progress-untracked-tv",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-progress-untracked.jpg",
+        )
+        untracked_episode = Item.objects.create(
+            media_id="home-progress-untracked-tv",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Home Progress Untracked TV Episode 1",
+            image="https://example.com/home-progress-untracked-ep.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_episode,
+            media_type="digital",
+        )
+
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.TV.value,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=MediaSortChoices.TITLE,
+            direction=DirectionChoices.ASC,
+            filters={"status": "all", "progress": "not_caught_up"},
+        )
+
+        groups = home_screen.build_home_page_groups(self.user, items_limit=10)
+
+        self.assertEqual(
+            [entry.item.title for entry in groups[0]["rows"][0]["items"]],
+            ["Home Progress Tracked TV"],
+        )
+
+    def test_home_screen_settings_do_not_expose_no_status_option(self):
+        self._set_enabled_media_types(MediaTypes.MOVIE.value)
+
+        response = self.client.get(reverse("home_screen"))
+
+        self.assertEqual(response.status_code, 200)
+        sections = json.loads(response.context["home_screen_sections_json"])
+        movie_section = next(
+            section
+            for section in sections
+            if section["media_type"] == MediaTypes.MOVIE.value
+        )
+        status_field = next(
+            field
+            for field in movie_section["filter_fields"]
+            if field["key"] == "status"
+        )
+        self.assertNotIn(
+            "no_status",
+            [option["value"] for option in status_field["options"]],
+        )
+
+    def test_home_filter_fields_include_collected_only_untracked_authors(self):
+        self._set_enabled_media_types(MediaTypes.BOOK.value)
+        untracked_book = Item.objects.create(
+            title="Home Untracked Author Book",
+            media_id="home-untracked-author-book",
+            media_type=MediaTypes.BOOK.value,
+            source=Sources.OPENLIBRARY.value,
+            image="https://example.com/home-untracked-author-book.jpg",
+            authors=["Author Only In Collection"],
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_book,
+            media_type="audiobook",
+        )
+
+        filter_fields = home_screen.build_filter_field_data(
+            self.user,
+            MediaTypes.BOOK.value,
+        )
+        author_field = next(field for field in filter_fields if field["key"] == "author")
+        self.assertIn(
+            {"value": "Author Only In Collection", "label": "Author Only In Collection"},
+            author_field["options"],
         )
 
     def test_planning_library_row_excludes_duplicate_item_with_newer_in_progress_status(self):
