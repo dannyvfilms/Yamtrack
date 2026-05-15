@@ -226,6 +226,15 @@ def import_media(importer_func, identifier, user_id, mode, oauth_username=None):
     return format_import_message(imported_counts, warnings)
 
 
+def _run_arr_import(service_name, importer_func, user_id, mode):
+    """Run ARR imports without surfacing expected connection failures as task tracebacks."""
+    try:
+        return import_media(importer_func, None, user_id, mode)
+    except helpers.MediaImportError as exc:
+        logger.warning("%s import failed for user %s: %s", service_name, user_id, exc)
+        return f"{service_name} import failed: {exc}"
+
+
 def _queue_post_import_collection_update(user_id, importer_func):
     """Queue collection metadata update task after import if applicable.
 
@@ -341,7 +350,7 @@ def import_plex(library, user_id, mode, username=None):  # noqa: ARG001
 @shared_task(name="Import from Radarr")
 def import_radarr(user_id, mode="new", username=None):  # noqa: ARG001
     """Celery task for importing movie collection data from Radarr."""
-    return import_media(radarr.importer, None, user_id, mode)
+    return _run_arr_import("Radarr", radarr.importer, user_id, mode)
 
 
 @shared_task(name="Import from Radarr (Recurring)")
@@ -353,7 +362,7 @@ def import_radarr_recurring(user_id):
 @shared_task(name="Import from Sonarr")
 def import_sonarr(user_id, mode="new", username=None):  # noqa: ARG001
     """Celery task for importing TV collection data from Sonarr."""
-    return import_media(sonarr.importer, None, user_id, mode)
+    return _run_arr_import("Sonarr", sonarr.importer, user_id, mode)
 
 
 @shared_task(name="Import from Sonarr (Recurring)")

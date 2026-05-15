@@ -30,12 +30,16 @@ class SonarrClient:
         self.api_key = api_key
 
     def _request(self, path: str, params=None):
-        response = requests.get(
-            f"{self.base_url}{path}",
-            headers={"X-Api-Key": self.api_key},
-            params=params,
-            timeout=20,
-        )
+        try:
+            response = requests.get(
+                f"{self.base_url}{path}",
+                headers={"X-Api-Key": self.api_key},
+                params=params,
+                timeout=20,
+            )
+        except requests.RequestException as error:
+            msg = f"Could not reach Sonarr: {error}"
+            raise MediaImportError(msg) from error
         if response.status_code in (401, 403):
             msg = "Sonarr API key is invalid or unauthorized"
             raise MediaImportError(msg)

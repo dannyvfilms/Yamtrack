@@ -24,11 +24,15 @@ class RadarrClient:
         self.api_key = api_key
 
     def _request(self, path: str):
-        response = requests.get(
-            f"{self.base_url}{path}",
-            headers={"X-Api-Key": self.api_key},
-            timeout=20,
-        )
+        try:
+            response = requests.get(
+                f"{self.base_url}{path}",
+                headers={"X-Api-Key": self.api_key},
+                timeout=20,
+            )
+        except requests.RequestException as error:
+            msg = f"Could not reach Radarr: {error}"
+            raise MediaImportError(msg) from error
         if response.status_code in (401, 403):
             msg = "Radarr API key is invalid or unauthorized"
             raise MediaImportError(msg)

@@ -351,7 +351,6 @@
 {% endblock settings_content %}
 
 {% block js %}
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
   <script>
     function homeScreenSettings({ sections, listSearchUrl, directionChoices }) {
       return {
@@ -371,6 +370,7 @@
         listSearchUrl,
         directionChoices: directionChoices || [],
         sortables: [],
+        sortableLoadPromise: null,
         nextRowId: 0,
         init() {
           window.homeScreenSettingsInstance = this;
@@ -380,7 +380,47 @@
               ...section.rows.map(row => Number.parseInt(String(row.id || '0'), 10) || 0)
             );
           }, 0) + 1;
-          this.$nextTick(() => this.initSortables());
+          this.$nextTick(async () => {
+            if (await this.ensureSortable()) {
+              this.initSortables();
+            }
+          });
+        },
+        async ensureSortable() {
+          if (typeof Sortable !== 'undefined') return true;
+          if (!this.sortableLoadPromise) {
+            this.sortableLoadPromise = new Promise(resolve => {
+              const existingScript = document.querySelector('script[data-home-screen-sortable]');
+              if (existingScript) {
+                if (existingScript.dataset.loaded === 'true') {
+                  resolve(true);
+                  return;
+                }
+                existingScript.addEventListener('load', () => resolve(true), { once: true });
+                existingScript.addEventListener('error', () => resolve(false), { once: true });
+                return;
+              }
+
+              const script = document.createElement('script');
+              script.src = 'https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js';
+              script.dataset.homeScreenSortable = 'true';
+              script.addEventListener('load', () => {
+                script.dataset.loaded = 'true';
+                resolve(true);
+              }, { once: true });
+              script.addEventListener('error', () => {
+                console.warn('Home screen drag-and-drop is unavailable because SortableJS could not be loaded.');
+                resolve(false);
+              }, { once: true });
+              document.head.appendChild(script);
+            });
+          }
+
+          const loaded = await this.sortableLoadPromise;
+          if (!loaded) {
+            this.sortableLoadPromise = null;
+          }
+          return loaded;
         },
         rowTypeLabel(type) {
           if (type === 'library_query') return 'Library Row';
@@ -544,7 +584,11 @@
             listResults: []
           };
           section.rows.push(newRow);
-          this.$nextTick(() => this.initSortables());
+          this.$nextTick(async () => {
+            if (await this.ensureSortable()) {
+              this.initSortables();
+            }
+          });
         },
         defaultFilters(section, rowType) {
           if (rowType !== 'library_query') return {};
@@ -569,7 +613,11 @@
         },
         removeRow(section, clientId) {
           section.rows = section.rows.filter(row => row.client_id !== clientId);
-          this.$nextTick(() => this.initSortables());
+          this.$nextTick(async () => {
+            if (await this.ensureSortable()) {
+              this.initSortables();
+            }
+          });
         },
         async searchLists(section, row) {
           const query = String(row.listQuery || '').trim();

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from unittest.mock import patch
 
+import requests
 from django.contrib.auth import get_user_model
 from django.db.utils import OperationalError
 from django.test import TestCase
@@ -9,6 +10,7 @@ from django_celery_beat.models import PeriodicTask
 
 from app.helpers import get_tv_show_collection_stats
 from app.models import CollectionEntry, Item, MediaTypes, Sources
+from integrations import tasks
 from integrations.imports import helpers, radarr, sonarr
 from integrations.models import CollectionSourceState, RadarrAccount, SonarrAccount
 from integrations.source_sync import upsert_collection_source_state
@@ -447,6 +449,55 @@ class ArrImporterTests(TestCase):
                 item=episode_item,
             ).exists(),
         )
+
+    @patch("integrations.imports.radarr.requests.get")
+    def test_radarr_import_marks_connection_broken_on_timeout(self, mock_get):
+        """Radarr timeouts should become handled import errors with account state."""
+        mock_get.side_effect = requests.exceptions.ConnectTimeout("connect timed out")
+
+        with self.assertRaises(helpers.MediaImportError) as cm:
+            radarr.importer(None, self.user, "new")
+
+        self.radarr_account.refresh_from_db()
+        self.assertTrue(self.radarr_account.connection_broken)
+        self.assertIn("Could not reach Radarr", str(cm.exception))
+        self.assertIn("Could not reach Radarr", self.radarr_account.last_error_message)
+
+    @patch("integrations.imports.sonarr.requests.get")
+    def test_sonarr_import_marks_connection_broken_on_timeout(self, mock_get):
+        """Sonarr timeouts should become handled import errors with account state."""
+        mock_get.side_effect = requests.exceptions.ConnectTimeout("connect timed out")
+
+        with self.assertRaises(helpers.MediaImportError) as cm:
+            sonarr.importer(None, self.user, "new")
+
+        self.sonarr_account.refresh_from_db()
+        self.assertTrue(self.sonarr_account.connection_broken)
+        self.assertIn("Could not reach Sonarr", str(cm.exception))
+        self.assertIn("Could not reach Sonarr", self.sonarr_account.last_error_message)
+
+
+class ArrImportTaskTests(TestCase):
+    """Cover handled task failures for ARR imports."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username="arr-task-user")
+
+    @patch("integrations.tasks.import_media")
+    def test_import_radarr_task_returns_failure_message_for_expected_errors(self, mock_import_media):
+        mock_import_media.side_effect = helpers.MediaImportError("Could not reach Radarr: connect timed out")
+
+        result = tasks.import_radarr(user_id=self.user.id)
+
+        self.assertEqual(result, "Radarr import failed: Could not reach Radarr: connect timed out")
+
+    @patch("integrations.tasks.import_media")
+    def test_import_sonarr_task_returns_failure_message_for_expected_errors(self, mock_import_media):
+        mock_import_media.side_effect = helpers.MediaImportError("Could not reach Sonarr: connect timed out")
+
+        result = tasks.import_sonarr(user_id=self.user.id)
+
+        self.assertEqual(result, "Sonarr import failed: Could not reach Sonarr: connect timed out")
 
 
 class CollectionSourceSyncTests(TestCase):

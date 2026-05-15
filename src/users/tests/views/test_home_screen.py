@@ -66,6 +66,8 @@ class HomeScreenViewTests(TestCase):
         self.assertNotContains(response, 'sections: [{"media_type":')
         self.assertContains(response, "expanded: false")
         self.assertContains(response, 'x-html="section.icon_svg"')
+        self.assertContains(response, "ensureSortable()")
+        self.assertNotContains(response, 'src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"')
         self.assertNotContains(response, "section.rows.length === 1")
         self.assertContains(response, "Add Row")
         self.assertContains(response, "Add List")
