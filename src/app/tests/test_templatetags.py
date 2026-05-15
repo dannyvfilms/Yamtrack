@@ -428,6 +428,41 @@ class AppTagsTests(TestCase):
             content,
         )
 
+    def test_progress_changer_uses_episode_label_for_tv_and_season(self):
+        """Quick progress controls should use episode labels for TV-derived progress."""
+        tv_content = render_to_string(
+            "app/components/progress_changer.html",
+            {
+                "media": SimpleNamespace(
+                    id=1,
+                    item=self.tv_item,
+                    progress=1,
+                    max_progress=10,
+                    formatted_progress="1",
+                ),
+                "csrf_token": "token",
+                "MediaTypes": MediaTypes,
+            },
+        )
+        season_content = render_to_string(
+            "app/components/progress_changer.html",
+            {
+                "media": SimpleNamespace(
+                    id=2,
+                    item=self.season_item,
+                    progress=1,
+                    max_progress=10,
+                    formatted_progress="1",
+                ),
+                "csrf_token": "token",
+                "MediaTypes": MediaTypes,
+            },
+        )
+
+        self.assertIn("Episode", tv_content)
+        self.assertNotIn('progress-unit"> s', tv_content)
+        self.assertIn("Episodes", season_content)
+
     def test_media_card_teleports_alt_title_tooltip(self):
         """Grid media cards should teleport alternate-title tooltips outside the clipped shell."""
         item = Item(

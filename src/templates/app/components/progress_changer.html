@@ -17,9 +17,21 @@
       {% if media.max_progress %}
         <span class="progress-slash">/</span>
         <span class="progress-max">{{ media.max_progress }}</span>
-        <span class="progress-unit"> {{ media.item.media_type|long_unit }}{{ media.max_progress|pluralize }}</span>
+        <span class="progress-unit">
+          {% if media.item.media_type == MediaTypes.TV.value %}
+            Episode{{ media.max_progress|pluralize }}
+          {% else %}
+            {{ media.item.media_type|long_unit }}{{ media.max_progress|pluralize }}
+          {% endif %}
+        </span>
       {% else %}
-        <span class="progress-unit"> {{ media.item.media_type|long_unit }}{{ media.progress|pluralize }}</span>
+        <span class="progress-unit">
+          {% if media.item.media_type == MediaTypes.TV.value %}
+            Episode{{ media.progress|pluralize }}
+          {% else %}
+            {{ media.item.media_type|long_unit }}{{ media.progress|pluralize }}
+          {% endif %}
+        </span>
       {% endif %}
     {% endif %}
   </div>
