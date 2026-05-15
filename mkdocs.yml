@@ -11,6 +11,7 @@ edit_uri: edit/dev/docs/
 nav:
   - Home: index.md
   - Setup: setup.md
+  - Local Development: local-development.md
   - Environment Variables: env-variables.md
   - Media Imports: media-imports.md
   - Social Auth: social-auth.md

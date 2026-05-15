@@ -1,6 +1,6 @@
 # Setup
 
-This page covers running Yamtrack with Docker and setting up a local development environment.
+This page covers running Yamtrack with Docker.
 
 ## Docker
 
@@ -84,50 +84,6 @@ services:
 ```
 
 If you see `403 Forbidden` behind a proxy, check that `URLS` exactly matches the public URL you use in the browser.
-
-## Local Development
-
-For development, clone the repository and change directory to it:
-
-```bash
-git clone https://github.com/FuzzyGrim/Yamtrack.git
-cd Yamtrack
-```
-
-Install Redis or start a Redis container:
-
-```bash
-docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:8-alpine
-```
-
-Create a `.env` file in the repository root:
-
-```bash
-TMDB_API=API_KEY
-MAL_API=API_KEY
-IGDB_ID=IGDB_ID
-IGDB_SECRET=IGDB_SECRET
-STEAM_API_KEY=STEAM_API_SECRET
-BGG_API_TOKEN=BGG_API_TOKEN
-SECRET=SECRET
-DEBUG=True
-```
-
-Then install dependencies and run the app:
-
-```bash
-python -m pip install -U -r requirements-dev.txt
-pre-commit install
-cd src
-python manage.py migrate
-python manage.py runserver & celery -A config worker --beat --scheduler django --loglevel DEBUG & tailwindcss -i ./static/css/input.css -o ./static/css/tailwind.css --watch
-```
-
-Open the development server at:
-
-```text
-http://localhost:8000
-```
 
 ## Troubleshooting
 
