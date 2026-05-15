@@ -197,6 +197,23 @@ class Search(TestCase):
         response = hardcover.search("xjkqzptmvnsieurytowahdbfglc", 1)
         self.assertEqual(response["results"], [])
 
+    def test_hardcover_architecture_title_query_is_capped(self):
+        """Test the long Goodreads architecture title is capped before search."""
+        query = (
+            "The Short Story of Architecture: A Pocket Guide to Key Styles, "
+            "Buildings, Elements & Materials (Architectural History Introduction, "
+            "A Guide to Architecture)"
+        )
+        response = hardcover.search(query, 1)
+        required_keys = {"media_id", "media_type", "title", "image"}
+
+        self.assertEqual(len(query), 156)
+        self.assertEqual(len(hardcover.cap_search_query(query)), 80)
+        self.assertTrue(len(response["results"]) > 0)
+
+        for book in response["results"]:
+            self.assertTrue(all(key in book for key in required_keys))
+
     @patch("app.providers.hardcover.services.api_request")
     def test_hardcover_search_prefixes_bearer_for_raw_tokens(self, mock_api_request):
         """Hardcover should accept raw tokens from env vars."""
