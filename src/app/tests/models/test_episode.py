@@ -278,3 +278,63 @@ class EpisodeStatusTests(TestCase):
 
         self.tv.refresh_from_db()
         self.assertEqual(self.tv.status, Status.IN_PROGRESS.value)
+
+    @patch("app.models.providers.services.get_media_metadata")
+    def test_earlier_episode_after_finale_keeps_completed_season_completed(
+        self,
+        mock_get_metadata,
+    ):
+        """Adding earlier episodes after the finale should not reopen the season."""
+        mock_get_metadata.return_value = {
+            "season/1": {
+                "episodes": [
+                    {"episode_number": 1},
+                    {"episode_number": 2},
+                    {"episode_number": 3},
+                ],
+            },
+            "related": {
+                "seasons": [{"season_number": 1}],
+            },
+        }
+
+        final_episode_item = Item.objects.create(
+            media_id="123",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Test Episode 3",
+            image="http://example.com/image.jpg",
+            season_number=1,
+            episode_number=3,
+        )
+        second_episode_item = Item.objects.create(
+            media_id="123",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Test Episode 2",
+            image="http://example.com/image.jpg",
+            season_number=1,
+            episode_number=2,
+        )
+
+        Episode.objects.create(
+            item=final_episode_item,
+            related_season=self.season,
+            end_date=timezone.now(),
+        )
+        Episode.objects.create(
+            item=self.episode_item,
+            related_season=self.season,
+            end_date=timezone.now(),
+        )
+        Episode.objects.create(
+            item=second_episode_item,
+            related_season=self.season,
+            end_date=timezone.now(),
+        )
+
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.status, Status.COMPLETED.value)
+
+        self.tv.refresh_from_db()
+        self.assertEqual(self.tv.status, Status.COMPLETED.value)

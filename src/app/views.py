@@ -7077,6 +7077,34 @@ def season_details(
                     )
                 )
 
+    if current_instance and hasattr(current_instance, "derived_status_from_episode_progress"):
+        season_max_progress = (
+            season_metadata.get("max_progress")
+            if isinstance(season_metadata, dict)
+            else None
+        )
+        if (
+            current_instance.derived_status_from_episode_progress(
+                max_progress=season_max_progress,
+            )
+            == Status.COMPLETED.value
+            and current_instance.status != Status.COMPLETED.value
+        ):
+            current_instance.promote_to_completed_if_fully_watched(
+                max_progress=season_max_progress,
+            )
+        current_instance.max_progress = season_max_progress
+        current_instance.status = current_instance.derived_status_from_episode_progress(
+            max_progress=season_max_progress,
+        )
+        for user_media in user_medias:
+            if not hasattr(user_media, "derived_status_from_episode_progress"):
+                continue
+            user_media.max_progress = season_max_progress
+            user_media.status = user_media.derived_status_from_episode_progress(
+                max_progress=season_max_progress,
+            )
+
     # Get collection entry, stats, and metadata for this season (if not public view)
     collection_entry = None
     collection_entries = []

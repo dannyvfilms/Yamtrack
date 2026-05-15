@@ -1327,7 +1327,7 @@ def _media_lookup_for_items(
         for media_entry in media_entries:
             grouped_entries[media_entry.item_id].append(media_entry)
 
-        deduped_entries = []
+        candidate_entries = []
         for item_id, entries in grouped_entries.items():
             if actual_media_type == MediaTypes.PODCAST.value:
                 entries = sorted(entries, key=lambda entry: entry.created_at, reverse=True)
@@ -1336,17 +1336,33 @@ def _media_lookup_for_items(
             primary_entry = entries[0]
             if actual_media_type != MediaTypes.PODCAST.value and len(entries) > 1:
                 BasicMedia.objects._aggregate_item_data(primary_entry, entries)
-            latest_status = getattr(primary_entry, "aggregated_status", None) or getattr(primary_entry, "status", None)
-            if status_filter != "all" and latest_status != status_filter:
-                continue
-            if actual_media_type == MediaTypes.PODCAST.value:
-                primary_entry.use_podcast_show = bool(getattr(primary_entry, "show", None))
-            lookup[item_id] = primary_entry
-            deduped_entries.append(primary_entry)
+            candidate_entries.append(primary_entry)
 
-        if deduped_entries:
-            BasicMedia.objects.annotate_max_progress(deduped_entries, actual_media_type)
-            _annotate_home_card_images(deduped_entries)
+        if candidate_entries:
+            BasicMedia.objects.annotate_max_progress(candidate_entries, actual_media_type)
+            if actual_media_type == MediaTypes.SEASON.value:
+                for primary_entry in candidate_entries:
+                    if len(grouped_entries.get(primary_entry.item_id, [])) != 1:
+                        continue
+                    effective_status = primary_entry.derived_status_from_episode_progress()
+                    if (
+                        effective_status == Status.COMPLETED.value
+                        and primary_entry.status != Status.COMPLETED.value
+                    ):
+                        primary_entry.promote_to_completed_if_fully_watched(
+                            max_progress=getattr(primary_entry, "max_progress", None),
+                        )
+                    primary_entry.status = effective_status
+                    primary_entry.aggregated_status = effective_status
+            _annotate_home_card_images(candidate_entries)
+
+            for primary_entry in candidate_entries:
+                latest_status = getattr(primary_entry, "aggregated_status", None) or getattr(primary_entry, "status", None)
+                if status_filter != "all" and latest_status != status_filter:
+                    continue
+                if actual_media_type == MediaTypes.PODCAST.value:
+                    primary_entry.use_podcast_show = bool(getattr(primary_entry, "show", None))
+                lookup[primary_entry.item_id] = primary_entry
 
     return lookup
 

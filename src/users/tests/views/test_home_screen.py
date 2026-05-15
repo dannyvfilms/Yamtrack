@@ -208,6 +208,125 @@ class HomeScreenViewTests(TestCase):
             ["Still In Progress TV"],
         )
 
+    @patch("app.models.providers.services.get_media_metadata")
+    def test_home_in_progress_row_hides_fully_watched_stale_seasons(
+        self,
+        mock_get_metadata,
+    ):
+        """Home should derive completed status for fully watched season rows."""
+        self._set_enabled_media_types(MediaTypes.SEASON.value)
+
+        stale_season_item = Item.objects.create(
+            title="Home Completed Season 1",
+            media_id="home-season-stale-complete",
+            media_type=MediaTypes.SEASON.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-season-complete.jpg",
+            season_number=1,
+        )
+        stale_tv_item = Item.objects.create(
+            title="Home Completed Show",
+            media_id="home-season-stale-complete",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-season-complete.jpg",
+        )
+        stale_tv = TV.objects.create(
+            item=stale_tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        stale_season = Season.objects.create(
+            item=stale_season_item,
+            user=self.user,
+            related_tv=stale_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        active_season_item = Item.objects.create(
+            title="Home Active Season 1",
+            media_id="home-season-active",
+            media_type=MediaTypes.SEASON.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-season-active.jpg",
+            season_number=1,
+        )
+        active_tv_item = Item.objects.create(
+            title="Home Active Show",
+            media_id="home-season-active",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/home-season-active.jpg",
+        )
+        active_tv = TV.objects.create(
+            item=active_tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        active_season = Season.objects.create(
+            item=active_season_item,
+            user=self.user,
+            related_tv=active_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        now = timezone.now()
+        for episode_number in range(1, 4):
+            stale_episode_item = Item.objects.create(
+                media_id=stale_season_item.media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title=f"Home Completed Season S01E{episode_number:02d}",
+                image="https://example.com/home-season-episode.jpg",
+                season_number=1,
+                episode_number=episode_number,
+                release_datetime=now - timedelta(days=episode_number),
+            )
+            Episode.objects.create(
+                item=stale_episode_item,
+                related_season=stale_season,
+                end_date=now - timedelta(days=episode_number),
+            )
+
+            active_episode_item = Item.objects.create(
+                media_id=active_season_item.media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title=f"Home Active Season S01E{episode_number:02d}",
+                image="https://example.com/home-active-episode.jpg",
+                season_number=1,
+                episode_number=episode_number,
+                release_datetime=now - timedelta(days=episode_number),
+            )
+            if episode_number == 1:
+                Episode.objects.create(
+                    item=active_episode_item,
+                    related_season=active_season,
+                    end_date=now - timedelta(days=episode_number),
+                )
+
+        mock_get_metadata.return_value = {"max_progress": 3}
+
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.SEASON.value,
+            position=0,
+            enabled=True,
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by=MediaSortChoices.TITLE,
+            direction=DirectionChoices.ASC,
+            filters={"status": Status.IN_PROGRESS.value},
+        )
+
+        groups = home_screen.build_home_page_groups(self.user, items_limit=10)
+
+        self.assertEqual(
+            [entry.item.title for entry in groups[0]["rows"][0]["items"]],
+            ["Home Active Season 1"],
+        )
+        stale_season.refresh_from_db()
+        self.assertEqual(stale_season.status, Status.COMPLETED.value)
+
     def test_library_row_status_all_includes_collected_untracked_items(self):
         self._set_enabled_media_types(MediaTypes.MOVIE.value)
 

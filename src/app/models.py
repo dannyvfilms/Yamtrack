@@ -3760,6 +3760,51 @@ class Season(Media):
         stats = self._get_episode_stats()
         return len(stats["completed_episode_numbers"])
 
+    def derived_status_from_episode_progress(self, max_progress=None):
+        """Return the effective season status from local episode history."""
+        if self.status in {Status.DROPPED.value, Status.PAUSED.value}:
+            return self.status
+
+        max_progress_value = max_progress
+        if max_progress_value is None:
+            max_progress_value = getattr(self, "max_progress", None)
+        try:
+            max_progress_value = int(max_progress_value)
+        except (TypeError, ValueError):
+            max_progress_value = None
+        if max_progress_value is not None and max_progress_value <= 0:
+            max_progress_value = None
+
+        completed_episode_count = self.completed_episode_count
+        progress_value = self.progress
+
+        if (
+            max_progress_value is not None
+            and completed_episode_count >= max_progress_value
+        ):
+            return Status.COMPLETED.value
+        if progress_value > 0 or completed_episode_count > 0:
+            return Status.IN_PROGRESS.value
+        if self.status == Status.PLANNING.value:
+            return Status.PLANNING.value
+        return self.status
+
+    def promote_to_completed_if_fully_watched(self, max_progress=None):
+        """Persist a completed season when local episode history proves it."""
+        desired_status = self.derived_status_from_episode_progress(
+            max_progress=max_progress,
+        )
+        if (
+            desired_status != Status.COMPLETED.value
+            or self.status == Status.COMPLETED.value
+        ):
+            return False
+
+        self.status = Status.COMPLETED.value
+        bulk_update_with_history([self], Season, fields=["status"])
+        self.related_tv._handle_completed_season(self.item.season_number)
+        return True
+
     def _get_episode_stats(self):
         """Return cached episode stats for this season."""
         cached = getattr(self, "_episode_stats_cache", None)
@@ -3893,6 +3938,8 @@ class Season(Media):
         )
 
         # Re-evaluate season/TV status after deletion so completed shows don't stay "In progress"
+        if hasattr(self, "_episode_stats_cache"):
+            delattr(self, "_episode_stats_cache")
         self._sync_status_after_episode_change()
         cache_utils.clear_time_left_cache_for_user(self.user_id)
 
@@ -4335,27 +4382,23 @@ class Episode(models.Model):
             return
 
         # clear prefetch cache to get the updated episodes
+        if hasattr(self.related_season, "_episode_stats_cache"):
+            delattr(self.related_season, "_episode_stats_cache")
         self.related_season.refresh_from_db()
 
-        season_just_completed = False
-        if self.item.episode_number == max_progress:
-            self.related_season.status = Status.COMPLETED.value
-            bulk_update_with_history(
-                [self.related_season],
-                Season,
-                fields=["status"],
-            )
-            season_just_completed = True
+        desired_status = self.related_season.derived_status_from_episode_progress(
+            max_progress=max_progress,
+        )
 
-        elif self.related_season.status != Status.IN_PROGRESS.value:
-            self.related_season.status = Status.IN_PROGRESS.value
+        if desired_status != self.related_season.status:
+            self.related_season.status = desired_status
             bulk_update_with_history(
                 [self.related_season],
                 Season,
                 fields=["status"],
             )
 
-        if season_just_completed:
+        if desired_status == Status.COMPLETED.value:
             self.related_season.related_tv._handle_completed_season(season_number)
         elif self.related_season.related_tv.status != Status.IN_PROGRESS.value:
             self.related_season.related_tv.status = Status.IN_PROGRESS.value
