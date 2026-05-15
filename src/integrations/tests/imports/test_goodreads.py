@@ -1,14 +1,17 @@
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import requests
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from app.models import (
     Book,
+    Sources,
     Status,
 )
+from app.providers import services
 from integrations.imports import (
     goodreads,
 )
@@ -114,3 +117,32 @@ class ImportGoodreads(TestCase):
         imported_book = Book.objects.get(user=self.user, item__media_id="1002")
         self.assertEqual(imported_book.status, Status.COMPLETED.value)
         self.assertEqual(imported_book.progress, 220)
+
+
+class ImportGoodreadsProviderErrors(TestCase):
+    """Test GoodReads provider error handling."""
+
+    def setUp(self):
+        """Create user for the tests."""
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+
+    @patch("integrations.imports.goodreads.GoodReadsImporter._process_row")
+    def test_provider_error_warns_with_goodreads_fields(self, mock_process_row):
+        """Test provider failures warn and continue without requiring media_id."""
+        response = MagicMock(status_code=408, text='{"error":"Request timeout"}')
+        error = requests.exceptions.HTTPError(response=response)
+        mock_process_row.side_effect = services.ProviderAPIError(
+            Sources.HARDCOVER.value,
+            error,
+        )
+
+        with Path(mock_path / "import_goodreads.csv").open("rb") as file:
+            imported_counts, warnings = goodreads.importer(file, self.user, "new")
+
+        self.assertEqual(imported_counts, {})
+        self.assertIn(
+            "Ghosts of the Tristan Basin (Powder Mage, #0.8) (Goodreads ID 28825810)",
+            warnings,
+        )
+        self.assertIn("There was an error contacting Hardcover", warnings)
