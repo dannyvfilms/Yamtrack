@@ -197,22 +197,58 @@ class Search(TestCase):
         response = hardcover.search("xjkqzptmvnsieurytowahdbfglc", 1)
         self.assertEqual(response["results"], [])
 
-    def test_hardcover_architecture_title_query_is_capped(self):
-        """Test the long Goodreads architecture title is capped before search."""
+    @patch("app.providers.hardcover.services.api_request")
+    def test_hardcover_title_query_is_capped(self, mock_api_request):
+        """Test the long title is capped before search."""
         query = (
             "The Short Story of Architecture: A Pocket Guide to Key Styles, "
             "Buildings, Elements & Materials (Architectural History Introduction, "
             "A Guide to Architecture)"
         )
+        capped_query = "The Short Story of Architecture: A Pocket Guide to"
+        cache.delete(
+            f"search_{Sources.HARDCOVER.value}_{MediaTypes.BOOK.value}_"
+            f"{capped_query}_1",
+        )
+        mock_api_request.return_value = {
+            "data": {
+                "search": {
+                    "results": {
+                        "hits": [
+                            {
+                                "document": {
+                                    "id": "123",
+                                    "title": "The Short Story of Architecture",
+                                    "image": {"url": "https://example.com/cover.jpg"},
+                                },
+                            },
+                        ],
+                        "found": 1,
+                    },
+                },
+            },
+        }
+
         response = hardcover.search(query, 1)
         required_keys = {"media_id", "media_type", "title", "image"}
 
         self.assertEqual(len(query), 156)
-        self.assertEqual(len(hardcover.cap_search_query(query)), 80)
+        self.assertEqual(hardcover.cap_search_query(query), capped_query)
+        _, kwargs = mock_api_request.call_args
+        self.assertEqual(kwargs["params"]["variables"]["query"], capped_query)
         self.assertTrue(len(response["results"]) > 0)
 
         for book in response["results"]:
             self.assertTrue(all(key in book for key in required_keys))
+
+    def test_hardcover_title_query_cap_stops_at_word_boundary(self):
+        """Test the long title cap does not split words."""
+        query = "one two three four five six seven eight nine ten eleven twelve"
+
+        self.assertEqual(
+            hardcover.cap_search_query(query),
+            "one two three four five six seven eight nine ten",
+        )
 
     @patch("app.providers.hardcover.services.api_request")
     def test_hardcover_search_prefixes_bearer_for_raw_tokens(self, mock_api_request):

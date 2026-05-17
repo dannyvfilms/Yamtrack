@@ -11,12 +11,25 @@ from app.providers import services
 logger = logging.getLogger(__name__)
 
 base_url = "https://api.hardcover.app/v1/graphql"
-MAX_SEARCH_QUERY_LENGTH = 80
+MAX_SEARCH_QUERY_LENGTH = 50
 
 
 def cap_search_query(query):
     """Limit long book queries before sending them to Hardcover search."""
-    return str(query or "")[:MAX_SEARCH_QUERY_LENGTH]
+    query = str(query or "")
+
+    if len(query) <= MAX_SEARCH_QUERY_LENGTH:
+        return query
+
+    capped_query = query[:MAX_SEARCH_QUERY_LENGTH]
+    if query[MAX_SEARCH_QUERY_LENGTH].isspace():
+        return capped_query.rstrip()
+
+    word_boundary = capped_query.rfind(" ")
+    if word_boundary == -1:
+        return capped_query
+
+    return capped_query[:word_boundary].rstrip()
 
 
 def _authorization_header():
