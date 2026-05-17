@@ -1330,13 +1330,19 @@ class User(AbstractUser):
             | Q(task_kwargs__contains=f'"user_id": {self.id}' + "}")
         )
 
-        # Get all task results for this user
+        # Get all task results for this user (last 7 days only).
+        # Exclude stale PENDING records (created >30 min ago and never updated)
+        # — these represent tasks lost to worker crashes or queue buildup.
+        seven_days_ago = timezone.now() - timedelta(days=7)
+        pending_cutoff = timezone.now() - timedelta(minutes=30)
         task_results = TaskResult.objects.filter(
             task_result_filters,
             task_name__in=result_import_task_names,
-        ).order_by(
-            "-date_done",
-        )  # Most recent first
+            date_created__gte=seven_days_ago,
+        ).exclude(
+            status=states.PENDING,
+            date_created__lt=pending_cutoff,
+        ).order_by("-date_done", "-date_created")
 
         # Build results list
         results = []
@@ -1346,7 +1352,7 @@ class User(AbstractUser):
                 if async_result.status != task.status:
                     task.status = async_result.status
                     task.result = async_result.result
-                    task.date_done = timezone.now()
+                    task.date_done = async_result.date_done or timezone.now()
                     task.save(update_fields=["status", "result", "date_done"])
 
             source = result_task_to_source[task.task_name]
