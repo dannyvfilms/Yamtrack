@@ -128,7 +128,7 @@ window.applyTrackModalReleaseDate = function applyTrackModalReleaseDate(
     return;
   }
 
-  const container = button.parentElement;
+  const container = button.closest(".relative");
   const input =
     container?.querySelector(`[name="${fieldName}"]`) ||
     container?.querySelector("input");
@@ -341,6 +341,26 @@ function trackModalCreateToast(detail) {
   window.setTimeout(() => toast.remove(), timeout);
   return toast;
 }
+
+window.clearTrackModalDate = function clearTrackModalDate(button, fieldName) {
+  const input = button
+    .closest(".relative")
+    ?.querySelector(`[name="${fieldName}"]`);
+  if (!input) {
+    return;
+  }
+  input.value = "";
+  const form = button.closest("form");
+  trackModalClearAutoFilledField(form, fieldName);
+  if (fieldName === "start_date" && form && window.Alpine) {
+    try {
+      Alpine.$data(form).manualStartDate = false;
+    } catch {
+      // Ignore Alpine lookup failures.
+    }
+  }
+  trackModalDispatchInputEvents(input);
+};
 
 window.closeTrackModal = function closeTrackModal(target) {
   return trackModalSetOpen(target, false);

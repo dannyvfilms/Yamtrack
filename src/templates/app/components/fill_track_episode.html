@@ -104,14 +104,22 @@
                    name="end_date"
                    onfocus="this.showPicker?.()"
                    x-model="inputDateTime">
-            {% if episode.air_date %}
+            <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
               <button type="button"
-                      @click="inputDateTime = inputType === 'datetime-local' ? '{{ episode.air_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ episode.air_date|date:'Y-m-d' }}'"
-                      class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
-                {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
-                Air date
+                      @click="inputDateTime = ''"
+                      aria-label="Clear date"
+                      class="hidden md:inline-flex items-center text-gray-400 hover:text-gray-200 transition-colors bg-[#2a2f35] p-1 rounded cursor-pointer">
+                {% include "app/icons/x.svg" with classes="w-3.5 h-3.5" %}
               </button>
-            {% endif %}
+              {% if episode.air_date %}
+                <button type="button"
+                        @click="inputDateTime = inputType === 'datetime-local' ? '{{ episode.air_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ episode.air_date|date:'Y-m-d' }}'"
+                        class="flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                  {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                  Air date
+                </button>
+              {% endif %}
+            </div>
           </div>
           {# djlint:on #}
 

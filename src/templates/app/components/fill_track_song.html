@@ -224,25 +224,33 @@
                    name="end_date"
                    onfocus="this.showPicker?.()"
                    x-model="inputDateTime">
-            {% if music and music.item and music.item.media_type == 'podcast' %}
-              {% if track.published %}
-                <button type="button"
-                        @click="inputDateTime = inputType === 'datetime-local' ? '{{ track.published|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ track.published|date:'Y-m-d' }}'"
-                        class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
-                  {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
-                  Published date
-                </button>
+            <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <button type="button"
+                      @click="inputDateTime = ''"
+                      aria-label="Clear date"
+                      class="hidden md:inline-flex items-center text-gray-400 hover:text-gray-200 transition-colors bg-[#2a2f35] p-1 rounded cursor-pointer">
+                {% include "app/icons/x.svg" with classes="w-3.5 h-3.5" %}
+              </button>
+              {% if music and music.item and music.item.media_type == 'podcast' %}
+                {% if track.published %}
+                  <button type="button"
+                          @click="inputDateTime = inputType === 'datetime-local' ? '{{ track.published|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ track.published|date:'Y-m-d' }}'"
+                          class="flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                    {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                    Published date
+                  </button>
+                {% endif %}
+              {% else %}
+                {% if album.release_date %}
+                  <button type="button"
+                          @click="inputDateTime = inputType === 'datetime-local' ? '{{ album.release_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ album.release_date|date:'Y-m-d' }}'"
+                          class="flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                    {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                    Release date
+                  </button>
+                {% endif %}
               {% endif %}
-            {% else %}
-              {% if album.release_date %}
-                <button type="button"
-                        @click="inputDateTime = inputType === 'datetime-local' ? '{{ album.release_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ album.release_date|date:'Y-m-d' }}'"
-                        class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
-                  {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
-                  Release date
-                </button>
-              {% endif %}
-            {% endif %}
+            </div>
           </div>
           {# djlint:on #}
 
