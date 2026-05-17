@@ -10,6 +10,7 @@ from django_celery_beat.models import PeriodicTask
 
 import app
 from app.models import MediaTypes, Sources, Status
+from simple_history.utils import bulk_update_with_history
 from app.providers import services
 from integrations.imports import helpers
 from integrations.imports.helpers import MediaImportError, MediaImportUnexpectedError
@@ -198,6 +199,10 @@ class TraktImporter:
         # Track media instances being created
         self.media_instances = defaultdict(lambda: defaultdict(list))
 
+        # Track existing DB objects promoted to COMPLETED during import
+        self.completed_seasons = []
+        self.completed_tvs = []
+
         logger.info(
             "Initialized Trakt importer for user %s with mode %s",
             username,
@@ -230,6 +235,11 @@ class TraktImporter:
 
         helpers.cleanup_existing_media(self.to_delete, self.user)
         helpers.bulk_create_media(self.bulk_media, self.user)
+
+        if self.completed_seasons:
+            bulk_update_with_history(self.completed_seasons, app.models.Season, fields=["status"])
+        if self.completed_tvs:
+            bulk_update_with_history(self.completed_tvs, app.models.TV, fields=["status"])
 
         imported_counts = {
             media_type: len(media_list)
@@ -609,10 +619,14 @@ class TraktImporter:
         """Update completion status for season and TV show if applicable."""
         if episode_number == season_metadata["max_progress"]:
             season_obj.status = Status.COMPLETED.value
+            if season_obj.pk:
+                self.completed_seasons.append(season_obj)
 
             last_season = tv_metadata.get("last_episode_season")
             if last_season and last_season == season_number:
                 tv_obj.status = Status.COMPLETED.value
+                if tv_obj.pk:
+                    self.completed_tvs.append(tv_obj)
 
     def process_watchlist(self):
         """Process watchlist from Trakt."""

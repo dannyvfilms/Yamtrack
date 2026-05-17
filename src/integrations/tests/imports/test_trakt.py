@@ -483,3 +483,77 @@ class ImportTrakt(TestCase):
             Episode.objects.filter(related_season__user=self.user).count(),
             0,
         )
+
+    @patch("integrations.imports.trakt.TraktImporter._get_metadata")
+    def test_last_episode_import_marks_season_and_tv_completed(self, mock_get_metadata):
+        """Regression test for #202: daily sync marks season/TV completed when last episode imported."""
+        TMDB_ID = 99999
+        SEASON_NUMBER = 1
+        TOTAL_EPISODES = 20
+
+        # Pre-create TV, season in DB (simulates prior sync of eps 1-19)
+        item_tv, _ = Item.objects.get_or_create(
+            media_id=TMDB_ID,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Test Show", "image": ""},
+        )
+        tv_obj = TV.objects.create(item=item_tv, user=self.user, status=Status.IN_PROGRESS.value)
+        item_season, _ = Item.objects.get_or_create(
+            media_id=TMDB_ID,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=SEASON_NUMBER,
+            defaults={"title": "Test Show", "image": ""},
+        )
+        season_obj = Season.objects.create(
+            item=item_season,
+            user=self.user,
+            related_tv=tv_obj,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        def mock_metadata(media_type, tmdb_id, title, season_number=None):
+            if media_type == MediaTypes.TV.value:
+                return {
+                    "title": "Test Show",
+                    "image": "",
+                    "last_episode_season": SEASON_NUMBER,
+                    "max_progress": TOTAL_EPISODES,
+                }
+            if media_type == MediaTypes.SEASON.value:
+                return {
+                    "title": "Season 1",
+                    "image": "",
+                    "episodes": [
+                        {"episode_number": i, "still_path": None}
+                        for i in range(1, TOTAL_EPISODES + 1)
+                    ],
+                    "max_progress": TOTAL_EPISODES,
+                }
+            return None
+
+        mock_get_metadata.side_effect = mock_metadata
+
+        entry = {
+            "type": "episode",
+            "episode": {"season": SEASON_NUMBER, "number": TOTAL_EPISODES, "title": "Finale"},
+            "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+            "watched_at": "2024-06-01T00:00:00.000Z",
+        }
+
+        trakt_importer = TraktImporter("testuser", self.user, "new")
+        trakt_importer.process_watched_episode(entry)
+        helpers.bulk_create_media(trakt_importer.bulk_media, self.user)
+
+        # This is the persistence step that the fix adds to import_data()
+        from simple_history.utils import bulk_update_with_history
+        if trakt_importer.completed_seasons:
+            bulk_update_with_history(trakt_importer.completed_seasons, Season, fields=["status"])
+        if trakt_importer.completed_tvs:
+            bulk_update_with_history(trakt_importer.completed_tvs, TV, fields=["status"])
+
+        season_obj.refresh_from_db()
+        tv_obj.refresh_from_db()
+        self.assertEqual(season_obj.status, Status.COMPLETED.value)
+        self.assertEqual(tv_obj.status, Status.COMPLETED.value)
