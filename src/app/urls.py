@@ -31,6 +31,11 @@ urlpatterns = [
         name="music_album_details",
     ),
     path(
+        "details/<source:source>/tv/<str:media_id>/<str:title>/season/<int:season_number>/episode/<int:episode_number>",
+        views.episode_details,
+        name="episode_details",
+    ),
+    path(
         "details/<source:source>/tv/<str:media_id>/<str:title>/season/<int:season_number>",
         views.season_details,
         name="season_details",

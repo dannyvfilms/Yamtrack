@@ -1,0 +1,399 @@
+{% extends "base.html" %}
+{% load app_tags %}
+{% load user_tags %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}{{ episode_title }} - {{ show_title }} - Yamtrack{% endblock title %}
+
+{% block content %}
+{# Top section — mirrors media_details.html layout exactly #}
+<div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8">
+  <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
+    <img alt="{{ episode_title }}"
+         class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
+         src="{% if episode %}{{ episode.image }}{% else %}{{ IMG_NONE }}{% endif %}">
+  </div>
+
+  <div class="md:w-3/4">
+    {# Show title — clickable link back to TV show, mirrors season page's h1 #}
+    <div class="mb-1 text-center md:text-start">
+      <div class="inline-flex items-center gap-2 md:flex md:gap-2">
+        <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">
+          <a href="{% url 'media_details' source=source media_type=MediaTypes.TV.value media_id=media_id title=show_title|slug %}">{{ show_title }}</a>
+        </h1>
+      </div>
+    </div>
+
+    {# Season + episode subtitle — mirrors season page's subtitle line #}
+    <div class="mb-3 flex flex-col items-center justify-between gap-y-4 md:mb-1 md:flex-row md:gap-y-0">
+      <div class="w-full">
+        <div class="flex flex-col gap-y-4 md:flex-row md:gap-y-0 items-center justify-between mb-1">
+          <div class="text-center md:text-start">
+            <div class="hidden flex-wrap items-center justify-start gap-y-1 text-sm font-medium text-gray-400 md:flex md:text-start">
+              <a href="{{ season_url }}" class="hover:text-indigo-400 transition-colors">{{ season_title }}</a>
+              <span class="mx-2 text-gray-600">•</span>
+              <span>{{ episode_title }}</span>
+              {% if episode %}
+                {% if episode.display_episode_number|default:episode.episode_number %}
+                  <span class="mx-2 text-gray-600">•</span>
+                  <span>Episode {{ episode.display_episode_number|default:episode.episode_number }}</span>
+                {% endif %}
+                {% if episode.air_date %}
+                  <span class="mx-2 text-gray-600">•</span>
+                  <span>{{ episode.air_date|user_date_format:user }}</span>
+                {% endif %}
+                {% if episode.runtime %}
+                  <span class="mx-2 text-gray-600">•</span>
+                  <span>{{ episode.runtime }}</span>
+                {% endif %}
+              {% endif %}
+            </div>
+            {# Mobile subtitle #}
+            <div class="md:hidden text-sm font-medium text-gray-400 text-center">
+              <a href="{{ season_url }}" class="hover:text-indigo-400 transition-colors">{{ season_title }}</a>
+              <span class="mx-1 text-gray-600">•</span>
+              {% if episode and episode.display_episode_number|default:episode.episode_number %}Ep {{ episode.display_episode_number|default:episode.episode_number }}{% endif %}
+              {% if episode and episode.air_date %}<span class="mx-1 text-gray-600">•</span>{{ episode.air_date|user_date_format:user }}{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-col sm:contents">
+      {# Score chips row — mirrors media_details.html order-2/order-1 chip row #}
+      {% if episode_metadata.score_count or not public_view and episode and episode.history and current_instance %}
+        <div class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2">
+          {# TMDB provider score chip #}
+          {% if episode_metadata.score_count %}
+            <div class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+              <span class="sr-only">TMDB score</span>
+              <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14 sm:h-8 sm:w-8">
+                <img src="{% static 'img/tmdb-logo.png' %}" alt="" aria-hidden="true" class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
+              </span>
+              {% if episode_metadata.score is not None %}
+                <span class="text-[12px] font-semibold text-white sm:text-sm">{{ episode_metadata.score }}</span>
+              {% else %}
+                <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
+              {% endif %}
+              <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
+              <span class="text-[12px] text-gray-300 sm:text-sm">{{ episode_metadata.score_count|intcomma }} vote{{ episode_metadata.score_count|pluralize }}</span>
+            </div>
+          {% endif %}
+          {# User episode rating chip — only when user has watched this episode #}
+          {% if not public_view and episode and episode.history and current_instance %}
+            {% with ep_score=episode.history.0.score %}
+            <div x-data="{
+              showRatingPopup: false,
+              rating: {% if ep_score is not None %}{{ ep_score|score_display:user }}{% else %}null{% endif %},
+              ratingScaleMax: {{ user|rating_scale_max }},
+              hoverRating: null,
+              isHovering: false,
+              formatRating(v) { if (v === null || v === undefined || v === '') return ''; return this.ratingScaleMax === 5 ? String(v) + '/5' : String(v); }
+            }"
+                 class="relative shrink-0 sm:w-auto">
+              <button type="button"
+                      @click="showRatingPopup = !showRatingPopup"
+                      class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+                <span class="sr-only">Your score</span>
+                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8">
+                  {% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 sm:h-4 sm:w-4" %}
+                </span>
+                <span class="inline-flex items-center gap-1 sm:gap-2">
+                  <span class="text-[12px] font-semibold text-white sm:text-sm {% if ep_score is None %}hidden{% endif %}"
+                        :class="rating ? '' : 'hidden'"
+                        x-text="formatRating(rating)">{% if ep_score is not None %}{{ ep_score|score_display:user }}{% endif %}</span>
+                  <span class="text-[12px] text-gray-500 sm:text-sm {% if ep_score is None %}hidden{% endif %}"
+                        :class="rating ? '' : 'hidden'">|</span>
+                  <span class="text-[12px] font-medium text-gray-200 sm:text-sm"
+                        x-text="rating ? 'Edit rating' : 'Add rating'">{% if ep_score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
+                </span>
+              </button>
+              <div x-show="showRatingPopup"
+                   @click.outside="showRatingPopup = false; isHovering = false"
+                   class="absolute left-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-10"
+                   @mouseenter="isHovering = true"
+                   @mouseleave="isHovering = false; hoverRating = null">
+                <div class="flex justify-between mb-1">
+                  {% with rating_range=user|rating_scale_max|get_range %}
+                    {% for rating_value in rating_range %}
+                      <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
+                              @mouseenter="hoverRating = {{ rating_value }}"
+                              hx-post="{% url 'update_episode_score' current_instance.id episode_number %}"
+                              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                              hx-vals='{"score": {{ rating_value }}, "toggle": true}'
+                              hx-trigger="click"
+                              hx-swap="none"
+                              class="focus:outline-none flex flex-col items-center cursor-pointer">
+                        <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
+                          {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
+                        </div>
+                        <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
+                      </button>
+                    {% endfor %}
+                  {% endwith %}
+                </div>
+              </div>
+            </div>
+            {% endwith %}
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {# Action buttons — mirrors media_details.html order-1/order-2 button row #}
+      {% if not public_view and episode and episode.actions_enabled %}
+        <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div class="mt-4 mb-5 flex flex-wrap gap-2">
+            {# Hero track button — same size/shape as detail_track_action large button #}
+            <div x-data="{ trackOpen: false }" class="w-full sm:w-auto sm:shrink-0">
+              <button type="button"
+                      @click="trackOpen = true"
+                      class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if episode.history %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}">
+                {% if episode.history %}
+                  {% include "app/icons/eye.svg" with classes="w-5 h-5 shrink-0" %}
+                  <span class="font-medium">Watched</span>
+                {% else %}
+                  {% include "app/icons/eye-closed.svg" with classes="w-5 h-5 shrink-0" %}
+                  <span class="font-medium">Mark Watched</span>
+                {% endif %}
+              </button>
+              {% include "app/components/fill_track_episode.html" with request=request media=episode episode=episode episode_title=episode_title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
+            </div>
+
+            {# Secondary icon buttons — h-11 w-11 rounded-xl, same as season/show page #}
+            <div class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap">
+              {% if episode.item or season_metadata %}
+                <div x-data="{ listsOpen: false }" class="flex-1 sm:flex-none">
+                  <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
+                          title="Add to custom lists"
+                          hx-get="{% if episode.item %}{% media_view_url 'lists_modal' episode.item %}{% else %}{% media_view_url 'lists_modal' episode %}{% endif %}"
+                          hx-vals='{"return_url": "{{ detail_return_url|urlencode }}"}'
+                          hx-target="#{% if episode.item %}{% component_id 'lists' episode.item %}{% else %}{% component_id 'lists' episode %}{% endif %}"
+                          hx-trigger="click once"
+                          @click="listsOpen = true">
+                    {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                  </button>
+                  <div x-show="listsOpen"
+                       @keydown.escape.window="listsOpen = false"
+                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                         @click.outside="listsOpen = false">
+                      <div id="{% if episode.item %}{% component_id 'lists' episode.item %}{% else %}{% component_id 'lists' episode %}{% endif %}"></div>
+                    </div>
+                  </div>
+                </div>
+              {% endif %}
+
+              {% if episode.item %}
+                <div x-data="{ historyOpen: false }" class="flex-1 sm:flex-none">
+                  <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
+                          title="View your activity history"
+                          hx-get="{% media_view_url 'history_modal' episode.item %}"
+                          hx-vals='{"return_url": "{{ detail_return_url|urlencode }}"}'
+                          hx-target="#{% component_id 'history' episode.item %}"
+                          hx-trigger="click once"
+                          @click="historyOpen = true">
+                    {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                  </button>
+                  <div x-show="historyOpen"
+                       @keydown.escape.window="historyOpen = false"
+                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                         @click.outside="historyOpen = false">
+                      <div id="{% component_id 'history' episode.item %}"></div>
+                    </div>
+                  </div>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+      {# Overview — mirrors media_details synopsis section #}
+      {% if episode and episode.overview %}
+        <div class="mb-6">
+          <div class="relative"
+               x-data="{
+                 isExpanded: false,
+                 isClamped: false,
+                 fullText: '{{ episode.overview|striptags|escapejs }}',
+                 checkClamp() {
+                   const measure = this.$refs.measureEl;
+                   if (!measure || !this.fullText) { this.isClamped = false; return; }
+                   measure.textContent = this.fullText;
+                   const lineHeight = parseFloat(window.getComputedStyle(measure).lineHeight);
+                   this.isClamped = measure.scrollHeight > Math.ceil(lineHeight * 3);
+                 }
+               }"
+               x-init="$nextTick(() => checkClamp())"
+               @resize.window="$nextTick(() => checkClamp())">
+            <div x-ref="measureEl"
+                 aria-hidden="true"
+                 class="pointer-events-none invisible absolute inset-x-0 top-0 -z-10 text-gray-300 text-pretty"></div>
+            <p :class="isClamped && !isExpanded ? 'line-clamp-3' : ''"
+               class="text-gray-300 text-pretty">
+              {{ episode.overview }}
+            </p>
+            <button x-show="isClamped"
+                    @click="isExpanded = !isExpanded"
+                    class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer inline-flex">
+              <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
+            </button>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# Cast & Crew — same grid pattern as detail_secondary_content.html #}
+{% if source == Sources.TMDB.value %}
+  {% if episode_metadata.cast %}
+    <section class="mb-8"
+             x-data="{ castOpen: true, detailGridExpanded: false, detailGridIsMobile: false, detailGridVisibleCount: 6, syncDetailGrid() { this.detailGridIsMobile = window.matchMedia('(max-width: 768px)').matches; this.detailGridVisibleCount = document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6; }, shouldShowDetailCard(index) { return !this.detailGridIsMobile || this.detailGridExpanded || index < this.detailGridVisibleCount; }, canToggleDetailGrid(total) { return this.detailGridIsMobile && total > this.detailGridVisibleCount; } }"
+             x-init="syncDetailGrid()"
+             @resize.window="syncDetailGrid()">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold">Cast</h2>
+        <button type="button"
+                class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
+                @click="castOpen = !castOpen"
+                :aria-expanded="castOpen.toString()"
+                aria-label="Toggle cast section">
+          <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': castOpen }">
+            {% include "app/icons/chevron-down.svg" %}
+          </div>
+        </button>
+      </div>
+      <div x-show="castOpen"
+           x-transition:enter="transition ease-out duration-200"
+           x-transition:enter-start="opacity-0 transform -translate-y-1"
+           x-transition:enter-end="opacity-100 transform translate-y-0"
+           x-transition:leave="transition ease-in duration-150"
+           x-transition:leave-start="opacity-100 transform translate-y-0"
+           x-transition:leave-end="opacity-0 transform -translate-y-1"
+           class="detail-media-grid">
+        {% for person in episode_metadata.cast|slice:":20" %}
+          <div x-show="shouldShowDetailCard({{ forloop.counter0 }})"
+               class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+            <div class="relative">
+              {% if person.person_id and person.name %}
+                <a href="{% url 'person_detail' source=source person_id=person.person_id name=person.name|slug %}">
+              {% endif %}
+              <img alt="{{ person.name|default:'Unknown Person' }}"
+                   class="media-card-poster lazyload w-full aspect-[2/3] aspect-2/3 bg-[#3e454d] {% if person.image and person.image != IMG_NONE %}object-cover{% endif %}"
+                   data-src="{{ person.image|default:IMG_NONE }}"
+                   src="{{ IMG_NONE }}">
+              {% if person.person_id and person.name %}
+                </a>
+              {% endif %}
+            </div>
+            <div class="media-card-body p-3 bg-card-body">
+              <div class="flex items-center gap-2 min-w-0">
+                {% if person.person_id and person.name %}
+                  <a href="{% url 'person_detail' source=source person_id=person.person_id name=person.name|slug %}"
+                     class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+                     title="{{ person.name }}">
+                    {{ person.name }}
+                  </a>
+                {% else %}
+                  <p class="media-card-title text-sm font-semibold text-white line-clamp-1 min-w-0">
+                    {{ person.name|default:"Unknown Person" }}
+                  </p>
+                {% endif %}
+              </div>
+              <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-2">
+                {% if person.role %}{{ person.role }}{% else %}Cast{% endif %}
+              </p>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <button x-show="castOpen && canToggleDetailGrid({{ episode_metadata.cast|length }})"
+              @click="detailGridExpanded = !detailGridExpanded"
+              class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden">
+        <span x-text="detailGridExpanded ? 'Show less' : 'Show more'"></span>
+      </button>
+    </section>
+  {% endif %}
+
+  {% if episode_metadata.crew %}
+    <section class="mb-8"
+             x-data="{ crewOpen: true, detailGridExpanded: false, detailGridIsMobile: false, detailGridVisibleCount: 6, syncDetailGrid() { this.detailGridIsMobile = window.matchMedia('(max-width: 768px)').matches; this.detailGridVisibleCount = document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6; }, shouldShowDetailCard(index) { return !this.detailGridIsMobile || this.detailGridExpanded || index < this.detailGridVisibleCount; }, canToggleDetailGrid(total) { return this.detailGridIsMobile && total > this.detailGridVisibleCount; } }"
+             x-init="syncDetailGrid()"
+             @resize.window="syncDetailGrid()">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold">Crew</h2>
+        <button type="button"
+                class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
+                @click="crewOpen = !crewOpen"
+                :aria-expanded="crewOpen.toString()"
+                aria-label="Toggle crew section">
+          <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': crewOpen }">
+            {% include "app/icons/chevron-down.svg" %}
+          </div>
+        </button>
+      </div>
+      <div x-show="crewOpen"
+           x-transition:enter="transition ease-out duration-200"
+           x-transition:enter-start="opacity-0 transform -translate-y-1"
+           x-transition:enter-end="opacity-100 transform translate-y-0"
+           x-transition:leave="transition ease-in duration-150"
+           x-transition:leave-start="opacity-100 transform translate-y-0"
+           x-transition:leave-end="opacity-0 transform -translate-y-1"
+           class="detail-media-grid">
+        {% for person in episode_metadata.crew|slice:":20" %}
+          <div x-show="shouldShowDetailCard({{ forloop.counter0 }})"
+               class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+            <div class="relative">
+              {% if person.person_id and person.name %}
+                <a href="{% url 'person_detail' source=source person_id=person.person_id name=person.name|slug %}">
+              {% endif %}
+              <img alt="{{ person.name|default:'Unknown Person' }}"
+                   class="media-card-poster lazyload w-full aspect-[2/3] aspect-2/3 bg-[#3e454d] {% if person.image and person.image != IMG_NONE %}object-cover{% endif %}"
+                   data-src="{{ person.image|default:IMG_NONE }}"
+                   src="{{ IMG_NONE }}">
+              {% if person.person_id and person.name %}
+                </a>
+              {% endif %}
+            </div>
+            <div class="media-card-body p-3 bg-card-body">
+              <div class="flex items-center gap-2 min-w-0">
+                {% if person.person_id and person.name %}
+                  <a href="{% url 'person_detail' source=source person_id=person.person_id name=person.name|slug %}"
+                     class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+                     title="{{ person.name }}">
+                    {{ person.name }}
+                  </a>
+                {% else %}
+                  <p class="media-card-title text-sm font-semibold text-white line-clamp-1 min-w-0">
+                    {{ person.name|default:"Unknown Person" }}
+                  </p>
+                {% endif %}
+              </div>
+              <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-2">
+                {% if person.role %}{{ person.role }}{% elif person.department %}{{ person.department }}{% else %}Crew{% endif %}
+              </p>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      <button x-show="crewOpen && canToggleDetailGrid({{ episode_metadata.crew|length }})"
+              @click="detailGridExpanded = !detailGridExpanded"
+              class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden">
+        <span x-text="detailGridExpanded ? 'Show less' : 'Show more'"></span>
+      </button>
+    </section>
+  {% endif %}
+{% endif %}
+
+<script>
+  (function() {
+    window.addEventListener('pageshow', function(event) {
+      if (event.persisted) { window.location.reload(); }
+    });
+  })();
+</script>
+{% endblock content %}

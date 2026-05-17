@@ -1899,6 +1899,9 @@ def episode(media_id, season_number, episode_number):
         if not crew_rows:
             crew_rows = response.get("crew", []) or []
 
+        vote_average = response.get("vote_average")
+        vote_count = response.get("vote_count")
+
         data = {
             "title": season_metadata.get("title") or tv_metadata.get("title") or "",
             "original_title": (
@@ -1911,6 +1914,8 @@ def episode(media_id, season_number, episode_number):
             ),
             "season_title": season_metadata.get("season_title") or f"Season {season_number}",
             "episode_title": response.get("name") or f"Episode {episode_number}",
+            "score": round(vote_average, 1) if vote_average else None,
+            "score_count": vote_count if vote_count else None,
             "cast": get_cast_credits({"cast": cast_rows}),
             "crew": get_crew_credits({"crew": crew_rows}),
         }

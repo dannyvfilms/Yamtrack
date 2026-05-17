@@ -7323,6 +7323,100 @@ def season_details(
     )
 
 
+def episode_details(request, source, media_id, title, season_number, episode_number):
+    """Return the details page for a single episode."""
+    is_anonymous = not request.user.is_authenticated
+    public_view = is_anonymous
+
+    tv_with_seasons_metadata = services.get_media_metadata(
+        "tv_with_seasons",
+        media_id,
+        source,
+        [season_number],
+    )
+    season_key = f"season/{season_number}"
+    season_metadata = tv_with_seasons_metadata.get(season_key) or {}
+
+    if public_view:
+        current_season_instance = None
+        episodes_in_db = []
+    else:
+        user_seasons = BasicMedia.objects.filter_media_prefetch(
+            request.user,
+            media_id,
+            MediaTypes.SEASON.value,
+            source,
+            season_number=season_number,
+        )
+        current_season_instance = user_seasons[0] if user_seasons else None
+        episodes_in_db = (
+            current_season_instance.episodes.all() if current_season_instance else []
+        )
+
+    processed_episodes = []
+    if season_metadata.get("episodes"):
+        if source == Sources.MANUAL.value:
+            from app.providers import manual
+            processed_episodes = manual.process_episodes(season_metadata, episodes_in_db)
+        else:
+            processed_episodes = tmdb.process_episodes(season_metadata, episodes_in_db)
+
+    processed_episodes = _normalize_detail_episode_actions(processed_episodes)
+    episode_data = next(
+        (ep for ep in processed_episodes if ep["episode_number"] == episode_number),
+        None,
+    )
+
+    episode_metadata = {}
+    if source == Sources.TMDB.value:
+        try:
+            episode_metadata = tmdb.episode(media_id, season_number, episode_number)
+        except Exception:
+            pass
+
+    episode_item = Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.EPISODE.value,
+        season_number=season_number,
+        episode_number=episode_number,
+    ).first()
+
+    if episode_data is not None and episode_item is not None:
+        episode_data["item"] = episode_item
+
+    season_url = reverse(
+        "season_details",
+        kwargs={
+            "source": source,
+            "media_id": media_id,
+            "title": title,
+            "season_number": season_number,
+        },
+    )
+
+    context = {
+        "user": request.user,
+        "episode": episode_data,
+        "episode_metadata": episode_metadata,
+        "season_metadata": season_metadata,
+        "current_instance": current_season_instance,
+        "public_view": public_view,
+        "season_url": season_url,
+        "media_id": media_id,
+        "source": source,
+        "season_number": season_number,
+        "episode_number": episode_number,
+        "show_title": tv_with_seasons_metadata.get("title") or title,
+        "season_title": season_metadata.get("season_title") or f"Season {season_number}",
+        "episode_title": episode_metadata.get("episode_title")
+            or (episode_data or {}).get("title")
+            or f"Episode {episode_number}",
+        "detail_return_url": request.build_absolute_uri(),
+    }
+    return render(request, "app/episode_details.html", context)
+
+
 @require_POST
 def update_media_score(request, media_type, instance_id):
     """Update the user's score for a media item."""
