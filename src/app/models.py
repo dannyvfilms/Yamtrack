@@ -2402,7 +2402,18 @@ class MediaManager(models.Manager):
             breakdown = released_by_show.get(key, {})
             tv.released_episode_breakdown = breakdown
             if breakdown:
-                tv.max_progress = sum(breakdown.values())
+                dropped_season_numbers = {
+                    season.item.season_number
+                    for season in tv.seasons.all()
+                    if season.status == Status.DROPPED.value
+                    and season.item.season_number != 0
+                }
+                effective_count = sum(
+                    count
+                    for season_num, count in breakdown.items()
+                    if season_num not in dropped_season_numbers
+                )
+                tv.max_progress = effective_count or None
             else:
                 tv.max_progress = None
                 if tv.item.source == Sources.MANUAL.value:
@@ -3297,11 +3308,12 @@ class TV(Media):
 
     @property
     def progress(self):
-        """Return the total episodes watched for the TV show."""
+        """Return the total episodes watched for the TV show, excluding dropped seasons."""
         return sum(
             season.progress
             for season in self.seasons.all()
             if season.item.season_number != 0
+            and season.status != Status.DROPPED.value
         )
 
     @property
