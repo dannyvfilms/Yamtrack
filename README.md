@@ -350,6 +350,8 @@ environment:
   - USE_X_FORWARDED=True
 ```
 
+> **Note:** If you are using a Cloudflare Tunnel or any HTTPS-terminating proxy, also set `USE_X_FORWARDED_PROTO=True` — otherwise Django cannot detect the correct scheme and CSRF checks will fail.
+
 ### Docker Image Tags
 
 The Docker image is available at `ghcr.io/dannyvfilms/yamtrack` with these tags:
