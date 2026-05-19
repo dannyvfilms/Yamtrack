@@ -210,9 +210,9 @@
       <div class="flex flex-col sm:contents">
       {# Score chips #}
       {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}
-        <div class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2">
+        <div class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap">
           {% if media.score_count is not None %}
-            <div class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+            <div class="inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
               <span class="sr-only">{{ display_provider|source_readable }} score</span>
               <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14 sm:h-8 sm:w-8">
                 {% if display_provider == Sources.TMDB.value %}
@@ -240,12 +240,12 @@
                 <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
               {% endif %}
               <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
-              <span class="text-[12px] text-gray-300 sm:text-sm">{{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}</span>
+              <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}</span>
             </div>
           {% endif %}
 
           {% if trakt_score %}
-            <div class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+            <div class="inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
               <span class="sr-only">Trakt score</span>
               <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14 sm:h-8 sm:w-8">
                 <img src="{% static 'img/trakt-logo.svg' %}"
@@ -259,7 +259,7 @@
                 <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
               {% endif %}
               <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
-              <span class="text-[12px] text-gray-300 sm:text-sm">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
+              <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
             </div>
           {% endif %}
 

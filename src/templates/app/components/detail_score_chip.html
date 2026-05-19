@@ -3,15 +3,15 @@
 <div id="detail-score-chip-{{ current_instance.id }}"
      {% if score_chip_oob %}hx-swap-oob="outerHTML"{% endif %}
      x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, ratingScaleMax: {{ user|rating_scale_max }}, hoverRating: null, isHovering: false, formatRating(value) { if (value === null || value === undefined || value === '') { return ''; } return this.ratingScaleMax === 5 ? String(value) + '/5' : String(value); } }"
-     class="relative shrink-0 sm:w-auto">
+     class="relative min-w-0 sm:w-auto">
   <button type="button"
           @click="showRatingPopup = !showRatingPopup"
-          class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+          class="inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
     <span class="sr-only">Your score</span>
     <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8">
       {% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 sm:h-4 sm:w-4" %}
     </span>
-    <span class="inline-flex items-center gap-1 sm:gap-2">
+    <span class="inline-flex items-center gap-1 whitespace-nowrap sm:gap-2">
       <span class="text-[12px] font-semibold text-white sm:text-sm {% if current_instance.score is None %}hidden{% endif %}"
             :class="rating ? '' : 'hidden'"
             x-text="formatRating(rating)">{% if current_instance.score is not None %}{% if user|rating_scale_max == 5 %}{{ current_instance.score|score_display:user }}/5{% else %}{{ current_instance.score|score_display:user }}{% endif %}{% endif %}</span>
