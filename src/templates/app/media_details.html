@@ -432,10 +432,11 @@
 
             {% component_id 'tag-preview' media as detail_tag_preview_id %}
             {% component_id 'tag-preview-genres' media as detail_tag_preview_genres_id %}
-            <div x-data="{ tagsOpen: false, tagsPreviewOpen: false, hasTagPreview() { return this.$refs.tagsPreviewHost?.firstElementChild?.dataset.hasPreview === 'true' } }"
+            <div x-data="{ tagsOpen: false, tagsPreviewOpen: false, hasTagPreview() { return this.$refs.tagsPreviewHost?.firstElementChild?.dataset.hasPreview === 'true' }, clampTagsPopup() { const el = this.$refs.tagsPopup; if (!el) return; el.style.left = '0'; const over = el.getBoundingClientRect().right - (window.innerWidth - 16); if (over > 0) el.style.left = (-over) + 'px'; } }"
                  class="relative flex-1 sm:flex-none"
                  @mouseenter="if (hasTagPreview()) tagsPreviewOpen = true"
-                 @mouseleave="tagsPreviewOpen = false">
+                 @mouseleave="tagsPreviewOpen = false"
+                 x-effect="if (tagsPreviewOpen) $nextTick(() => clampTagsPopup())">
               <input id="{{ detail_tag_preview_genres_id }}"
                      type="hidden"
                      name="preview_genres_json"
@@ -450,6 +451,7 @@
                       @click="tagsOpen = true">{% include "app/icons/tag.svg" with classes="w-4 h-4" %}</button>
 
               <div x-show="tagsPreviewOpen && hasTagPreview()"
+                   x-ref="tagsPopup"
                    x-cloak
                    x-transition:enter="transition ease-out duration-150"
                    x-transition:enter-start="opacity-0 -translate-y-1"

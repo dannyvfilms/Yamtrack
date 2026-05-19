@@ -67,6 +67,28 @@ def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None)
             }
         )
 
+    themes = []
+    if isinstance(media_metadata, dict):
+        details = media_metadata.get("details") or {}
+        if isinstance(details, dict):
+            themes = [t for t in (details.get("themes") or []) if t]
+    if not themes and item is not None:
+        themes = list(item.themes or [])
+
+    if themes:
+        sections.append(
+            {
+                "title": "Themes",
+                "entries": [
+                    {
+                        "label": theme,
+                        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07] text-sky-100",
+                    }
+                    for theme in themes
+                ],
+            }
+        )
+
     tag_names = []
     is_authenticated_user = item is not None and getattr(user, "is_authenticated", False)
     if is_authenticated_user:
