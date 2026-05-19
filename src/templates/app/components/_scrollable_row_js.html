@@ -1,0 +1,302 @@
+{% comment %}
+  JS for horizontal scrolling rows with HTMX infinite-scroll and active playback ticker.
+  Include once per page that uses _scrollable_row.html.
+
+  Depends on:
+    - HTMX (htmx.trigger)
+    - fetch_release_year URL being resolvable
+    - Elements with [data-home-row="true"] for infinite scroll
+    - Elements with [data-active-playback-card] for the playback ticker
+{% endcomment %}
+<script>
+  const FETCH_URL = '{% url "fetch_release_year" %}';
+  const pendingFetches = new Set();
+  let fetchQueue = [];
+  let isProcessing = false;
+  let activePlaybackTimer = null;
+  const homeRowLoadTimers = new WeakMap();
+  const homeRowObservers = new WeakMap();
+
+  function getHomeRowItemCount(row) {
+    return Array.from(row.children).filter(child => !child.hasAttribute('data-home-row-sentinel')).length;
+  }
+
+  function getHomeRowPrefetchDistance(row) {
+    const parsedDistance = Number.parseInt(row.dataset.homeRowPrefetchDistance || '1152', 10);
+    return Number.isNaN(parsedDistance) ? 1152 : parsedDistance;
+  }
+
+  function processQueue() {
+    if (isProcessing || fetchQueue.length === 0) return;
+    isProcessing = true;
+
+    const itemId = fetchQueue.shift();
+    if (!itemId || pendingFetches.has(itemId)) {
+      isProcessing = false;
+      if (fetchQueue.length > 0) {
+        setTimeout(processQueue, 50);
+      }
+      return;
+    }
+
+    pendingFetches.add(itemId);
+
+    fetch(`${FETCH_URL}?item_id=${itemId}`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.year) {
+          document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+            const progressText = el.dataset.progressText;
+            el.textContent = progressText ? `${data.year} • ${progressText}` : data.year;
+            el.classList.remove('release-year-placeholder');
+          });
+        } else {
+          document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+            el.remove();
+          });
+        }
+        if (typeof initMediaCardHover === 'function') {
+          initMediaCardHover();
+        }
+      })
+      .catch(err => {
+        console.warn('Failed to fetch release year for item', itemId, err);
+      })
+      .finally(() => {
+        isProcessing = false;
+        if (fetchQueue.length > 0) {
+          setTimeout(processQueue, 100);
+        }
+      });
+  }
+
+  function queueReleaseYearFetch(itemId) {
+    if (!pendingFetches.has(itemId) && !fetchQueue.includes(itemId)) {
+      fetchQueue.push(itemId);
+      processQueue();
+    }
+  }
+
+  function loadVisibleReleaseYears() {
+    document.querySelectorAll('.release-year-placeholder[data-item-id]').forEach(el => {
+      const itemId = el.dataset.itemId;
+      if (itemId) {
+        queueReleaseYearFetch(itemId);
+      }
+    });
+  }
+
+  function getHomeRowCounts(row) {
+    const loaded = Number.parseInt(row.dataset.loadedCount || '0', 10);
+    const total = Number.parseInt(row.dataset.totalCount || '0', 10);
+    return {
+      loaded: Number.isNaN(loaded) ? 0 : loaded,
+      total: Number.isNaN(total) ? 0 : total,
+    };
+  }
+
+  function syncHomeRowLoadedCount(row) {
+    row.dataset.loadedCount = String(getHomeRowItemCount(row));
+  }
+
+  function syncHomeRowSentinel(row) {
+    const sentinel = row.querySelector('[data-home-row-sentinel="true"]');
+    if (sentinel) {
+      row.appendChild(sentinel);
+    }
+  }
+
+  function triggerHomeRowLoadMore(row) {
+    const { loaded, total } = getHomeRowCounts(row);
+    if (row.dataset.loading === 'true' || loaded >= total) {
+      return;
+    }
+    row.dataset.stickToEnd = 'true';
+    htmx.trigger(row, 'home-row-load-more');
+  }
+
+  function isHomeRowNearEnd(row) {
+    const prefetchDistance = getHomeRowPrefetchDistance(row);
+    return row.scrollLeft + row.clientWidth >= row.scrollWidth - prefetchDistance;
+  }
+
+  function maybeLoadMoreHomeRow(row) {
+    if (!isHomeRowNearEnd(row)) {
+      return;
+    }
+    triggerHomeRowLoadMore(row);
+  }
+
+  function maybeAutofillHomeRow(row) {
+    const { loaded, total } = getHomeRowCounts(row);
+    if (row.dataset.loading === 'true' || loaded >= total) {
+      return;
+    }
+    if (row.scrollWidth <= row.clientWidth + 1) {
+      row.dataset.stickToEnd = 'true';
+      htmx.trigger(row, 'home-row-load-more');
+    }
+  }
+
+  function ensureHomeRowObserver(row) {
+    if (!('IntersectionObserver' in window) || homeRowObservers.has(row)) {
+      return;
+    }
+
+    const sentinel = row.querySelector('[data-home-row-sentinel="true"]');
+    if (!sentinel) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        triggerHomeRowLoadMore(row);
+      }
+    }, {
+      root: row,
+      threshold: 0,
+      rootMargin: `0px ${getHomeRowPrefetchDistance(row)}px 0px 0px`,
+    });
+
+    observer.observe(sentinel);
+    homeRowObservers.set(row, observer);
+  }
+
+  function scheduleHomeRowLoadMore(row) {
+    const existingTimer = homeRowLoadTimers.get(row);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const timer = setTimeout(() => {
+      homeRowLoadTimers.delete(row);
+      maybeLoadMoreHomeRow(row);
+    }, 120);
+    homeRowLoadTimers.set(row, timer);
+  }
+
+  function initHomeRowInfiniteScroll() {
+    document.querySelectorAll('[data-home-row="true"]').forEach(row => {
+      if (row.dataset.homeRowBound === 'true') {
+        return;
+      }
+      row.dataset.homeRowBound = 'true';
+      ensureHomeRowObserver(row);
+      row.addEventListener('scroll', () => {
+        row.dataset.stickToEnd = isHomeRowNearEnd(row) ? 'true' : 'false';
+        maybeLoadMoreHomeRow(row);
+        scheduleHomeRowLoadMore(row);
+      }, { passive: true });
+    });
+    requestAnimationFrame(() => {
+      document.querySelectorAll('[data-home-row="true"]').forEach(row => {
+        ensureHomeRowObserver(row);
+        syncHomeRowLoadedCount(row);
+        maybeAutofillHomeRow(row);
+      });
+    });
+  }
+
+  function formatPlaybackClock(totalSeconds) {
+    const clamped = Math.max(0, Math.floor(totalSeconds || 0));
+    const hours = Math.floor(clamped / 3600);
+    const minutes = Math.floor((clamped % 3600) / 60);
+    const seconds = clamped % 60;
+
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function updateActivePlaybackCard(card) {
+    const status = card.dataset.playbackStatus || 'playing';
+    const offset = Number.parseInt(card.dataset.playbackOffset || '0', 10);
+    const duration = Number.parseInt(card.dataset.playbackDuration || '0', 10);
+    const updatedAt = Number.parseInt(card.dataset.playbackUpdatedAt || '0', 10);
+
+    let currentSeconds = Number.isNaN(offset) ? 0 : offset;
+    if (status === 'playing' && !Number.isNaN(updatedAt) && updatedAt > 0) {
+      currentSeconds += Math.max(0, Math.floor(Date.now() / 1000) - updatedAt);
+    }
+
+    const durationSeconds = Number.isNaN(duration) ? 0 : Math.max(0, duration);
+    if (durationSeconds > 0) {
+      currentSeconds = Math.min(currentSeconds, durationSeconds);
+    }
+
+    const timeNode = card.querySelector('[data-playback-time]');
+    if (timeNode) {
+      timeNode.textContent = durationSeconds > 0
+        ? `${formatPlaybackClock(currentSeconds)} / ${formatPlaybackClock(durationSeconds)}`
+        : formatPlaybackClock(currentSeconds);
+    }
+
+    const progressBar = card.querySelector('[data-playback-bar]');
+    if (progressBar) {
+      const width = durationSeconds > 0
+        ? Math.min(100, (currentSeconds / durationSeconds) * 100)
+        : 0;
+      progressBar.style.width = `${width}%`;
+    }
+  }
+
+  function initActivePlaybackTicker() {
+    if (activePlaybackTimer) {
+      clearInterval(activePlaybackTimer);
+      activePlaybackTimer = null;
+    }
+
+    const tick = () => {
+      const cards = document.querySelectorAll('[data-active-playback-card]');
+      cards.forEach(updateActivePlaybackCard);
+    };
+
+    tick();
+    activePlaybackTimer = setInterval(tick, 1000);
+  }
+
+  function initHomePageEnhancements() {
+    loadVisibleReleaseYears();
+    initHomeRowInfiniteScroll();
+    initActivePlaybackTicker();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initHomePageEnhancements);
+  } else {
+    initHomePageEnhancements();
+  }
+
+  document.body.addEventListener('htmx:beforeRequest', function(event) {
+    const row = event.detail.elt;
+    if (row && row.matches('[data-home-row="true"]')) {
+      row.dataset.loading = 'true';
+    }
+  });
+
+  document.body.addEventListener('htmx:afterRequest', function(event) {
+    const row = event.detail.elt;
+    if (row && row.matches('[data-home-row="true"]')) {
+      row.dataset.loading = 'false';
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function(event) {
+    const row = event.detail.target;
+    if (row && row.matches('[data-home-row="true"]')) {
+      syncHomeRowSentinel(row);
+      syncHomeRowLoadedCount(row);
+      row.dataset.stickToEnd = 'false';
+      requestAnimationFrame(() => {
+        maybeAutofillHomeRow(row);
+        maybeLoadMoreHomeRow(row);
+      });
+    }
+    setTimeout(() => {
+      loadVisibleReleaseYears();
+      initHomeRowInfiniteScroll();
+      initActivePlaybackTicker();
+    }, 50);
+  });
+</script>

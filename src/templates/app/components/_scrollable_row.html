@@ -1,0 +1,79 @@
+{% comment %}
+  Reusable horizontal scrolling row with HTMX infinite-scroll loading.
+
+  Required:
+    row     — row data dict (row_id, title, title_main, title_detail, summary,
+              summary_inline, direction, items, total, loaded_count,
+              card_width_class, grid_class, show_played_chip)
+
+  Optional:
+    hx_url  — URL for HTMX load-more requests.
+              Defaults to the home endpoint with ?load_row=<row.row_id>.
+              Override for non-home contexts (recommendations, cast, etc.)
+{% endcomment %}
+<div>
+  <div class="mb-2 flex items-start justify-between gap-3">
+    <div class="min-w-0 flex-1">
+      {% if row.summary_inline %}
+        <h3 class="home-row-heading flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span class="home-row-heading-title text-lg font-semibold leading-none text-gray-100">{{ row.title_main }}</span>
+          {% if row.title_detail %}
+            <span class="home-row-heading-detail-wrap inline-flex items-center gap-x-2">
+              <span class="home-row-heading-separator text-lg font-semibold leading-none text-white"
+                    aria-hidden="true">•</span>
+              <span class="home-row-heading-detail text-lg font-semibold leading-none text-gray-100">{{ row.title_detail }}</span>
+            </span>
+          {% endif %}
+          <form method="post"
+                action="{% url 'toggle_home_screen_row_direction' row.row_id %}"
+                class="home-row-heading-sort-form inline ml-3.5">
+            {% csrf_token %}
+            <button type="submit"
+                    data-home-row-sort-toggle="true"
+                    aria-label="Toggle sort direction for {{ row.title }}"
+                    class="home-row-heading-sort-button inline-flex items-center text-sm font-medium leading-none text-gray-400 transition-colors hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-sm">
+              <span class="home-row-heading-sort-label">{{ row.summary_inline }}</span>
+              {% if row.direction == 'asc' %}
+                <svg xmlns="http://www.w3.org/2000/svg"
+                     viewBox="0 0 20 20"
+                     class="home-row-heading-sort-icon w-4 h-4 ml-2"
+                     aria-hidden="true">
+                  <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
+                </svg>
+              {% else %}
+                <svg xmlns="http://www.w3.org/2000/svg"
+                     viewBox="0 0 20 20"
+                     class="home-row-heading-sort-icon w-4 h-4 ml-2"
+                     aria-hidden="true">
+                  <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
+                </svg>
+              {% endif %}
+            </button>
+          </form>
+        </h3>
+      {% else %}
+        <h3 class="text-lg font-semibold">{{ row.title }}</h3>
+        <p class="text-sm text-gray-400">{{ row.summary }}</p>
+      {% endif %}
+    </div>
+  </div>
+  <div id="media-grid-row-{{ row.row_id }}"
+       class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden"
+       data-home-row="true"
+       data-loaded-count="{{ row.loaded_count }}"
+       data-loading="false"
+       data-row-id="{{ row.row_id }}"
+       data-stick-to-end="false"
+       data-home-row-prefetch-distance="1152"
+       data-total-count="{{ row.total }}"
+       hx-get="{% if hx_url %}{{ hx_url }}{% else %}{% url 'home' %}?load_row={{ row.row_id }}{% endif %}"
+       hx-vals='js:{offset: Number(event.target.dataset.loadedCount || 0)}'
+       hx-trigger="home-row-load-more"
+       hx-target="this"
+       hx-swap="beforeend">
+    {% include "app/components/home_grid.html" with media_list=row %}
+    <div data-home-row-sentinel="true"
+         aria-hidden="true"
+         class="shrink-0 w-px self-stretch opacity-0 pointer-events-none"></div>
+  </div>
+</div>
