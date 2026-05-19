@@ -689,7 +689,7 @@ def _history_entry_card_payload(entry):
         "item": item,
         "media_type": entry.get("media_type") or getattr(item, "media_type", None),
         "title": title,
-        "image": _get_horizontal_history_image(item, fallback_image, allow_network=False),
+        "image": _get_horizontal_history_image(item, fallback_image, allow_network=True),
         "played_at": played_at,
     }
 
@@ -802,7 +802,7 @@ def _normalize_history_highlight_images(history_highlights):
         entry["image"] = _get_horizontal_history_image(
             entry.get("item"),
             fallback,
-            allow_network=False,
+            allow_network=True,
         )
 
 
@@ -889,7 +889,7 @@ def _get_today_release_entry(user):
                 "item": item,
                 "media_type": item.media_type,
                 "title": item.title,
-                "image": _get_horizontal_history_image(item, item.image, allow_network=False),
+                "image": _get_horizontal_history_image(item, item.image, allow_network=True),
                 "release_date": release_date,
             })
 
@@ -931,7 +931,7 @@ def _get_today_release_entry(user):
             "image": _get_horizontal_history_image(
                 episode_item,
                 episode_poster,
-                allow_network=False,
+                allow_network=True,
             ),
             "release_date": release_date,
         })
