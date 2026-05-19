@@ -39,6 +39,8 @@
   padding-right: calc(var(--spacing) * 24);
   font-size: 0.875rem;
   line-height: 1.25rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .track-release-shortcut-button {

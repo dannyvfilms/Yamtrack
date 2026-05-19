@@ -52,7 +52,7 @@
       </nav>
     </aside>
 
-    <div class="flex-1 p-5 md:p-6 overflow-y-auto bg-[#262a2f]">
+    <div class="flex-1 min-w-0 p-5 md:p-6 overflow-y-auto bg-[#262a2f]">
           <section x-show="activeTab === 'general'" x-cloak>
             <form id="{{ track_form_id }}"
                   method="post"
@@ -74,7 +74,7 @@
               <div class="mb-5">
                 <label class="block text-sm font-medium mb-1 text-gray-300"
                        for="{{ field.id_for_label }}">{{ field.label }}</label>
-                <div class="relative">
+                <div class="relative flex items-stretch">
                   {% if field.name == "status" %}
                     {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none" }}
                     <div class="absolute inset-y-0 right-2 flex items-center pointer-events-none">
