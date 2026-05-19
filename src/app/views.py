@@ -2574,6 +2574,31 @@ def media_list(request, media_type):
     media_list.extend(untracked_media_entries)
 
     media_list = apply_latest_status_filter(media_list, status_filter)
+
+    if (
+        status_filter == MEDIA_LIST_NO_STATUS
+        and media_type != MediaTypes.ANIME.value
+        and sort_filter not in {"author", "runtime", "plays", "time_watched", "time_to_beat", "time_left"}
+    ):
+        _reverse = direction == "desc"
+        _none_sentinel = -math.inf if _reverse else math.inf
+
+        def _untracked_sort_key(entry):
+            item = getattr(entry, "item", None)
+            title = (getattr(item, "title", "") or "").lower()
+            if sort_filter == "release_date":
+                val = getattr(item, "release_datetime", None)
+                return (val.timestamp() if val else _none_sentinel, title)
+            if sort_filter == "popularity":
+                val = getattr(item, "trakt_popularity_rank", None)
+                return (val if val is not None else _none_sentinel, title)
+            if sort_filter == "critic_rating":
+                val = getattr(item, "provider_rating", None)
+                return (val if val is not None else _none_sentinel, title)
+            return title
+
+        media_list = sorted(media_list, key=_untracked_sort_key, reverse=_reverse)
+
     filter_data_source_items = media_list
     if media_type == MediaTypes.GAME.value and platform_filter:
         filter_sql_filters = {**list_sql_filters, "platform": ""}
