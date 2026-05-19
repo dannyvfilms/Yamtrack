@@ -227,7 +227,7 @@
                             title="Edit tracking"
                             hx-get="{% url 'podcast_show_track_modal' podcast_show.id %}"
                             hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                            hx-target="#podcast-show-track-modal-{{ podcast_show.id }}"
+                            hx-target="#podcast-show-track-modal-{{ podcast_show.id }}-{{ media.id }}"
                             hx-trigger="click once"
                             @click="trackOpen = true">
                       {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
@@ -332,7 +332,7 @@
               {% else %}
                 <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}"
                    class="media-card-title text-sm font-semibold text-white {% if not public_view|default:False %}hover:text-indigo-400{% endif %} transition duration-300 line-clamp-1 min-w-0"
-                   title="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}">{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}</a>
+                   title="{% if resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}">{% if resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}</a>
               {% endif %}
               {% if resolved_alt_title and not use_podcast_show|default:False and resolved_media_type != MediaTypes.SEASON.value %}
                 <span class="relative shrink-0"
@@ -429,6 +429,8 @@
             {% if from_grid %}
               {% if show_episode_identity|default:False and item.season_number != None and item.episode_number != None %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">S{{ item.season_number|stringformat:"02d" }} E{{ item.episode_number|stringformat:"02d" }}</p>
+              {% elif use_podcast_show|default:False and podcast_show %}
+                <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-1">{{ podcast_show.title }}</p>
               {% elif subtitle_override or subtitle_match_percent == 0 or subtitle_match_percent %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">
                   {% if subtitle_override %}
@@ -600,7 +602,7 @@
                  style="width: min(96vw, 72rem);"
                  @click.outside="trackOpen = false">
               {% if use_podcast_show|default:False and podcast_show %}
-                <div id="podcast-show-track-modal-{{ podcast_show.id }}"></div>
+                <div id="podcast-show-track-modal-{{ podcast_show.id }}-{{ media.id }}"></div>
               {% else %}
                 <div id="{% component_id 'track' item media.id %}"></div>
               {% endif %}
