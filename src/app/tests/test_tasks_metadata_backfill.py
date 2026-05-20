@@ -1574,3 +1574,122 @@ class MetadataBackfillTaskTests(TestCase):
         self.assertEqual(result["queued"]["runtime"], 2)
         self.assertEqual(result["queued"]["episode_seasons"], 3)
         self.assertEqual(result["queued"]["credits"], 4)
+
+    # _reset_stale_give_up_episode_runtimes tests
+
+    def _make_episode_item(self, media_id="ep-1", runtime_minutes=None, release_datetime=None):
+        return Item.objects.create(
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Test Episode",
+            image="https://example.com/ep.jpg",
+            runtime_minutes=runtime_minutes,
+            release_datetime=release_datetime,
+        )
+
+    def _give_up_state(self, item, days_ago=8):
+        last_attempt = timezone.now() - timedelta(days=days_ago)
+        return MetadataBackfillState.objects.create(
+            item=item,
+            field=MetadataBackfillField.RUNTIME,
+            give_up=True,
+            fail_count=6,
+            last_attempt_at=last_attempt,
+        )
+
+    def test_reset_recently_aired_episode_with_stale_give_up(self):
+        item = self._make_episode_item(
+            release_datetime=timezone.now() - timedelta(days=5),
+        )
+        state = self._give_up_state(item, days_ago=8)
+
+        count = tasks._reset_stale_give_up_episode_runtimes()
+
+        state.refresh_from_db()
+        self.assertEqual(count, 1)
+        self.assertFalse(state.give_up)
+        self.assertEqual(state.fail_count, 0)
+        self.assertIsNone(state.next_retry_at)
+
+    def test_reset_unknown_air_date_episode_with_stale_give_up(self):
+        item = self._make_episode_item(release_datetime=None)
+        state = self._give_up_state(item, days_ago=8)
+
+        count = tasks._reset_stale_give_up_episode_runtimes()
+
+        state.refresh_from_db()
+        self.assertEqual(count, 1)
+        self.assertFalse(state.give_up)
+
+    def test_no_reset_when_give_up_is_recent(self):
+        item = self._make_episode_item(
+            release_datetime=timezone.now() - timedelta(days=5),
+        )
+        state = self._give_up_state(item, days_ago=3)
+
+        count = tasks._reset_stale_give_up_episode_runtimes()
+
+        state.refresh_from_db()
+        self.assertEqual(count, 0)
+        self.assertTrue(state.give_up)
+
+    def test_no_reset_when_episode_aired_too_long_ago(self):
+        item = self._make_episode_item(
+            release_datetime=timezone.now() - timedelta(days=45),
+        )
+        state = self._give_up_state(item, days_ago=35)
+
+        count = tasks._reset_stale_give_up_episode_runtimes()
+
+        state.refresh_from_db()
+        self.assertEqual(count, 0)
+        self.assertTrue(state.give_up)
+
+    def test_no_reset_when_runtime_already_set(self):
+        item = self._make_episode_item(
+            runtime_minutes=42,
+            release_datetime=timezone.now() - timedelta(days=5),
+        )
+        state = self._give_up_state(item, days_ago=8)
+
+        count = tasks._reset_stale_give_up_episode_runtimes()
+
+        state.refresh_from_db()
+        self.assertEqual(count, 0)
+        self.assertTrue(state.give_up)
+
+    @patch("app.tasks.enqueue_credits_backfill_items", return_value=0)
+    @patch("app.tasks.enqueue_episode_runtime_backfill", return_value=1)
+    @patch("app.tasks.enqueue_runtime_backfill_items", return_value=0)
+    @patch("app.tasks.enqueue_genre_backfill_items", return_value=0)
+    @patch("app.tasks._next_credits_backfill_item_ids", return_value=[])
+    def test_nightly_task_resets_stale_give_up_before_selecting_items(
+        self,
+        _mock_credits_ids,
+        _mock_genres,
+        _mock_runtime,
+        mock_enqueue_episode,
+        _mock_credits,
+    ):
+        item = self._make_episode_item(
+            media_id="stale-ep",
+            release_datetime=timezone.now() - timedelta(days=5),
+        )
+        self._give_up_state(item, days_ago=8)
+
+        tasks.nightly_metadata_quality_backfill_task(
+            genre_batch_size=0,
+            runtime_batch_size=0,
+            episode_season_batch_size=20,
+            credits_batch_size=0,
+        )
+
+        mock_enqueue_episode.assert_called_once()
+        season_keys = mock_enqueue_episode.call_args[0][0]
+        self.assertIn(
+            (item.media_id, item.source, item.season_number),
+            season_keys,
+        )

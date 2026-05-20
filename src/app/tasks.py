@@ -403,6 +403,35 @@ def _episode_runtime_items_queryset():
     return _apply_backfill_state_filters(queryset, MetadataBackfillField.RUNTIME)
 
 
+def _reset_stale_give_up_episode_runtimes():
+    """Re-enable backfill for recently-aired episodes that gave up but may now have provider data.
+
+    Episodes aired within the last 30 days (or with no known air date) are eligible.
+    Items must have been last attempted more than 7 days ago to avoid immediate re-triggering.
+    """
+    now = timezone.now()
+    attempt_cutoff = now - timedelta(days=7)
+    recent_cutoff = now - timedelta(days=30)
+    count = MetadataBackfillState.objects.filter(
+        field=MetadataBackfillField.RUNTIME,
+        give_up=True,
+        last_attempt_at__lt=attempt_cutoff,
+        item__media_type=MediaTypes.EPISODE.value,
+        item__runtime_minutes__isnull=True,
+        item__source__in=RUNTIME_BACKFILL_SOURCES,
+    ).filter(
+        Q(item__release_datetime__isnull=True)
+        | Q(item__release_datetime__gte=recent_cutoff)
+    ).update(
+        give_up=False,
+        fail_count=0,
+        next_retry_at=None,
+    )
+    if count:
+        logger.info("reset_stale_episode_runtime_give_up count=%s", count)
+    return count
+
+
 def _genre_items_queryset():
     from app.providers import tvdb
 
@@ -1695,6 +1724,8 @@ def nightly_metadata_quality_backfill_task(
     credits_batch_size = max(int(credits_batch_size), 0)
     credits_scan_multiplier = max(int(credits_scan_multiplier), 1)
     trakt_popularity_batch_size = max(int(trakt_popularity_batch_size), 0)
+
+    _reset_stale_give_up_episode_runtimes()
 
     genre_item_ids = []
     if genre_batch_size:
