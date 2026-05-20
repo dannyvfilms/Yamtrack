@@ -557,3 +557,321 @@ class ImportTrakt(TestCase):
         tv_obj.refresh_from_db()
         self.assertEqual(season_obj.status, Status.COMPLETED.value)
         self.assertEqual(tv_obj.status, Status.COMPLETED.value)
+
+    # ------------------------------------------------------------------
+    # Episode rating import — gap coverage
+    # ------------------------------------------------------------------
+
+    def _make_tv_season_episode(self, tmdb_id, season_num, episode_num, initial_score=None):
+        """Helper: create TV → Season → Episode hierarchy and return all three objects."""
+        tv_item, _ = Item.objects.get_or_create(
+            media_id=str(tmdb_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Test Show"},
+        )
+        tv_obj, _ = TV.objects.get_or_create(
+            item=tv_item,
+            user=self.user,
+            defaults={"status": Status.IN_PROGRESS.value},
+        )
+        season_item, _ = Item.objects.get_or_create(
+            media_id=str(tmdb_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=season_num,
+            defaults={"title": f"Season {season_num}"},
+        )
+        season_obj, _ = Season.objects.get_or_create(
+            item=season_item,
+            user=self.user,
+            defaults={"related_tv": tv_obj, "status": Status.IN_PROGRESS.value},
+        )
+        episode_item, _ = Item.objects.get_or_create(
+            media_id=str(tmdb_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=season_num,
+            episode_number=episode_num,
+            defaults={"title": f"S{season_num}E{episode_num}"},
+        )
+        kwargs = {"related_season": season_obj}
+        if initial_score is not None:
+            kwargs["score"] = initial_score
+        episode_obj, _ = Episode.objects.get_or_create(item=episode_item, **kwargs)
+        return tv_obj, season_obj, episode_obj
+
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    def test_episode_rating_multiple_episodes(self, mock_make_request):
+        """All episode ratings in a single batch are applied correctly."""
+        TMDB_ID = 55500
+        _, _, ep1 = self._make_tv_season_episode(TMDB_ID, 1, 1)
+        _, _, ep2 = self._make_tv_season_episode(TMDB_ID, 1, 2)
+        _, _, ep3 = self._make_tv_season_episode(TMDB_ID, 1, 3)
+
+        mock_make_request.return_value = [
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "episode",
+                "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+                "episode": {"season": 1, "number": 1, "title": "Pilot"},
+                "rating": 7,
+            },
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "episode",
+                "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+                "episode": {"season": 1, "number": 2, "title": "Episode 2"},
+                "rating": 8,
+            },
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "episode",
+                "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+                "episode": {"season": 1, "number": 3, "title": "Episode 3"},
+                "rating": 9,
+            },
+        ]
+
+        TraktImporter("testuser", self.user, "new").process_ratings()
+
+        ep1.refresh_from_db()
+        ep2.refresh_from_db()
+        ep3.refresh_from_db()
+        self.assertEqual(float(ep1.score), 7.0)
+        self.assertEqual(float(ep2.score), 8.0)
+        self.assertEqual(float(ep3.score), 9.0)
+
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    def test_episode_rating_overwrites_existing_score(self, mock_make_request):
+        """A new rating overwrites an episode's pre-existing score."""
+        TMDB_ID = 55501
+        _, _, episode_obj = self._make_tv_season_episode(TMDB_ID, 1, 1, initial_score="5.0")
+
+        mock_make_request.return_value = [
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "episode",
+                "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+                "episode": {"season": 1, "number": 1, "title": "Pilot"},
+                "rating": 9,
+            }
+        ]
+
+        TraktImporter("testuser", self.user, "new").process_ratings()
+
+        episode_obj.refresh_from_db()
+        self.assertEqual(float(episode_obj.score), 9.0)
+
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    def test_episode_rating_no_episode_row(self, mock_make_request):
+        """Episode rating is silently skipped when Season exists but Episode row doesn't."""
+        TMDB_ID = 55502
+        tv_item, _ = Item.objects.get_or_create(
+            media_id=str(TMDB_ID),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Test Show"},
+        )
+        tv_obj, _ = TV.objects.get_or_create(
+            item=tv_item,
+            user=self.user,
+            defaults={"status": Status.IN_PROGRESS.value},
+        )
+        season_item, _ = Item.objects.get_or_create(
+            media_id=str(TMDB_ID),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            defaults={"title": "Season 1"},
+        )
+        Season.objects.get_or_create(
+            item=season_item,
+            user=self.user,
+            defaults={"related_tv": tv_obj, "status": Status.IN_PROGRESS.value},
+        )
+        # Intentionally no Episode row created
+
+        mock_make_request.return_value = [
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "episode",
+                "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+                "episode": {"season": 1, "number": 1, "title": "Pilot"},
+                "rating": 8,
+            }
+        ]
+
+        # Should not raise; no Episode created
+        TraktImporter("testuser", self.user, "new").process_ratings()
+        self.assertEqual(Episode.objects.filter(related_season__user=self.user).count(), 0)
+
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    def test_episode_rating_no_tmdb_id(self, mock_make_request):
+        """Episode rating is silently skipped when the show has no TMDB ID."""
+        mock_make_request.return_value = [
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "episode",
+                "show": {"title": "No-ID Show", "ids": {"tmdb": None}},
+                "episode": {"season": 1, "number": 1, "title": "Pilot"},
+                "rating": 8,
+            }
+        ]
+
+        # Should not raise; no DB writes
+        TraktImporter("testuser", self.user, "new").process_ratings()
+        self.assertEqual(Episode.objects.filter(related_season__user=self.user).count(), 0)
+
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    @patch("integrations.imports.trakt.TraktImporter._get_metadata")
+    def test_episode_rating_mixed_payload(self, mock_get_metadata, mock_make_request):
+        """Movie and episode ratings in the same payload are each handled correctly."""
+        TMDB_ID = 55503
+        _, _, episode_obj = self._make_tv_season_episode(TMDB_ID, 1, 1)
+
+        mock_get_metadata.return_value = {"title": "Rated Movie", "image": "img.jpg"}
+        mock_make_request.return_value = [
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "movie",
+                "movie": {"title": "Rated Movie", "ids": {"tmdb": 77777}},
+                "rating": 7,
+            },
+            {
+                "rated_at": "2024-01-01T00:00:00.000Z",
+                "type": "episode",
+                "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+                "episode": {"season": 1, "number": 1, "title": "Pilot"},
+                "rating": 9,
+            },
+        ]
+
+        trakt_importer = TraktImporter("testuser", self.user, "new")
+        trakt_importer.process_ratings()
+
+        # Movie rating queued in bulk_media
+        self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.MOVIE.value]), 1)
+        self.assertEqual(trakt_importer.bulk_media[MediaTypes.MOVIE.value][0].score, 7)
+
+        # Episode score written directly to DB
+        episode_obj.refresh_from_db()
+        self.assertEqual(float(episode_obj.score), 9.0)
+
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    @patch("integrations.imports.trakt.TraktImporter._get_metadata")
+    def test_episode_rating_survives_full_import_flow(
+        self, mock_get_metadata, mock_make_request, mock_get_paginated
+    ):
+        """Episode ratings are applied when running the full import_data() pipeline."""
+        from integrations.imports.trakt import importer
+
+        TMDB_ID = 55504
+        _, _, episode_obj = self._make_tv_season_episode(TMDB_ID, 1, 1)
+
+        # process_history + process_comments use paginated data; empty here
+        mock_get_paginated.return_value = []
+        # process_watchlist and process_ratings both call _make_api_request
+        mock_make_request.side_effect = [
+            [],  # watchlist call — empty
+            [    # ratings call — one episode entry
+                {
+                    "rated_at": "2024-01-01T00:00:00.000Z",
+                    "type": "episode",
+                    "show": {"title": "Test Show", "ids": {"tmdb": TMDB_ID}},
+                    "episode": {"season": 1, "number": 1, "title": "Pilot"},
+                    "rating": 8,
+                }
+            ],
+        ]
+        mock_get_metadata.return_value = {"title": "Test Show", "image": "img.jpg"}
+
+        importer(None, self.user, "new", "public_user")
+
+        episode_obj.refresh_from_db()
+        self.assertIsNotNone(episode_obj.score)
+        self.assertEqual(float(episode_obj.score), 8.0)
+
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    @patch("integrations.imports.trakt.TraktImporter._get_metadata")
+    def test_episode_rating_applied_on_first_ever_import(
+        self, mock_get_metadata, mock_make_request, mock_get_paginated
+    ):
+        """Ratings land correctly when history and ratings are imported in the same run.
+
+        Regression test: process_history() buffers new Season/Episode objects in
+        bulk_media without writing them to the DB.  process_ratings() then runs
+        before bulk_create_media() commits those rows, so a plain DB lookup finds
+        nothing and silently drops the rating.  The fix checks media_instances for
+        in-flight objects from the same run.
+        """
+        from integrations.imports.trakt import importer
+
+        TMDB_ID = 55505
+        # No pre-existing DB rows — simulates a brand-new Yamtrack account
+
+        episode_entry = {
+            "type": "episode",
+            "episode": {"season": 1, "number": 1, "title": "Pilot"},
+            "show": {"title": "New Show", "ids": {"tmdb": TMDB_ID}},
+            "watched_at": "2024-01-01T00:00:00.000Z",
+        }
+        rating_entry = {
+            "rated_at": "2024-01-01T00:00:00.000Z",
+            "type": "episode",
+            "show": {"title": "New Show", "ids": {"tmdb": TMDB_ID}},
+            "episode": {"season": 1, "number": 1, "title": "Pilot"},
+            "rating": 9,
+        }
+
+        def metadata_side_effect(media_type, tmdb_id, *args, **kwargs):
+            if media_type == MediaTypes.TV.value:
+                return {
+                    "title": "New Show",
+                    "image": "img.jpg",
+                    "last_episode_season": None,
+                }
+            if media_type == MediaTypes.SEASON.value:
+                return {
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.SEASON.value,
+                    "season_title": "Season 1",
+                    "season_number": 1,
+                    "max_progress": 6,
+                    "image": "img.jpg",
+                    "episodes": [
+                        {"episode_number": 1, "still_path": None},
+                    ],
+                    "score": 0,
+                    "score_count": 0,
+                    "synopsis": "",
+                    "details": {},
+                    "cast": [],
+                    "crew": [],
+                }
+            return None
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        # process_history uses _get_paginated_data; history returns one episode watch
+        # process_comments uses _get_paginated_data; empty
+        mock_get_paginated.side_effect = [
+            [episode_entry],  # history
+            [],               # comments
+        ]
+        # process_watchlist and process_ratings use _make_api_request
+        mock_make_request.side_effect = [
+            [],             # watchlist — empty
+            [rating_entry], # ratings — one episode entry
+        ]
+
+        importer(None, self.user, "new", "public_user")
+
+        episode_obj = Episode.objects.filter(
+            related_season__user=self.user,
+            item__episode_number=1,
+        ).first()
+        self.assertIsNotNone(episode_obj, "Episode should have been created by history import")
+        self.assertIsNotNone(episode_obj.score, "Episode score should be set from Trakt rating")
+        self.assertEqual(float(episode_obj.score), 9.0)

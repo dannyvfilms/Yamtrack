@@ -763,16 +763,35 @@ class TraktImporter:
             item__season_number=season_number,
             user=self.user,
         ).first()
-        if not season_obj:
-            return  # Only apply episode ratings when the season is already tracked
 
-        episodes = app.models.Episode.objects.filter(
-            related_season=season_obj,
-            item__episode_number=episode_number,
-        )
-        if episodes.exists():
-            scaled_score = self.user.scale_score_for_storage(Decimal(str(score)))
-            episodes.update(score=scaled_score)
+        # Fall back to in-memory season created earlier in this same import run
+        # (process_history builds objects into bulk_media before bulk_create_media
+        # commits them, so the DB lookup above finds nothing on a first import).
+        if not season_obj:
+            season_key = f"{tmdb_id}:{season_number}"
+            season_list = self.media_instances[MediaTypes.SEASON.value].get(season_key)
+            if season_list:
+                season_obj = season_list[0]
+
+        if not season_obj:
+            return
+
+        scaled_score = self.user.scale_score_for_storage(Decimal(str(score)))
+
+        # Try persisted episodes first (season_obj must have a pk to filter by it)
+        if season_obj.pk:
+            episodes = app.models.Episode.objects.filter(
+                related_season=season_obj,
+                item__episode_number=episode_number,
+            )
+            if episodes.exists():
+                episodes.update(score=scaled_score)
+                return
+
+        # Fall back to in-memory episode objects from this same import run
+        ep_key = f"{tmdb_id}:{season_number}:{episode_number}"
+        for ep_obj in self.media_instances[MediaTypes.EPISODE.value].get(ep_key, []):
+            ep_obj.score = scaled_score
 
     def _process_media_item(
         self,
