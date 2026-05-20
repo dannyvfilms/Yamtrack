@@ -230,6 +230,9 @@ def _serialize_item(item):
     genres = _coerce_genre_list(getattr(item, "genres", None))
     if genres:
         data["genres"] = genres
+    provider_external_ids = getattr(item, "provider_external_ids", None)
+    if provider_external_ids:
+        data["provider_external_ids"] = dict(provider_external_ids)
     return data
 
 

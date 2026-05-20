@@ -713,10 +713,26 @@ def _cached_horizontal_backdrop(item) -> str | None:
 
     if source == Sources.TMDB.value:
         backdrop_media_type = media_type
-        if media_type in (MediaTypes.EPISODE.value, MediaTypes.SEASON.value):
+        if media_type in (MediaTypes.EPISODE.value, MediaTypes.SEASON.value, MediaTypes.ANIME.value):
             backdrop_media_type = MediaTypes.TV.value
         if backdrop_media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
             cached_backdrop = cache.get(f"tmdb_backdrop_{backdrop_media_type}_{media_id}")
+            if cached_backdrop and cached_backdrop != settings.IMG_NONE:
+                return cached_backdrop
+
+    if source == Sources.TVDB.value and media_type in (
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.EPISODE.value,
+        MediaTypes.ANIME.value,
+    ):
+        ext_ids = (
+            item.get("provider_external_ids") if isinstance(item, dict)
+            else getattr(item, "provider_external_ids", None)
+        ) or {}
+        tmdb_id = ext_ids.get("tmdb_id")
+        if tmdb_id:
+            cached_backdrop = cache.get(f"tmdb_backdrop_tv_{tmdb_id}")
             if cached_backdrop and cached_backdrop != settings.IMG_NONE:
                 return cached_backdrop
 
@@ -760,9 +776,15 @@ def _get_horizontal_history_image(item, fallback_image, *, allow_network=True):
     except Exception:
         return image or settings.IMG_NONE
 
-    # For episodes/seasons, use the TV show's media_id to get the backdrop
-    # Episodes/seasons share the same media_id as their TV show
-    if source == Sources.TMDB.value and media_type in (MediaTypes.EPISODE.value, MediaTypes.SEASON.value):
+    # For episodes/seasons/anime, use the TV show's media_id to get the backdrop.
+    # Episodes/seasons share the same media_id as their TV show; TMDB stores
+    # anime as TV shows, so anime items (source=tmdb, media_type=anime) are
+    # fetched via the /tv/{id} endpoint too.
+    if source == Sources.TMDB.value and media_type in (
+        MediaTypes.EPISODE.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.ANIME.value,
+    ):
         try:
             backdrop_url = CustomList()._get_tmdb_backdrop(MediaTypes.TV.value, media_id)
             if backdrop_url and backdrop_url != settings.IMG_NONE:
@@ -777,6 +799,28 @@ def _get_horizontal_history_image(item, fallback_image, *, allow_network=True):
                 return backdrop_url
         except Exception:
             pass
+
+    # TVDB items store a tmdb_id cross-reference in provider_external_ids
+    # (populated by the TVDB provider when it finds a TMDB match).
+    # TV, Season, Episode, and Anime are all valid TVDB types.
+    if source == Sources.TVDB.value and media_type in (
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.EPISODE.value,
+        MediaTypes.ANIME.value,
+    ):
+        ext_ids = (
+            item.get("provider_external_ids") if isinstance(item, dict)
+            else getattr(item, "provider_external_ids", None)
+        ) or {}
+        tmdb_id = ext_ids.get("tmdb_id")
+        if tmdb_id:
+            try:
+                backdrop_url = CustomList()._get_tmdb_backdrop(MediaTypes.TV.value, tmdb_id)
+                if backdrop_url and backdrop_url != settings.IMG_NONE:
+                    return backdrop_url
+            except Exception:
+                pass
 
     if source == Sources.IGDB.value and media_type == MediaTypes.GAME.value:
         try:
