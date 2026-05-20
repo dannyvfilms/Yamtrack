@@ -164,6 +164,7 @@
               {% endif %}
             </div>
           </div>
+          {% include "lists/components/media_type_breakdown_button.html" %}
         </div>
       {% elif custom_list.can_recommend %}
         <div class="hidden sm:flex mb-4 items-center gap-2">
@@ -213,13 +214,20 @@
               </a>
             </div>
           </div>
+          {% include "lists/components/media_type_breakdown_button.html" %}
         </div>
+      {% else %}
+        {% if media_type_breakdown %}
+          <div class="hidden sm:flex mb-4 items-center gap-2">
+            {% include "lists/components/media_type_breakdown_button.html" %}
+          </div>
+        {% endif %}
       {% endif %}
   </div>
 
   {% if can_edit %}
-    <div class="mb-4 sm:hidden">
-      <div class="relative inline-flex w-full" x-data="{ open: false }" @click.outside="open = false">
+    <div class="mb-4 sm:hidden flex items-center gap-2">
+      <div class="relative inline-flex flex-1 min-w-0" x-data="{ open: false }" @click.outside="open = false">
         <a href="{% url 'list_add_item' custom_list.id %}"
            class="h-10 inline-flex flex-1 min-w-0 items-center justify-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500 whitespace-nowrap">
           {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
@@ -267,10 +275,11 @@
           {% endif %}
         </div>
       </div>
+      {% include "lists/components/media_type_breakdown_button.html" %}
     </div>
   {% elif custom_list.can_recommend %}
-    <div class="mb-4 sm:hidden">
-      <div class="relative inline-flex w-full" x-data="{ open: false }" @click.outside="open = false">
+    <div class="mb-4 sm:hidden flex items-center gap-2">
+      <div class="relative inline-flex flex-1 min-w-0" x-data="{ open: false }" @click.outside="open = false">
         {% if recommendation_count > 0 %}
           <a href="{% url 'list_recommendations' custom_list.id %}"
              class="h-10 inline-flex flex-1 min-w-0 items-center justify-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500 whitespace-nowrap">
@@ -316,7 +325,14 @@
           </a>
         </div>
       </div>
+      {% include "lists/components/media_type_breakdown_button.html" %}
     </div>
+  {% else %}
+    {% if media_type_breakdown %}
+      <div class="mb-4 sm:hidden flex items-center gap-2">
+        {% include "lists/components/media_type_breakdown_button.html" %}
+      </div>
+    {% endif %}
   {% endif %}
   {% if custom_list.description %}<p class="mb-6 text-gray-400">{{ custom_list.description }}</p>{% endif %}
 

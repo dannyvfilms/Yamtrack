@@ -51,6 +51,42 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 LIST_REFERENCE_PLACEHOLDER = "__LIST_REFERENCE__"
 
+_MEDIA_TYPE_COLORS = {
+    "movie": "#6366f1",
+    "tv": "#8b5cf6",
+    "season": "#a855f7",
+    "episode": "#c084fc",
+    "anime": "#ec4899",
+    "manga": "#f43f5e",
+    "game": "#f97316",
+    "book": "#eab308",
+    "comic": "#22c55e",
+    "boardgame": "#14b8a6",
+    "music": "#06b6d4",
+    "podcast": "#3b82f6",
+}
+
+
+def _build_media_type_breakdown(custom_list):
+    total = custom_list.items.count()
+    if not total:
+        return []
+    raw = (
+        custom_list.items.values("media_type")
+        .annotate(count=Count("id"))
+        .order_by("-count")
+    )
+    return [
+        {
+            "value": row["media_type"],
+            "label": MediaTypes(row["media_type"]).label,
+            "count": row["count"],
+            "percent": round(row["count"] / total * 100),
+            "color": _MEDIA_TYPE_COLORS.get(row["media_type"], "#6b7280"),
+        }
+        for row in raw
+    ]
+
 
 def _build_list_url_template(request):
     """Return an absolute list URL template with a replaceable reference placeholder."""
@@ -1255,6 +1291,7 @@ def _smart_list_detail_response(
             return render(request, "lists/components/list_table.html", context)
         return render(request, "lists/components/media_grid.html", context)
 
+    context["media_type_breakdown"] = _build_media_type_breakdown(custom_list)
     if can_edit:
         context["form"] = CustomListForm(instance=custom_list, user=request.user)
     else:
@@ -1403,6 +1440,8 @@ def list_detail(request, list_reference):
     # Build and filter base queryset
     items = custom_list.items.all()
     total_items_count = items.count()
+
+    media_type_breakdown = _build_media_type_breakdown(custom_list)
 
     # Compute completion percentage (titles completed / total titles)
     completion_percent = None
@@ -1719,6 +1758,7 @@ def list_detail(request, list_reference):
                 "collaborators_count": custom_list.collaborators.count() + 1,
                 "completion_percent": completion_percent,
                 "completed_count": completed_count,
+                "media_type_breakdown": media_type_breakdown,
             },
         )
         return render(request, "lists/list_detail.html", context)
