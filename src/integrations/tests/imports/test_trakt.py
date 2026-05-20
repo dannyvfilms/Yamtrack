@@ -303,6 +303,7 @@ class ImportTrakt(TestCase):
     ):
         """Test full import flow with OAuth token."""
         mock_get_paginated.side_effect = [
+            [],  # process_dropped — no dropped shows
             [
                 {
                     "type": "movie",
@@ -875,3 +876,153 @@ class ImportTrakt(TestCase):
         self.assertIsNotNone(episode_obj, "Episode should have been created by history import")
         self.assertIsNotNone(episode_obj.score, "Episode score should be set from Trakt rating")
         self.assertEqual(float(episode_obj.score), 9.0)
+
+    # ------------------------------------------------------------------
+    # Dropped show status import
+    # ------------------------------------------------------------------
+
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    def test_process_dropped_collects_ids(self, mock_get_paginated):
+        """process_dropped() populates dropped_tmdb_ids from the hidden endpoint."""
+        mock_get_paginated.return_value = [
+            {"type": "show", "show": {"title": "Dropped Show", "ids": {"tmdb": 11111}}},
+            {"type": "show", "show": {"title": "Also Dropped", "ids": {"tmdb": 22222}}},
+            {"type": "movie", "movie": {"title": "Hidden Movie", "ids": {"tmdb": 33333}}},
+        ]
+        encrypted_token = helpers.encrypt("test_token")
+        trakt_importer = TraktImporter("testuser", self.user, "new", refresh_token=encrypted_token)
+        trakt_importer.process_dropped()
+
+        self.assertIn("11111", trakt_importer.dropped_tmdb_ids)
+        self.assertIn("22222", trakt_importer.dropped_tmdb_ids)
+        # Movie-type hidden entries should be ignored
+        self.assertNotIn("33333", trakt_importer.dropped_tmdb_ids)
+        self.assertEqual(len(trakt_importer.dropped_tmdb_ids), 2)
+
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    def test_process_dropped_skipped_without_oauth(self, mock_get_paginated):
+        """process_dropped() is a no-op for public (non-OAuth) imports."""
+        trakt_importer = TraktImporter("testuser", self.user, "new")
+        trakt_importer.process_dropped()
+
+        mock_get_paginated.assert_not_called()
+        self.assertEqual(len(trakt_importer.dropped_tmdb_ids), 0)
+
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    @patch("integrations.imports.trakt.TraktImporter._get_metadata")
+    def test_dropped_show_status_on_first_import(
+        self, mock_get_metadata, mock_make_request, mock_get_paginated
+    ):
+        """A show that is both watched and dropped lands in DB with status Dropped."""
+        from integrations.imports.trakt import importer
+
+        TMDB_ID = 66601
+        episode_entry = {
+            "type": "episode",
+            "episode": {"season": 1, "number": 1, "title": "Pilot"},
+            "show": {"title": "Dropped Show", "ids": {"tmdb": TMDB_ID}},
+            "watched_at": "2024-01-01T00:00:00.000Z",
+        }
+
+        def metadata_side_effect(media_type, tmdb_id, *args, **kwargs):
+            if media_type == MediaTypes.TV.value:
+                return {"title": "Dropped Show", "image": "img.jpg", "last_episode_season": None}
+            if media_type == MediaTypes.SEASON.value:
+                return {
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.SEASON.value,
+                    "season_title": "Season 1",
+                    "season_number": 1,
+                    "max_progress": 6,
+                    "image": "img.jpg",
+                    "episodes": [{"episode_number": 1, "still_path": None}],
+                    "score": 0,
+                    "score_count": 0,
+                    "synopsis": "",
+                    "details": {},
+                    "cast": [],
+                    "crew": [],
+                }
+            return None
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        mock_get_paginated.side_effect = [
+            # process_dropped — show is hidden/dropped
+            [{"type": "show", "show": {"title": "Dropped Show", "ids": {"tmdb": TMDB_ID}}}],
+            [episode_entry],  # process_history
+            [],               # process_comments
+        ]
+        mock_make_request.side_effect = [[], []]  # watchlist, ratings
+
+        encrypted_token = helpers.encrypt("test_token")
+        importer(encrypted_token, self.user, "new", "oauth_user")
+
+        tv_obj = TV.objects.filter(user=self.user, item__media_id=str(TMDB_ID)).first()
+        self.assertIsNotNone(tv_obj)
+        self.assertEqual(tv_obj.status, Status.DROPPED.value)
+
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    @patch("integrations.imports.trakt.TraktImporter._get_metadata")
+    def test_dropped_show_updates_existing_tv(
+        self, mock_get_metadata, mock_make_request, mock_get_paginated
+    ):
+        """A recurring import updates an existing IN_PROGRESS TV show to Dropped."""
+        from integrations.imports.trakt import importer
+
+        TMDB_ID = 66602
+        # Pre-existing TV show in DB marked as IN_PROGRESS
+        tv_item, _ = Item.objects.get_or_create(
+            media_id=str(TMDB_ID),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Ongoing Show"},
+        )
+        tv_obj = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_entry = {
+            "type": "episode",
+            "episode": {"season": 1, "number": 1, "title": "Old Episode"},
+            "show": {"title": "Ongoing Show", "ids": {"tmdb": TMDB_ID}},
+            "watched_at": "2024-01-01T00:00:00.000Z",
+        }
+
+        def metadata_side_effect(media_type, tmdb_id, *args, **kwargs):
+            if media_type == MediaTypes.TV.value:
+                return {"title": "Ongoing Show", "image": "img.jpg", "last_episode_season": None}
+            if media_type == MediaTypes.SEASON.value:
+                return {
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.SEASON.value,
+                    "season_title": "Season 1",
+                    "season_number": 1,
+                    "max_progress": 6,
+                    "image": "img.jpg",
+                    "episodes": [{"episode_number": 1, "still_path": None}],
+                    "score": 0,
+                    "score_count": 0,
+                    "synopsis": "",
+                    "details": {},
+                    "cast": [],
+                    "crew": [],
+                }
+            return None
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        mock_get_paginated.side_effect = [
+            # process_dropped — show is now dropped
+            [{"type": "show", "show": {"title": "Ongoing Show", "ids": {"tmdb": TMDB_ID}}}],
+            [episode_entry],  # process_history
+            [],               # process_comments
+        ]
+        mock_make_request.side_effect = [[], []]  # watchlist, ratings
+
+        encrypted_token = helpers.encrypt("test_token")
+        importer(encrypted_token, self.user, "new", "oauth_user")
+
+        tv_obj.refresh_from_db()
+        self.assertEqual(tv_obj.status, Status.DROPPED.value)

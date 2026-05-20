@@ -203,6 +203,10 @@ class TraktImporter:
         self.completed_seasons = []
         self.completed_tvs = []
 
+        # Track TMDB IDs the user has dropped on Trakt (hidden/progress_watched)
+        self.dropped_tmdb_ids: set = set()
+        self.dropped_tvs: list = []
+
         logger.info(
             "Initialized Trakt importer for user %s with mode %s",
             username,
@@ -228,6 +232,7 @@ class TraktImporter:
 
     def import_data(self):
         """Import all user data from Trakt."""
+        self.process_dropped()
         self.process_history()
         self.process_watchlist()
         self.process_ratings()
@@ -240,6 +245,8 @@ class TraktImporter:
             bulk_update_with_history(self.completed_seasons, app.models.Season, fields=["status"])
         if self.completed_tvs:
             bulk_update_with_history(self.completed_tvs, app.models.TV, fields=["status"])
+        if self.dropped_tvs:
+            bulk_update_with_history(self.dropped_tvs, app.models.TV, fields=["status"])
 
         imported_counts = {
             media_type: len(media_list)
@@ -532,13 +539,21 @@ class TraktImporter:
                 tmdb_id,
             )
             if tv_obj is None:
+                status = (
+                    Status.DROPPED.value
+                    if tmdb_id in self.dropped_tmdb_ids
+                    else Status.IN_PROGRESS.value
+                )
                 tv_obj = app.models.TV(
                     item=tv_item,
                     user=self.user,
-                    status=Status.IN_PROGRESS.value,
+                    status=status,
                 )
                 tv_obj._history_date = watched_at_dt
                 self.bulk_media[MediaTypes.TV.value].append(tv_obj)
+            elif tmdb_id in self.dropped_tmdb_ids and tv_obj.status != Status.DROPPED.value:
+                tv_obj.status = Status.DROPPED.value
+                self.dropped_tvs.append(tv_obj)
             self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]
         else:
             tv_obj = self.media_instances[MediaTypes.TV.value][tv_key][0]
@@ -678,6 +693,24 @@ class TraktImporter:
             except Exception as e:
                 msg = f"Error processing comment entry: {entry}"
                 raise MediaImportUnexpectedError(msg) from e
+
+    def process_dropped(self):
+        """Collect TMDB IDs of shows the user has dropped (hidden from progress).
+
+        Trakt represents dropped shows as hidden items in the progress_watched
+        section.  Requires OAuth — public imports skip this silently.
+        """
+        if not self.refresh_token:
+            return
+        logger.info("Importing dropped shows for user %s", self.username)
+        hidden_endpoint = f"{self.user_base_url}/hidden/progress_watched"
+        hidden_data = self._get_paginated_data(hidden_endpoint)
+        for entry in hidden_data:
+            if entry.get("type") != "show":
+                continue
+            tmdb_id = self._get_tmdb_id(entry["show"])
+            if tmdb_id:
+                self.dropped_tmdb_ids.add(tmdb_id)
 
     def _process_generic_entry(self, entry, entry_type, attribute_updates):
         """Process a generic entry (watchlist, rating, or comment)."""
