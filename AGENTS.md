@@ -341,6 +341,8 @@ Conflict-resolution steps:
 - Media type changes follow `docs/agents/media_type_integration.md` (MediaTypes enum + `media_type_config` wiring).
 
 ## PR / Commit Expectations
+- **Never commit unless the user explicitly asks.** Finishing a task, passing tests, or reaching a natural stopping point does not justify an automatic commit. Wait for a direct instruction such as "commit this", "commit the changes", or "make a commit".
+- **Never amend a commit the user has not seen.** If a hook fails after a commit attempt, fix the issue and create a new commit — do not amend.
 - CI fails PRs that modify `.github/workflows/**` (see `.github/workflows/app-tests.yml`).
 - Large changes should be split into reviewable PRs or clearly justified if they cannot be.
 - Review summaries should call out behavior changes, files touched, validation run, and remaining risk.
