@@ -6301,10 +6301,18 @@ def update_media_score(request, media_type, instance_id):
         score,
     )
 
-    return JsonResponse(
+    return render(
+        request,
+        "app/components/detail_score_chip_slot.html",
         {
-            "success": True,
-            "score": request.user.format_score_for_display(score) if score is not None else None,
+            "media": media.item,
+            "current_instance": media,
+            "media_type": media_type,
+            "user": request.user,
+            "user_medias": [media],
+            "public_view": False,
+            "csrf_token": request.META.get("CSRF_COOKIE", ""),
+            "score_chip_slot_oob": True,
         },
     )
 
