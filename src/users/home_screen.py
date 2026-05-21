@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from django.apps import apps
 from django.conf import settings
@@ -14,7 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from app.helpers import is_caught_up_media
-from app.models import BasicMedia, Item, MediaTypes, Sources, Status
+from app.models import BasicMedia, Episode, Item, MediaTypes, Sources, Status
 from app.templatetags import app_tags
 from lists import smart_rules
 from lists.models import CustomList
@@ -27,6 +27,7 @@ from users.models import (
 )
 
 RECENTLY_UNRATED_DAYS = 7
+RECENTLY_UNRATED_EPISODE_DAYS = 30
 RECENTLY_UNRATED_LABEL = "Recently Played - Not Rated"
 SQUARE_HOME_MEDIA_TYPES = {
     MediaTypes.MUSIC.value,
@@ -1741,7 +1742,57 @@ def _custom_list_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
     return sort_home_entries(entries, row.sort_by, row.direction)
 
 
+def _recently_unrated_episode_entries(user, media_type: str) -> list[HomeRowEntry]:
+    cutoff = timezone.now() - timedelta(days=RECENTLY_UNRATED_EPISODE_DAYS)
+    episodes = (
+        Episode.objects.filter(
+            related_season__user=user.id,
+            related_season__item__library_media_type=media_type,
+            score__isnull=True,
+            end_date__isnull=False,
+            end_date__gte=cutoff,
+        )
+        .select_related(
+            "item",
+            "related_season__item",
+            "related_season__related_tv__item",
+        )
+        .order_by("-end_date")
+    )
+    placeholder = getattr(settings, "IMG_NONE", "")
+    entries = []
+    for ep in episodes:
+        ep.last_played_at = ep.end_date
+        season = ep.related_season
+        show_item = getattr(getattr(season, "related_tv", None), "item", None)
+        show_title = getattr(show_item, "title", "") or ""
+        season_num = getattr(ep.item, "season_number", None)
+        ep_num = getattr(ep.item, "episode_number", None)
+        if show_title and season_num is not None and ep_num is not None:
+            subtitle = f"{show_title} • S{season_num:02d}E{ep_num:02d}"
+        elif show_title:
+            subtitle = show_title
+        else:
+            subtitle = None
+        if not ep.item.image or ep.item.image == placeholder:
+            season_image = getattr(getattr(season, "item", None), "image", None)
+            show_image = getattr(show_item, "image", None)
+            ep.item.image = season_image or show_image or placeholder
+        entries.append(
+            HomeRowEntry(
+                item=ep.item,
+                media=ep,
+                show_progress_controls=False,
+                subtitle_override=subtitle,
+            )
+        )
+    return entries
+
+
 def _recently_unrated_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
+    if row.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        entries = _recently_unrated_episode_entries(user, row.media_type)
+        return sort_home_entries(entries, row.sort_by, row.direction)
     media_items = [
         media
         for media in BasicMedia.objects.get_recently_unrated(user, days=RECENTLY_UNRATED_DAYS)
