@@ -319,7 +319,7 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(state["view_offset_seconds"], 1447)
 
     def test_movie_short_stop_clears_in_progress_row_and_playback_state(self):
-        """Movie stops inside the first minute should be treated as abandoned."""
+        """Play events don't create rows; stop with viewOffset < 60s also creates nothing."""
         play_payload = {
             "event": "media.play",
             "Account": {"title": "testuser"},
@@ -351,7 +351,7 @@ class PlexWebhookTests(TestCase):
 
         play_response = self._post_payload(play_payload)
         self.assertEqual(play_response.status_code, 200)
-        self.assertTrue(
+        self.assertFalse(
             Movie.objects.filter(
                 item__media_id="603",
                 user=self.user,
@@ -369,10 +369,12 @@ class PlexWebhookTests(TestCase):
                 status=Status.IN_PROGRESS.value,
             ).exists(),
         )
-        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
+        stopped_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(stopped_state)
+        self.assertEqual(stopped_state["status"], live_playback.PLAYBACK_STATUS_STOPPED)
 
     def test_short_stop_only_applies_during_the_first_minute_of_playback(self):
-        """A low-progress stop should not be deleted once the start window has aged out."""
+        """A stop with viewOffset < 60s never creates an in-progress row."""
         play_payload = {
             "event": "media.play",
             "Account": {"title": "testuser"},
@@ -413,7 +415,7 @@ class PlexWebhookTests(TestCase):
         stop_response = self._post_payload(stop_payload)
         self.assertEqual(stop_response.status_code, 200)
 
-        self.assertTrue(
+        self.assertFalse(
             Movie.objects.filter(
                 item__media_id="603",
                 user=self.user,
@@ -425,7 +427,7 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(stopped_state["status"], live_playback.PLAYBACK_STATUS_STOPPED)
 
     def test_episode_short_stop_clears_tv_and_season_rows(self):
-        """Episode stops inside the first minute should clear the fresh rows."""
+        """Play events don't create rows; stop with viewOffset < 60s creates nothing."""
         play_payload = {
             "event": "media.play",
             "Account": {"title": "testuser"},
@@ -467,10 +469,10 @@ class PlexWebhookTests(TestCase):
 
         play_response = self._post_payload(play_payload)
         self.assertEqual(play_response.status_code, 200)
-        self.assertTrue(
+        self.assertFalse(
             TV.objects.filter(item__media_id="85987", user=self.user).exists(),
         )
-        self.assertTrue(
+        self.assertFalse(
             Season.objects.filter(
                 item__media_id="85987",
                 item__season_number=1,
@@ -491,10 +493,12 @@ class PlexWebhookTests(TestCase):
                 user=self.user,
             ).exists(),
         )
-        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
+        stopped_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(stopped_state)
+        self.assertEqual(stopped_state["status"], live_playback.PLAYBACK_STATUS_STOPPED)
 
     def test_pause_and_stop_events_update_live_playback_state(self):
-        """Pause should keep card state; stop should transition to stopped with grace period."""
+        """Pause keeps card state; stop with sufficient viewOffset creates DB rows and transitions to stopped."""
         play_payload = {
             "event": "media.play",
             "Account": {"title": "testuser"},
@@ -543,6 +547,7 @@ class PlexWebhookTests(TestCase):
                 "index": 1,
                 "parentIndex": 1,
                 "ratingKey": "rk-episode-2",
+                "viewOffset": 721000,
                 "Guid": [
                     {"id": "imdb://tt0583459"},
                     {"id": "tmdb://85987"},
