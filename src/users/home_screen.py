@@ -1525,14 +1525,11 @@ def _apply_progress_filter(entries: list[HomeRowEntry], media_type: str, progres
 
 def _sort_numeric(entries: list[HomeRowEntry], value_fn, direction: str) -> list[HomeRowEntry]:
     descending = direction == DirectionChoices.DESC
-    return sorted(
-        entries,
-        key=lambda entry: (
-            value_fn(entry) is None,
-            0 if value_fn(entry) is None else (-value_fn(entry) if descending else value_fn(entry)),
-            _entry_title(entry).lower(),
-        ),
-    )
+    with_value = [e for e in entries if value_fn(e) is not None]
+    without_value = [e for e in entries if value_fn(e) is None]
+    with_value.sort(key=lambda entry: value_fn(entry), reverse=descending)
+    without_value.sort(key=lambda entry: _entry_title(entry).lower(), reverse=descending)
+    return with_value + without_value
 
 
 def _sort_string(entries: list[HomeRowEntry], value_fn, direction: str) -> list[HomeRowEntry]:
@@ -1666,7 +1663,7 @@ def sort_home_entries(entries: list[HomeRowEntry], sort_by: str, direction: str)
             return max_progress - progress
 
         return _sort_numeric(entries, time_left, direction)
-    return sorted(entries, key=lambda entry: _entry_title(entry).lower())
+    return sorted(entries, key=lambda entry: _entry_title(entry).lower(), reverse=direction == DirectionChoices.DESC)
 
 
 def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
