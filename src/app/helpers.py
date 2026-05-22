@@ -86,10 +86,15 @@ def redirect_back(request):
         parsed_url = urlparse(next_url)
 
         # Get the query parameters and remove params we don't want
-        query_params = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+        query_params = {
+            k: v
+            for k, v in parse_qsl(parsed_url.query, keep_blank_values=True)
+            if not k.startswith("org.htmx.")
+        }
         query_params.pop("page", None)
         query_params.pop("load_media_type", None)
         query_params.pop("load_row", None)
+        query_params.pop("fragment", None)
 
         # Reconstruct the URL
         new_query = urlencode(query_params)
