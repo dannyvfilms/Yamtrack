@@ -2402,12 +2402,16 @@ class MediaManager(models.Manager):
             breakdown = released_by_show.get(key, {})
             tv.released_episode_breakdown = breakdown
             if breakdown:
-                dropped_season_numbers = {
-                    season.item.season_number
-                    for season in tv.seasons.all()
-                    if season.status == Status.DROPPED.value
-                    and season.item.season_number != 0
-                }
+                dropped_season_numbers = (
+                    {
+                        season.item.season_number
+                        for season in tv.seasons.all()
+                        if season.status == Status.DROPPED.value
+                        and season.item.season_number != 0
+                    }
+                    if tv.pk is not None
+                    else set()
+                )
                 effective_count = sum(
                     count
                     for season_num, count in breakdown.items()
