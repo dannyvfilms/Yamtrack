@@ -721,25 +721,7 @@
                 </div>
               </div>
 
-              <div class="flex items-center justify-center py-2 px-3 bg-[#343a40] rounded-md">
-                <span class="text-sm text-gray-300" x-text="formatDisplayDate(startDate)"></span>
-                <svg xmlns="http://www.w3.org/2000/svg"
-                     width="24"
-                     height="24"
-                     viewBox="0 0 24 24"
-                     fill="none"
-                     stroke="currentColor"
-                     stroke-width="2"
-                     stroke-linecap="round"
-                     stroke-linejoin="round"
-                     class="mx-2 w-4 h-4 text-gray-500">
-                  <path d="M5 12h14"></path>
-                  <path d="m12 5 7 7-7 7"></path>
-                </svg>
-                <span class="text-sm text-gray-300" x-text="formatDisplayDate(endDate)"></span>
-              </div>
-
-              <div class="flex justify-end gap-2 pt-2">
+<div class="flex justify-end gap-2 pt-2">
                 <button @click="isRangeOpen = false"
                         class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-md transition-colors cursor-pointer">
                   Cancel
@@ -1990,7 +1972,7 @@
 
 {% block js %}
   <script src="{% static 'js/date-range.js' %}{% get_static_file_mtime 'js/date-range.js' %}"
-          data-date-format="{{ user.date_format }}"></script>
+          data-date-format="{{ user_django_date_format }}"></script>
 
   <script>
     function highlightCarousel() {
@@ -2098,6 +2080,7 @@
   <script src="{% static 'js/libraries/chartjs-datalabels-2.0.0.min.js' %}"></script>
 
   <!-- JSON data for charts -->
+  {{ date_format_values|json_script:"date_format_values" }}
   {{ media_type_distribution|json_script:"media_type_distribution" }}
   {{ status_pie_chart_data|json_script:"status_pie_chart_data" }}
   {{ status_distribution|json_script:"status_distribution" }}

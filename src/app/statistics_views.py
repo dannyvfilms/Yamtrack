@@ -17,7 +17,18 @@ from app import config, statistics_cache
 from app import statistics as stats
 from app.models import MediaTypes
 from app.templatetags import app_tags
-from users.models import TopTalentSortChoices
+from users.models import DateFormatChoices, TopTalentSortChoices
+
+DATE_FORMAT_DJANGO_MAP = {
+    DateFormatChoices.SYSTEM_DEFAULT: "",
+    DateFormatChoices.ISO_8601: "Y-m-d",
+    DateFormatChoices.MONTH_D_YYYY: "M d, Y",
+    DateFormatChoices.D_MON_YYYY: "d M Y",
+    DateFormatChoices.M_D_YYYY: "n/j/Y",
+    DateFormatChoices.D_M_YYYY: "j/n/Y",
+    DateFormatChoices.DD_MM_YYYY: "d.m.Y",
+    DateFormatChoices.YYYY_MM_DD: "Y/m/d",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -451,6 +462,12 @@ def statistics(request):
             "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
             "history_highlights": statistics_data.get("history_highlights", {}),
             "show_year_charts": show_year_charts,
+            "user_django_date_format": DATE_FORMAT_DJANGO_MAP.get(
+                request.user.date_format, ""
+            ),
+            "date_format_values": [
+                fmt for fmt in DATE_FORMAT_DJANGO_MAP.values() if fmt
+            ],
             "media_type_colors": {
                 "tv": config.get_stats_color(MediaTypes.TV.value),
                 "movie": config.get_stats_color(MediaTypes.MOVIE.value),
