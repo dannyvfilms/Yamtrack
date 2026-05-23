@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.auth.signals import user_logged_in
 from django.db import connection
 from django.db.utils import OperationalError, ProgrammingError
 from django.db.models.signals import post_migrate
@@ -33,6 +34,14 @@ def _demo_user_schema_ready():
         for field in user_model._meta.local_concrete_fields
     }
     return required_columns.issubset(columns)
+
+
+@receiver(user_logged_in)
+def apply_session_duration(sender, request, user, **kwargs):  # noqa: ARG001
+    """Set session expiry to match the user's session_duration preference."""
+    duration = getattr(user, "session_duration", None)
+    if duration is not None:
+        request.session.set_expiry(duration)
 
 
 @receiver(post_migrate)

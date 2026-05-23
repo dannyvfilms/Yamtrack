@@ -182,6 +182,11 @@ MIDDLEWARE = [
 if ENABLE_DEBUG_TOOLBAR:
     MIDDLEWARE.insert(0, "debug_toolbar.middleware.DebugToolbarMiddleware")
 
+YAMTRACK_AUTO_LOGIN_USERNAME = config("YAMTRACK_AUTO_LOGIN_USERNAME", default=None)
+if YAMTRACK_AUTO_LOGIN_USERNAME:
+    _index = MIDDLEWARE.index("django.contrib.auth.middleware.AuthenticationMiddleware")
+    MIDDLEWARE.insert(_index + 1, "app.middleware.AutoLoginMiddleware")
+
 ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [

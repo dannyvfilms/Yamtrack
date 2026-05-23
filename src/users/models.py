@@ -255,6 +255,16 @@ class AnimeLibraryModeChoices(models.TextChoices):
     BOTH = "both", "Both Libraries"
 
 
+class SessionDurationChoices(models.IntegerChoices):
+    """Choices for how long a login session persists."""
+
+    ONE_DAY = 86400, "1 day"
+    ONE_WEEK = 604800, "1 week"
+    TWO_WEEKS = 1209600, "2 weeks"
+    ONE_MONTH = 2592000, "30 days"
+    THREE_MONTHS = 7776000, "90 days"
+
+
 class User(AbstractUser):
     """Custom user model."""
 
@@ -812,6 +822,11 @@ class User(AbstractUser):
     book_comic_manga_progress_percentage = models.BooleanField(
         default=False,
         help_text="Track book, comic, and manga progress as percentage instead of pages/issues/chapters",
+    )
+    session_duration = models.IntegerField(
+        default=SessionDurationChoices.TWO_WEEKS,
+        choices=SessionDurationChoices.choices,
+        help_text="How long a login session persists before requiring re-authentication",
     )
 
     class Meta:

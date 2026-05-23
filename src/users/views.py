@@ -54,6 +54,7 @@ from users.models import (
     PlannedHomeDisplayChoices,
     QuickWatchDateChoices,
     RatingScaleChoices,
+    SessionDurationChoices,
     TitleDisplayPreferenceChoices,
     TopTalentSortChoices,
     TimeFormatChoices,
@@ -801,6 +802,17 @@ def preferences(request):
                 request.user.anime_library_mode = anime_library_mode
                 fields_to_update.append("anime_library_mode")
 
+        session_duration = request.POST.get("session_duration")
+        if session_duration is not None:
+            try:
+                session_duration_int = int(session_duration)
+            except (ValueError, TypeError):
+                session_duration_int = None
+            if session_duration_int in SessionDurationChoices.values:
+                if request.user.session_duration != session_duration_int:
+                    request.user.session_duration = session_duration_int
+                    fields_to_update.append("session_duration")
+
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)
             request.user.refresh_from_db()
@@ -834,6 +846,7 @@ def preferences(request):
         "tv_metadata_source_choices": tv_metadata_source_choices,
         "anime_metadata_source_choices": anime_metadata_source_choices,
         "anime_library_mode_choices": AnimeLibraryModeChoices.choices,
+        "session_duration_choices": SessionDurationChoices.choices,
         "tvdb_enabled": tvdb_enabled,
     }
 
