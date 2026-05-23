@@ -7,7 +7,7 @@ import requests
 from defusedxml import ElementTree
 from django.conf import settings
 from pyrate_limiter import RedisBucket
-from redis import Redis
+from redis import ConnectionPool
 from requests.adapters import HTTPAdapter
 from requests_ratelimiter import LimiterAdapter, LimiterSession
 
@@ -91,22 +91,22 @@ def _audiobookshelf_book(media_id):
     }
 
 
-def get_redis_client():
-    """Return a Redis client."""
+def get_redis_pool():
+    """Return a Redis connection pool."""
     if settings.TESTING:
         import fakeredis  # noqa: PLC0415
 
-        return fakeredis.FakeRedis()
-    return Redis.from_url(settings.REDIS_URL)
+        return fakeredis.FakeRedis().connection_pool
+    return ConnectionPool.from_url(settings.REDIS_URL)
 
 
-redis_db = get_redis_client()
+redis_pool = get_redis_pool()
 bucket_key = f"{settings.REDIS_PREFIX}_api" if settings.REDIS_PREFIX else "api"
 
 session = LimiterSession(
     per_second=5,
     bucket_class=RedisBucket,
-    bucket_kwargs={"redis_db": redis_db, "bucket_name": bucket_key},
+    bucket_kwargs={"redis_pool": redis_pool, "bucket_name": bucket_key},
 )
 
 session.mount("http://", HTTPAdapter(max_retries=3))
