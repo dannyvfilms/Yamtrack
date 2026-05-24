@@ -34,6 +34,7 @@ urlpatterns = [
     path("settings/preferences", views.preferences, name="preferences"),
     path("settings/integrations", views.integrations, name="integrations"),
     path("settings/import", views.import_data, name="import_data"),
+    path("settings/import/save-settings", views.save_import_settings, name="save_import_settings"),
     path(
         "settings/import/activity",
         views.import_data_activity,

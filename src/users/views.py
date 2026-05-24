@@ -11,7 +11,7 @@ from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.cache import cache
 from django.db import IntegrityError
 from django.db.models import Q
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 from django.urls import reverse
@@ -48,6 +48,8 @@ from users.models import (
     AnimeLibraryModeChoices,
     DateFormatChoices,
     GameLoggingStyleChoices,
+    ImportFrequencyChoices,
+    ImportModeChoices,
     MetadataSourceDefaultChoices,
     MediaCardSubtitleDisplayChoices,
     MobileGridLayoutChoices,
@@ -981,6 +983,34 @@ def import_data(request):
         "lastfm_history_button_label": lastfm_history_button_label,
     }
     return render(request, "users/import_data.html", context)
+
+
+@login_required
+@require_POST
+def save_import_settings(request):
+    """Persist Import Settings panel preferences (frequency, time, mode)."""
+    if request.user.is_demo:
+        return HttpResponse(status=204)
+
+    frequency = request.POST.get("import_frequency", "")
+    time_val  = request.POST.get("import_time", "")
+    mode      = request.POST.get("import_mode", "")
+
+    fields = []
+    if frequency in ImportFrequencyChoices.values:
+        request.user.import_frequency = frequency
+        fields.append("import_frequency")
+    if time_val:
+        request.user.import_time = time_val
+        fields.append("import_time")
+    if mode in ImportModeChoices.values:
+        request.user.import_mode = mode
+        fields.append("import_mode")
+
+    if fields:
+        request.user.save(update_fields=fields)
+
+    return HttpResponse(status=204)
 
 
 @require_GET

@@ -171,6 +171,19 @@ class StatisticsRangeChoices(models.TextChoices):
     ALL_TIME = "All Time", "All Time"
 
 
+class ImportFrequencyChoices(models.TextChoices):
+    ONCE     = "once",  "One Time Import"
+    DAILY    = "daily", "Every Day"
+    TWO_DAYS = "2days", "Every 2 Days"
+
+
+class ImportModeChoices(models.TextChoices):
+    NEW               = "new",               "Only Sync New Items"
+    OVERWRITE         = "overwrite",         "Sync New Items and Overwrite Existing"
+    WATCHLIST         = "watchlist",         "Import Watchlist Data Only"
+    UPDATE_COLLECTION = "update_collection", "Update Collection Metadata Only"
+
+
 class TopTalentSortChoices(models.TextChoices):
     """Choices for sorting top cast/crew/studio cards on statistics."""
 
@@ -761,6 +774,21 @@ class User(AbstractUser):
         max_length=20,
         default=TimeFormatChoices.SYSTEM_DEFAULT,
         choices=TimeFormatChoices.choices,
+    )
+
+    import_frequency = models.CharField(
+        max_length=10,
+        default=ImportFrequencyChoices.ONCE,
+        choices=ImportFrequencyChoices.choices,
+    )
+    import_time = models.CharField(
+        max_length=5,
+        default="00:00",
+    )
+    import_mode = models.CharField(
+        max_length=20,
+        default=ImportModeChoices.NEW,
+        choices=ImportModeChoices.choices,
     )
 
     game_logging_style = models.CharField(

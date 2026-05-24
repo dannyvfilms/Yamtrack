@@ -10,9 +10,9 @@
   <div class="space-y-6"
        x-data="{
          hasStoredPlexAccount: {% if plex_account %}true{% else %}false{% endif %},
-         importFrequency: 'once',
-         importTime: '{% now "H:i" %}',
-         importMode: 'new',
+         importFrequency: '{{ user.import_frequency }}',
+         importTime: '{{ user.import_time }}',
+         importMode: '{{ user.import_mode }}',
          hasPlexSections: {% if plex_sections %}true{% else %}false{% endif %},
          plexSections: JSON.parse('{{ plex_sections_json|escapejs }}'),
          plexConnectionState: {% if plex_account %}'checking'{% else %}'disconnected'{% endif %},
@@ -171,6 +171,10 @@
        x-init="initPlexStatus()">
 
     {# Import settings #}
+    <form hx-post="{% url 'save_import_settings' %}"
+          hx-trigger="change"
+          hx-swap="none">
+      {% csrf_token %}
     <div class="bg-[#2a2f35] rounded-lg p-6">
       <div class="flex items-center mb-4">
         {% include "app/icons/horizontal-sliders.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
@@ -183,6 +187,7 @@
             <label class="block text-sm text-gray-400 mb-2">Import Frequency</label>
             <div class="relative">
               <select x-model="importFrequency"
+                      name="import_frequency"
                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
                 <option value="once">One Time Import</option>
                 <option value="daily">Every Day</option>
@@ -193,6 +198,7 @@
             <div x-cloak class="mt-4" x-show="importFrequency !== 'once'">
               <label class="block text-sm text-gray-400 mb-2">Import Time</label>
               <input x-model="importTime"
+                     name="import_time"
                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 scheme-dark"
                      type="time">
             </div>
@@ -201,6 +207,7 @@
             <label class="block text-sm text-gray-400 mb-2">Import Mode</label>
             <div class="relative">
               <select x-model="importMode"
+                      name="import_mode"
                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
                 <option value="new">Only Sync New Items</option>
                 <option value="overwrite">Sync New Items and Overwrite Existing</option>
@@ -213,6 +220,7 @@
         </div>
       </div>
     </div>
+    </form>
 
     {# Import Sources #}
     <div class="bg-[#2a2f35] rounded-lg p-6">
