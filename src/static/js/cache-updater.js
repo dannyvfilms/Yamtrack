@@ -14,7 +14,7 @@ class CacheUpdater {
         this.mediaType = options.mediaType || null;
         this.showMore = Boolean(options.showMore);
         this.pollInterval = options.pollInterval || 2500; // 2.5 seconds
-        this.timeout = options.timeout || 120000; // 120 seconds (increased to handle longer refreshes)
+        this.timeout = options.timeout || 180000; // 180 seconds — stats rebuild can take 90s+ for large libraries
         this.startTime = Date.now();
         this.pollTimer = null;
         this.isPolling = false;

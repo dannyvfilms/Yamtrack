@@ -486,7 +486,13 @@ function dateRangePicker(options = {}) {
         });
 
         if (response.ok) {
-          const maxAttempts = 60;
+          // Signal the stats Alpine component to start CacheUpdater and show the
+          // banner. All page reloads go through CacheUpdater which guards on
+          // data.exists before reloading, preventing blank-page races.
+          window.dispatchEvent(new CustomEvent('stats-cache-rebuild-started'));
+
+          // Poll only to know when to stop the button spinner.
+          const maxAttempts = 180;
           let attempts = 0;
 
           const pollForCompletion = async () => {
@@ -502,27 +508,25 @@ function dateRangePicker(options = {}) {
 
               if (statusResponse.ok) {
                 const statusData = await statusResponse.json();
-                const isComplete =
-                  statusData.exists &&
-                  !statusData.is_stale &&
-                  !statusData.is_refreshing;
+                const stillRefreshing =
+                  statusData.is_refreshing ||
+                  statusData.refresh_scheduled ||
+                  !statusData.exists;
 
-                if (isComplete) {
-                  window.location.reload();
-                } else if (attempts >= maxAttempts) {
-                  window.location.reload();
+                if (!stillRefreshing || attempts >= maxAttempts) {
+                  this.refreshing = false;
                 } else {
                   setTimeout(pollForCompletion, 1000);
                 }
               } else if (attempts >= 5) {
-                window.location.reload();
+                this.refreshing = false;
               } else {
                 setTimeout(pollForCompletion, 1000);
               }
             } catch (error) {
               console.error("Error polling cache status:", error);
               if (attempts >= 5) {
-                window.location.reload();
+                this.refreshing = false;
               } else {
                 setTimeout(pollForCompletion, 1000);
               }

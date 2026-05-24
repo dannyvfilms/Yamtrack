@@ -990,6 +990,9 @@ CELERY_TASK_ROUTES = {
     "Warm History Day Cache Coverage": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     "Repair History Day Cache Coverage": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     "Refresh Discover Profiles": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    # Long-running scheduled tasks — low priority so beat-catch-up bursts don't
+    # starve other celery-queue work.
+    "Reload calendar": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     # User-triggered cache rebuilds go to the dedicated interactive worker so they
     # are never blocked behind long-running background tasks.
     "app.tasks.refresh_statistics_cache_task": {"queue": "interactive"},

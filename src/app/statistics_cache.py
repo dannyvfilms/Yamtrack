@@ -42,7 +42,7 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_VERSION = 9
+STATISTICS_CACHE_VERSION = 12
 STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 STATISTICS_STALE_AFTER = timedelta(minutes=15)
@@ -64,6 +64,12 @@ STATISTICS_TASK_PRIORITY_INTERACTIVE = getattr(settings, "CELERY_TASK_PRIORITY_I
 STATISTICS_TASK_PRIORITY_FOLLOWUP = getattr(settings, "CELERY_TASK_PRIORITY_FOLLOWUP", 7)
 STATISTICS_TASK_PRIORITY_BACKGROUND = getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1)
 STATISTICS_ALL_TIME_REFRESH_DELAY = getattr(settings, "STATISTICS_ALL_TIME_REFRESH_DELAY", 45)
+
+# Controls the maximum items shown in every top-N statistics card.
+# Change this ONE value to resize all top cards simultaneously.
+STATISTICS_TOP_N = 50
+# Cross-type global top-rated heap — intentionally same value but a distinct card.
+STATISTICS_TOP_RATED_OVERALL = 50
 
 # Predefined ranges that can be cached
 PREDEFINED_RANGES = [
@@ -2899,7 +2905,7 @@ def get_person_talent_totals(user, person_source, person_id, start_date=None, en
     return bucket_payloads.get(selected_bucket)
 
 
-def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing_backfill=True):
+def _aggregate_top_talent(user, start_date, end_date, limit=STATISTICS_TOP_N, schedule_missing_backfill=True):
     """Aggregate top cast/crew/studio rollups from watched movie and TV plays."""
     movie_play_counts = Counter()
     movie_watch_minutes = Counter()
@@ -3711,11 +3717,11 @@ def _aggregate_statistics_from_days(
             media_id = meta.get("media_id")
             if media_id is None:
                 continue
-            if len(top_rated_heap) < 14:
+            if len(top_rated_heap) < STATISTICS_TOP_RATED_OVERALL:
                 heapq.heappush(top_rated_heap, (score_value, next(global_counter), meta))
             else:
                 heapq.heappushpop(top_rated_heap, (score_value, next(global_counter), meta))
-            if len(type_heap) < 20:
+            if len(type_heap) < STATISTICS_TOP_N:
                 heapq.heappush(type_heap, (score_value, next(type_counter), meta))
             else:
                 heapq.heappushpop(type_heap, (score_value, next(type_counter), meta))
@@ -3799,7 +3805,7 @@ def _aggregate_statistics_from_days(
             key=lambda entry: (entry.get("minutes", 0), entry.get("activity_dt") or baseline_dt),
             reverse=True,
         )
-        limit = 20 if media_type == "game" else 10
+        limit = STATISTICS_TOP_N
         entries = entries[:limit]
         top_played[media_type] = entries
         for entry in entries:
@@ -3896,7 +3902,7 @@ def _aggregate_statistics_from_days(
         "has_data": plays_by_type.get(MediaTypes.TV.value, 0) > 0,
         "top_genres": [
             {**item, "formatted_duration": helpers.minutes_to_hhmm(item["minutes"])}
-            for item in sorted(tv_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:20]
+            for item in sorted(tv_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:STATISTICS_TOP_N]
         ],
     }
 
@@ -3907,11 +3913,11 @@ def _aggregate_statistics_from_days(
         "has_data": plays_by_type.get(MediaTypes.MOVIE.value, 0) > 0,
         "top_genres": [
             {**item, "formatted_duration": helpers.minutes_to_hhmm(item["minutes"])}
-            for item in sorted(movie_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:20]
+            for item in sorted(movie_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:STATISTICS_TOP_N]
         ],
     }
 
-    def _top_items(values, key_fields=("minutes", "plays"), limit=20):
+    def _top_items(values, key_fields=("minutes", "plays"), limit=STATISTICS_TOP_N):
         items = sorted(values, key=lambda x: tuple(x.get(field, 0) for field in key_fields), reverse=True)[:limit]
         for item in items:
             if "minutes" in item:
@@ -3942,17 +3948,17 @@ def _aggregate_statistics_from_days(
         podcast_rollups["shows"].values(),
         key=lambda x: (x["plays"], x["minutes"]),
         reverse=True,
-    )[:20]
+    )[:STATISTICS_TOP_N]
     most_listened = sorted(
         podcast_rollups["shows"].values(),
         key=lambda x: (x["minutes"], x["plays"]),
         reverse=True,
-    )[:20]
+    )[:STATISTICS_TOP_N]
     longest_episodes = sorted(
         [ep for ep in podcast_rollups["episodes"].values() if ep.get("duration_seconds", 0) > 0],
         key=lambda x: x["duration_seconds"],
         reverse=True,
-    )[:20]
+    )[:STATISTICS_TOP_N]
     for item in most_played + most_listened:
         item["formatted_duration"] = helpers.minutes_to_hhmm(item["minutes"])
     for item in longest_episodes:
@@ -4060,9 +4066,9 @@ def _aggregate_statistics_from_days(
             "name": genre,
             "formatted_duration": helpers.minutes_to_hhmm(payload["minutes"]),
         })
-    game_genre_items = sorted(game_genre_items, key=lambda x: (x["minutes"], x["games"]), reverse=True)[:20]
+    game_genre_items = sorted(game_genre_items, key=lambda x: (x["minutes"], x["games"]), reverse=True)[:STATISTICS_TOP_N]
 
-    top_daily_avg_games = sorted(game_data, key=lambda x: x["daily_average"], reverse=True)[:20]
+    top_daily_avg_games = sorted(game_data, key=lambda x: x["daily_average"], reverse=True)[:STATISTICS_TOP_N]
     game_media_map = _fetch_media_objects({(MediaTypes.GAME.value, item["media_id"]) for item in top_daily_avg_games})
     top_daily_avg_payload = []
     for item in top_daily_avg_games:
@@ -4216,9 +4222,9 @@ def _aggregate_statistics_from_days(
                 if entry.get("minutes", 0) > 0
             ],
             unit_name,
-            limit=20,
+            limit=STATISTICS_TOP_N,
         )
-        top_entries = top_entries[:20]
+        top_entries = top_entries[:STATISTICS_TOP_N]
         top_media_refs = {(media_type, entry.get("media_id")) for entry in top_entries if entry.get("media_id")}
         top_media_map = _fetch_media_objects(top_media_refs)
         top_items = []
@@ -4250,7 +4256,7 @@ def _aggregate_statistics_from_days(
                     "formatted_units": f"{int(round(units))} {unit_name.lower()}{'' if int(round(units)) == 1 else 's'}",
                 }
             )
-        genre_items = sorted(genre_items, key=lambda item: (item["units"], item["titles"]), reverse=True)[:20]
+        genre_items = sorted(genre_items, key=lambda item: (item["units"], item["titles"]), reverse=True)[:STATISTICS_TOP_N]
 
         item_lengths = []
         scored_values = []

@@ -314,7 +314,12 @@ Conflict-resolution steps:
 - Install dev dependencies: `python -m pip install -U -r requirements-dev.txt`
 - Run migrations: `cd src && python manage.py migrate`
 - Run the app: `cd src && python manage.py runserver`
-- Run Celery: `cd src && celery -A config worker --beat --scheduler django --loglevel DEBUG`
+- Run Celery (two workers in one command, mirrors production):
+  ```bash
+  PYTHONPATH=src celery -A config worker --queues interactive --hostname celery-interactive@%h --loglevel DEBUG &
+  PYTHONPATH=src celery -A config worker --queues celery --beat --scheduler django --hostname celery@%h --loglevel DEBUG
+  ```
+  The interactive worker must be dedicated — **never add `celery` to its `--queues`** or long-running background tasks (Reload calendar, imports) will block user-triggered refreshes.
 - Run Tailwind: `cd src && tailwindcss -i ./static/css/input.css -o ./static/css/main.css --watch`
 - For local setup, see `README.md` for the required `.env` values and Redis startup details.
 

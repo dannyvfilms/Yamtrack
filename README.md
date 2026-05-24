@@ -412,7 +412,9 @@ If you want to contribute or customize the app locally:
    ```
 
    ```bash
-   celery -A config worker --beat --scheduler django --loglevel DEBUG
+   celery -A config worker --queues interactive --hostname celery-interactive@%h --loglevel DEBUG
+
+   celery -A config worker --queues celery --beat --scheduler django --hostname celery@%h --loglevel DEBUG
    ```
 
    ```bash

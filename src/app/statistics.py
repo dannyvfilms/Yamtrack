@@ -28,6 +28,7 @@ from app.models import (
     Status,
     Track,
 )
+from app.statistics_cache import STATISTICS_TOP_N, STATISTICS_TOP_RATED_OVERALL
 from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
@@ -308,10 +309,10 @@ def get_score_distribution(user_media):
 
     # Global top rated (for backward compatibility with existing "ALL MEDIA" section)
     top_rated = []
-    top_rated_count = 14
+    top_rated_count = STATISTICS_TOP_RATED_OVERALL
     # Per-media-type top rated (for the new compact cards)
     top_rated_by_type = {}
-    top_rated_per_type_count = 20  # Match the limit used in other cards
+    top_rated_per_type_count = STATISTICS_TOP_N
 
     counter = itertools.count()  # Ensures stable sorting for equal scores
 
@@ -2039,7 +2040,7 @@ def get_tv_consumption_stats(user_media, start_date, end_date, minutes_per_type=
     charts = _build_media_charts(episode_datetimes, color, chart_label)
 
     # Compute top genres
-    top_genres = _compute_movie_tv_top_genres(play_details, limit=20)
+    top_genres = _compute_movie_tv_top_genres(play_details, limit=STATISTICS_TOP_N)
 
     return {
         "hours": hours_breakdown,
@@ -2083,7 +2084,7 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     charts = _build_media_charts(movie_datetimes, color, chart_label)
 
     # Compute top genres
-    top_genres = _compute_movie_tv_top_genres(play_details, limit=20)
+    top_genres = _compute_movie_tv_top_genres(play_details, limit=STATISTICS_TOP_N)
 
     return {
         "hours": hours_breakdown,
@@ -2257,7 +2258,7 @@ def _extract_item_authors(item):
     return authors
 
 
-def _build_reading_top_authors(item_units, unit_name, limit=20):
+def _build_reading_top_authors(item_units, unit_name, limit=STATISTICS_TOP_N):
     """Aggregate reading units by author for top-author overview cards."""
     author_stats = defaultdict(
         lambda: {
@@ -2526,14 +2527,14 @@ def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
         if score_value is not None:
             scored_items.append(float(score_value))
 
-    top_items = sorted(top_items, key=lambda item: item["units"], reverse=True)[:20]
+    top_items = sorted(top_items, key=lambda item: item["units"], reverse=True)[:STATISTICS_TOP_N]
 
     top_genres = []
     for payload in sorted(
         genre_stats.values(),
         key=lambda item: (item["units"], len(item["title_ids"])),
         reverse=True,
-    )[:20]:
+    )[:STATISTICS_TOP_N]:
         top_genres.append(
             {
                 "name": payload["name"],
@@ -2542,7 +2543,7 @@ def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
                 "formatted_units": _format_reading_unit(payload["units"], unit_name),
             }
         )
-    top_authors = _build_reading_top_authors(author_item_units, unit_name, limit=20)
+    top_authors = _build_reading_top_authors(author_item_units, unit_name, limit=STATISTICS_TOP_N)
 
     avg_length = round(sum(item_lengths) / len(item_lengths), 1) if item_lengths else 0
     avg_rating = round(sum(scored_items) / len(scored_items), 2) if scored_items else None
@@ -3053,7 +3054,7 @@ def _build_release_year_chart(release_datetimes, color, dataset_label):
     return _build_single_series_chart(year_labels, year_values, color, dataset_label)
 
 
-def _compute_game_top_genres(play_details, limit=20):
+def _compute_game_top_genres(play_details, limit=STATISTICS_TOP_N):
     """Compute top genres from game play details using stored genres and cache.
 
     Args:
@@ -3132,7 +3133,7 @@ def _compute_game_top_genres(play_details, limit=20):
     return items
 
 
-def _compute_game_top_daily_average(game_data, limit=20):
+def _compute_game_top_daily_average(game_data, limit=STATISTICS_TOP_N):
     """Compute top games by daily average time spent.
     
     Args:
@@ -3316,10 +3317,10 @@ def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_typ
     }
 
     # Compute top genres using stored genres, fall back to cached metadata only
-    top_genres = _compute_game_top_genres(play_details, limit=20)
+    top_genres = _compute_game_top_genres(play_details, limit=STATISTICS_TOP_N)
 
     # Compute top daily average games
-    top_daily_average_games = _compute_game_top_daily_average(game_data, limit=20)
+    top_daily_average_games = _compute_game_top_daily_average(game_data, limit=STATISTICS_TOP_N)
 
     # Compute platform breakdown
     platform_breakdown = _compute_game_platform_breakdown(game_data, user)
@@ -3895,7 +3896,7 @@ def _compute_music_top_rollups(play_details, limit=5):
     }
 
 
-def _compute_movie_tv_top_genres(play_details, limit=20):
+def _compute_movie_tv_top_genres(play_details, limit=STATISTICS_TOP_N):
     """Compute top genres from movie/TV play details.
     
     Args:
@@ -4026,8 +4027,8 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     charts = _build_media_charts(music_datetimes, color, chart_label)
 
     # Compute top lists
-    top_lists = _compute_music_top_lists(play_details, limit=20)
-    meta_lists = _compute_music_top_rollups(play_details, limit=20)
+    top_lists = _compute_music_top_lists(play_details, limit=STATISTICS_TOP_N)
+    meta_lists = _compute_music_top_rollups(play_details, limit=STATISTICS_TOP_N)
 
     return {
         "minutes": minutes_breakdown,
@@ -4162,7 +4163,7 @@ def _collect_podcast_play_data(podcast_history_records, podcasts_lookup, start_d
     return datetimes, play_details
 
 
-def _compute_podcast_top_lists(play_details, limit=20):
+def _compute_podcast_top_lists(play_details, limit=STATISTICS_TOP_N):
     """Compute top shows by plays, listening time, and longest episodes.
     
     Args:
@@ -4382,7 +4383,7 @@ def get_podcast_consumption_stats(user_media, start_date, end_date, minutes_per_
     charts = _build_media_charts(podcast_datetimes, color, chart_label)
 
     # Compute top lists
-    top_lists = _compute_podcast_top_lists(play_details, limit=20)
+    top_lists = _compute_podcast_top_lists(play_details, limit=STATISTICS_TOP_N)
 
     return {
         "minutes": minutes_breakdown,
@@ -4822,8 +4823,8 @@ def get_top_played_media(user_media, start_date, end_date):
             reverse=True,
         )
 
-        # Take top 20 for games, top 10 for other media types
-        limit = 20 if normalized_type == "game" else 10
+        # Take top 50 for games, top 10 for other media types
+        limit = 50 if normalized_type == "game" else 10
         top_played[normalized_type] = media_with_progress[:limit]
 
     return top_played

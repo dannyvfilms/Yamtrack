@@ -506,6 +506,18 @@
         });
       }
       
+      // When the refresh button triggers a rebuild, hand reload control to
+      // CacheUpdater (which guards on data.exists before reloading).
+      window.addEventListener('stats-cache-rebuild-started', () => {
+        console.log('Statistics page: rebuild started event received, starting CacheUpdater');
+        this.cacheRefreshing = true;
+        if (this.cacheUpdater && !this.cacheUpdater.isPolling) {
+          this.cacheUpdater.wasRefreshing = true;
+          this.cacheUpdater.lastBuiltAt = null;
+          this.cacheUpdater.start();
+        }
+      });
+
       // Check initial cache status after a short delay to ensure Alpine.js is ready
       requestAnimationFrame(() => {
         setTimeout(() => {
