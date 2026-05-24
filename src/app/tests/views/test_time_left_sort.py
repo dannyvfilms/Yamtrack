@@ -154,3 +154,47 @@ class TVTimeLeftSortTests(TestCase):
         # The sort view changes only the time-left ordering/display math.
         self.assertEqual(sorted_excluded.episodes_left, 14)
         self.assertEqual(sorted_excluded.time_left, 420)
+
+    def test_time_left_sort_does_not_crash_with_untracked_entry(self):
+        """Untracked MediaListEntry (media=None) must not crash the TV time-left sort.
+
+        Regression for GitHub #215: after connecting Sonarr, items appear in
+        the TV list as untracked MediaListEntry objects. Their .progress is None
+        (via __getattr__ fallback), which caused TypeError in max() at line 286.
+        """
+        from app.views import MediaListEntry
+
+        tv = self._create_tv(
+            "Tracked Show",
+            "tv-tracked",
+            [
+                {
+                    "season_number": 1,
+                    "status": Status.IN_PROGRESS.value,
+                    "released_episodes": 5,
+                    "watched_episodes": 2,
+                }
+            ],
+        )
+
+        untracked_item = Item.objects.create(
+            media_id="tv-sonarr-only",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Sonarr Only Show",
+            image="http://example.com/show.jpg",
+        )
+
+        tracked_entry = MediaListEntry.from_media(tv)
+        untracked_entry = MediaListEntry(item=untracked_item, media=None)
+
+        BasicMedia.objects.annotate_max_progress([tv], MediaTypes.TV.value)
+
+        result = _sort_tv_media_by_time_left(
+            [tracked_entry, untracked_entry], direction="asc"
+        )
+
+        titles = [m.item.title for m in result]
+        self.assertIn("Tracked Show", titles)
+        self.assertIn("Sonarr Only Show", titles)
+        self.assertEqual(result[-1].item.title, "Sonarr Only Show")

@@ -278,6 +278,10 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
             group_tail.append(media)
             continue
 
+        if media.progress is None:
+            group_tail.append(media)
+            continue
+
         annotated_max = getattr(media, "max_progress", None)
         status = getattr(media, "status", Status.IN_PROGRESS.value)
 
@@ -417,7 +421,7 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
     # Log first 10 items for debugging
     logger.debug("DEBUG: First 10 sorted shows:")
     for i, media in enumerate(sorted_list[:10]):
-        episodes_left = media.max_progress - media.progress if hasattr(media, "max_progress") else 0
+        episodes_left = (media.max_progress or 0) - (media.progress or 0) if hasattr(media, "max_progress") else 0
         logger.debug(f"  {i+1}. {media.item.title} - Episodes left: {episodes_left}, Status: {getattr(media, 'status', 'Unknown')}")
 
     if direction == "desc":
