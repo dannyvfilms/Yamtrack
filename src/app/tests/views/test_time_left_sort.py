@@ -198,3 +198,34 @@ class TVTimeLeftSortTests(TestCase):
         self.assertIn("Tracked Show", titles)
         self.assertIn("Sonarr Only Show", titles)
         self.assertEqual(result[-1].item.title, "Sonarr Only Show")
+
+    def test_media_list_entry_pickle_round_trip(self):
+        """MediaListEntry must survive a pickle round-trip (simulates cache.set/cache.get).
+
+        Regression for GitHub #215: __getattr__ accessing self.media during unpickling
+        caused recursive __getattr__ calls before __dict__ was populated, resulting in
+        TypeError: 'NoneType' object is not callable inside pickle.loads().
+        """
+        import pickle
+
+        from app.views import MediaListEntry
+
+        tv = self._create_tv(
+            "Test Show",
+            "pickle-test-tv",
+            [
+                {
+                    "season_number": 1,
+                    "status": Status.IN_PROGRESS.value,
+                    "released_episodes": 5,
+                    "watched_episodes": 2,
+                }
+            ],
+        )
+
+        entry = MediaListEntry.from_media(tv)
+        pickled = pickle.dumps(entry)
+        restored = pickle.loads(pickled)  # Must not raise TypeError
+
+        self.assertEqual(restored.item.title, "Test Show")
+        self.assertEqual(restored.status, tv.status)

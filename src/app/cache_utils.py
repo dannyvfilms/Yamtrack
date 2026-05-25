@@ -7,7 +7,7 @@ from django.core.cache import cache
 logger = logging.getLogger(__name__)
 
 
-TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v17"
+TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v18"
 _REGISTRY_TEMPLATE = f"{TIME_LEFT_CACHE_PREFIX}_registry_{{user_id}}"
 
 

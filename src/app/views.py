@@ -376,9 +376,12 @@ class MediaListEntry:
         return self.media is not None
 
     def __getattr__(self, attr):
-        if self.media is None:
+        if attr.startswith("__") and attr.endswith("__"):
+            raise AttributeError(attr)
+        media = self.__dict__.get("media")
+        if media is None:
             return None
-        return getattr(self.media, attr, None)
+        return getattr(media, attr, None)
 
 
 def _tracked_media_entries(entries):
