@@ -100,11 +100,31 @@
   }
 
   function syncHomeRowSentinel(row) {
-    const sentinel = row.querySelector('[data-home-row-sentinel="true"]');
-    if (sentinel) {
-      row.appendChild(sentinel);
+    let sentinel = row.querySelector('[data-home-row-sentinel="true"]');
+    if (!sentinel) {
+      sentinel = document.createElement('div');
+      sentinel.dataset.homeRowSentinel = 'true';
+      sentinel.setAttribute('aria-hidden', 'true');
+      sentinel.className = 'shrink-0 w-px self-stretch opacity-0 pointer-events-none';
     }
+    row.appendChild(sentinel);
   }
+
+  function reloadHomeRow(row, rowId) {
+    row._prevScrollLeft = row.scrollLeft;
+    row.dataset.fullReload = 'true';
+    htmx.ajax('GET', `/?load_row=${rowId}&offset=0`, {
+      target: row,
+      swap: 'innerHTML',
+    });
+  }
+
+  document.body.addEventListener('refreshHomeRow', function(event) {
+    const rowId = event.detail && event.detail.rowId;
+    if (!rowId) return;
+    const row = document.querySelector(`#media-grid-row-${rowId}`);
+    if (row) reloadHomeRow(row, rowId);
+  });
 
   function triggerHomeRowLoadMore(row) {
     const { loaded, total } = getHomeRowCounts(row);
@@ -285,10 +305,21 @@
   document.body.addEventListener('htmx:afterSwap', function(event) {
     const row = event.detail.target;
     if (row && row.matches('[data-home-row="true"]')) {
+      if (row.dataset.fullReload === 'true') {
+        delete row.dataset.fullReload;
+        const obs = homeRowObservers.get(row);
+        if (obs) { obs.disconnect(); homeRowObservers.delete(row); }
+        row.dataset.homeRowBound = 'false';
+        if (row._prevScrollLeft !== undefined) {
+          row.scrollLeft = row._prevScrollLeft;
+          delete row._prevScrollLeft;
+        }
+      }
       syncHomeRowSentinel(row);
       syncHomeRowLoadedCount(row);
       row.dataset.stickToEnd = 'false';
       requestAnimationFrame(() => {
+        ensureHomeRowObserver(row);
         maybeAutofillHomeRow(row);
         maybeLoadMoreHomeRow(row);
       });

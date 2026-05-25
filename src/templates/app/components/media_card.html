@@ -236,7 +236,7 @@
                     <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
                             title="Add to tracker"
                             hx-get="{% media_view_url 'track_modal' item %}"
-                            hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ media.id }}"}'
+                            hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ media.id }}"{% if home_row_id %}, "home_row_id": "{{ home_row_id }}"{% endif %}}'
                             hx-target="#{% component_id 'track' item media.id %}"
                             hx-trigger="click once"
                             @click="trackOpen = true">

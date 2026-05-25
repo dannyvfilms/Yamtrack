@@ -514,6 +514,7 @@ def _render_standard_track_modal(
             or request.POST.get("return_url", "")
             or request.POST.get("next", "")
         )
+    home_row_id = request.GET.get("home_row_id") or request.POST.get("home_row_id") or ""
     if episode_plays_tab_available:
         if bulk_form_override is not None:
             episode_plays_form = bulk_form_override
@@ -573,7 +574,10 @@ def _render_standard_track_modal(
         "metadata_item": metadata_item,
         "general_hidden_fields": hidden_fields,
         "general_fields": general_fields,
-        "general_submit_formaction": f"{reverse('media_save')}?next={return_url}",
+        "general_submit_formaction": (
+            f"{reverse('media_save')}?next={return_url}"
+            + (f"&home_row_id={home_row_id}" if home_row_id else "")
+        ),
         "general_delete_formaction": f"{reverse('media_delete')}?next={return_url}",
         "general_existing_instance": media,
         "metadata_fields": metadata_fields,

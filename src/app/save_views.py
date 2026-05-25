@@ -176,6 +176,8 @@ def media_save(request):
         request.GET.get("next") or request.POST.get("return_url") or "",
         safe="",
     )
+    home_row_id = request.GET.get("home_row_id") or ""
+    old_status = getattr(instance, "status", None) if instance_id else None
     action_verb = "Added" if not instance_id else "Updated"
     if form.is_valid():
         media = form.save()
@@ -252,14 +254,17 @@ def media_save(request):
             response.write(activity_subtitle_response.content.decode())
             response.write(score_chip_response.content.decode())
             response.write(card_rating_response.content.decode())
-            response["HX-Trigger"] = json.dumps(
-                {
-                    "closeModal": {"formId": track_form_id},
-                    "showToast": {
-                        "message": f"{action_verb} {display_title}.",
-                        "type": "success",
-                    },
+            htmx_trigger = {
+                "closeModal": {"formId": track_form_id},
+                "showToast": {
+                    "message": f"{action_verb} {display_title}.",
+                    "type": "success",
                 },
+            }
+            if home_row_id and instance_id and old_status != media.status:
+                htmx_trigger["refreshHomeRow"] = {"rowId": int(home_row_id)}
+            response["HX-Trigger"] = json.dumps(
+                htmx_trigger,
             )
             response["Cache-Control"] = "no-cache, no-store, must-revalidate"
             response["Pragma"] = "no-cache"
