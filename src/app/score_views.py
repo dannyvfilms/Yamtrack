@@ -4,8 +4,9 @@ from decimal import Decimal, InvalidOperation
 from django.apps import apps
 from django.db.models import Q
 from django.db.models.functions import TruncDate
-from django.http import HttpResponseBadRequest, JsonResponse
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.template.loader import render_to_string
 from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required
 
@@ -81,8 +82,7 @@ def update_media_score(request, media_type, instance_id):
         score,
     )
 
-    return render(
-        request,
+    chip_html = render_to_string(
         "app/components/detail_score_chip_slot.html",
         {
             "media": media.item,
@@ -94,7 +94,18 @@ def update_media_score(request, media_type, instance_id):
             "csrf_token": request.META.get("CSRF_COOKIE", ""),
             "score_chip_slot_oob": True,
         },
+        request=request,
     )
+    card_rating_html = render_to_string(
+        "app/components/media_card_rating_oob.html",
+        {
+            "media_instance_id": media.id,
+            "rating_value": media.formatted_score,
+            "user": request.user,
+        },
+        request=request,
+    )
+    return HttpResponse(chip_html + card_rating_html)
 
 
 @login_required

@@ -240,8 +240,18 @@ def media_save(request):
                     "score_chip_slot_oob": True,
                 },
             )
+            card_rating_response = render(
+                request,
+                "app/components/media_card_rating_oob.html",
+                {
+                    "media_instance_id": media.id,
+                    "rating_value": media.formatted_score,
+                    "user": request.user,
+                },
+            )
             response.write(activity_subtitle_response.content.decode())
             response.write(score_chip_response.content.decode())
+            response.write(card_rating_response.content.decode())
             response["HX-Trigger"] = json.dumps(
                 {
                     "closeModal": {"formId": track_form_id},

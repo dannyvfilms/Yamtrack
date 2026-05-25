@@ -1,0 +1,10 @@
+{% load app_tags %}
+{% load user_tags %}
+<span id="media-card-rating-{{ media_instance_id }}" hx-swap-oob="outerHTML">
+  {% if rating_value|show_media_score:user %}
+    <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
+      {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-current" %}
+      <span class="font-medium">{{ rating_value|score_display:user }}</span>
+    </span>
+  {% endif %}
+</span>
