@@ -5237,10 +5237,7 @@ def episode_details(request, source, media_id, title, season_number, episode_num
 
 @require_POST
 def music_bulk_save(request):
-    """Persist a bulk range of music plays from artist and album track modals."""
-    from app.forms import AlbumTrackerForm, ArtistTrackerForm
-    from app.models import AlbumTracker, ArtistTracker
-
+    """Dispatch a bulk music play range as a background task and return immediately."""
     context_kind = (request.POST.get("context_kind") or "").strip()
     context_id = request.POST.get("context_id")
     discover_tab_cache.mark_active_from_request(
@@ -5248,106 +5245,87 @@ def music_bulk_save(request):
         fallback_media_type=MediaTypes.MUSIC.value,
     )
 
-    artist = None
-    album = None
-    tracker = None
-    tracker_form = None
-    title = ""
-    save_url = ""
-    delete_url = ""
-    bulk_domain = None
-
-    if context_kind == "artist":
-        artist = get_object_or_404(Artist, id=context_id)
-        tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
-        tracker_form = ArtistTrackerForm(
-            instance=tracker,
-            initial={"artist_id": artist.id},
-            user=request.user,
-        )
-        title = artist.name
-        save_url = reverse("artist_save")
-        delete_url = reverse("artist_delete")
-        bulk_domain = bulk_music_tracking.build_artist_play_domain(request.user, artist)
-    elif context_kind == "album":
-        album = get_object_or_404(Album.objects.select_related("artist"), id=context_id)
-        tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
-        tracker_form = AlbumTrackerForm(
-            instance=tracker,
-            initial={"album_id": album.id},
-            user=request.user,
-        )
-        title = album.title
-        save_url = reverse("album_save")
-        delete_url = reverse("album_delete")
-        bulk_domain = bulk_music_tracking.build_album_play_domain(request.user, album)
-    else:
+    if context_kind not in {"artist", "album"}:
         return HttpResponseBadRequest("Invalid music bulk tracking context.")
 
-    if not bulk_domain:
-        messages.error(
-            request,
-            "Bulk track plays are not available for this music entry yet.",
-        )
-        redirect_url = _music_bulk_redirect_url(
-            request,
-            artist=artist,
-            album=album,
-        )
+    start_date_str = (request.POST.get("start_date") or "").strip()
+    end_date_str = (request.POST.get("end_date") or "").strip()
+
+    if not start_date_str or not end_date_str:
         if request.headers.get("HX-Request"):
-            return HttpResponse(status=400, headers={"HX-Redirect": redirect_url})
-        return redirect(redirect_url)
+            response = HttpResponse(status=422)
+            response["HX-Trigger"] = json.dumps({
+                "showToast": {
+                    "message": "Start and end dates are required.",
+                    "type": "error",
+                },
+            })
+            return response
+        messages.error(request, "Start and end dates are required.")
+        return redirect(request.POST.get("return_url") or "/")
 
-    bulk_form = BulkEpisodeTrackForm(
-        request.POST,
-        domain=bulk_domain,
-    )
-    if not bulk_form.is_valid():
-        return _render_music_tracker_modal(
-            request,
-            title=title,
-            tracker=tracker,
-            form=tracker_form,
-            save_url=save_url,
-            delete_url=delete_url,
-            release_date_shortcut=(
-                _track_modal_release_date_shortcut(album.release_date)
-                if album is not None
-                else ""
-            ),
-            bulk_domain=bulk_domain,
-            bulk_form_override=bulk_form,
-            initial_active_tab="episode-plays",
-        )
+    try:
+        first_season_number = int(request.POST["first_season_number"])
+        first_episode_number = int(request.POST["first_episode_number"])
+        last_season_number = int(request.POST["last_season_number"])
+        last_episode_number = int(request.POST["last_episode_number"])
+    except (KeyError, ValueError):
+        if request.headers.get("HX-Request"):
+            response = HttpResponse(status=422)
+            response["HX-Trigger"] = json.dumps({
+                "showToast": {
+                    "message": "Invalid track range.",
+                    "type": "error",
+                },
+            })
+            return response
+        messages.error(request, "Invalid track range.")
+        return redirect(request.POST.get("return_url") or "/")
 
-    result = bulk_music_tracking.apply_bulk_music_plays(
-        request.user,
-        bulk_domain,
-        selected_episodes=bulk_form.cleaned_data["selected_domain_episodes"],
-        write_mode=bulk_form.cleaned_data["write_mode"],
-        distribution_mode=bulk_form.cleaned_data["distribution_mode"],
-        start_date=bulk_form.cleaned_data.get("start_date"),
-        end_date=bulk_form.cleaned_data.get("end_date"),
+    track_count = max(int(request.POST.get("episode_count") or 0), 0)
+    write_mode = request.POST.get("write_mode", "add")
+    distribution_mode = request.POST.get("distribution_mode", "even")
+
+    from app.tasks import bulk_music_plays_task  # noqa: PLC0415
+
+    task = bulk_music_plays_task.apply_async(
+        kwargs={
+            "user_id": request.user.id,
+            "context_kind": context_kind,
+            "context_id": int(context_id),
+            "first_season_number": first_season_number,
+            "first_episode_number": first_episode_number,
+            "last_season_number": last_season_number,
+            "last_episode_number": last_episode_number,
+            "write_mode": write_mode,
+            "distribution_mode": distribution_mode,
+            "start_date_str": start_date_str,
+            "end_date_str": end_date_str,
+        },
+        priority=settings.CELERY_TASK_PRIORITY_INTERACTIVE,
+    )
+    logger.info(
+        "bulk_music_plays_task_dispatched task_id=%s user_id=%d context_kind=%s context_id=%s",
+        task.id,
+        request.user.id,
+        context_kind,
+        context_id,
     )
 
-    action_verb = (
-        "Replaced"
-        if bulk_form.cleaned_data["write_mode"] == BulkEpisodeTrackForm.WRITE_MODE_REPLACE
-        else "Added"
-    )
-    messages.success(
-        request,
-        f"{action_verb} {result.created_count} track play{'s' if result.created_count != 1 else ''}.",
-    )
-
-    redirect_url = _music_bulk_redirect_url(
-        request,
-        artist=artist,
-        album=album,
-    )
     if request.headers.get("HX-Request"):
-        return HttpResponse(status=204, headers={"HX-Redirect": redirect_url})
-    return redirect(redirect_url)
+        plural = "s" if track_count != 1 else ""
+        response = HttpResponse(status=204)
+        response["HX-Trigger"] = json.dumps({
+            "closeModal": {},
+            "showToast": {
+                "message": f"Adding plays to {track_count} track{plural}.",
+                "type": "info",
+            },
+        })
+        return response
+
+    messages.info(request, f"Adding plays to {track_count} tracks.")
+    return redirect(request.POST.get("return_url") or "/")
 
 
 @require_http_methods(["GET", "POST"])

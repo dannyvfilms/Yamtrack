@@ -4,33 +4,30 @@ from urllib.parse import quote, urlparse
 from uuid import uuid4
 
 from django.apps import apps
+from django.conf import settings
 from django.contrib import messages
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import redirect, render
-from django.urls import reverse
-from django.utils.text import slugify
 from django.views.decorators.http import require_POST
 
 from app import helpers
 from app.activity_builders import _build_detail_activity_state
 from app.discover import tab_cache as discover_tab_cache
-from app.forms import BulkEpisodeTrackForm, EpisodeForm, get_form_class
+from app.forms import EpisodeForm, get_form_class
 from app.models import (
     BasicMedia,
     CollectionEntry,
     Episode,
     Item,
     MediaTypes,
-    PodcastShow,
     Season,
     Sources,
     Status,
 )
 from app.providers import services
-from app.services import bulk_episode_tracking, metadata_resolution
+from app.services import metadata_resolution
 from app.services.tracking_hydration import ensure_item_metadata
 from app.track_modal_views import (
-    _render_podcast_show_track_modal,
     _render_standard_track_modal,
 )
 
@@ -480,27 +477,12 @@ def episode_save(request):
     return helpers.redirect_back(request)
 
 
-def _episode_bulk_redirect_url(request, result):
-    """Return the full-page destination after a successful bulk episode save."""
-    if result.grouped_item and result.grouped_redirect_media_type:
-        title = result.grouped_item.get_display_title(request.user) or result.grouped_item.title or "item"
-        return reverse(
-            "media_details",
-            kwargs={
-                "source": result.grouped_item.source,
-                "media_type": result.grouped_redirect_media_type,
-                "media_id": result.grouped_item.media_id,
-                "title": slugify(title),
-            },
-        )
-
-    redirect_response = helpers.redirect_back(request)
-    return redirect_response.url
-
 
 @require_POST
 def episode_bulk_save(request):
-    """Persist a bulk range of episode plays from track modal tabs."""
+    """Dispatch a bulk episode play range as a background task and return immediately."""
+    from app.tasks import bulk_episode_plays_task  # noqa: PLC0415
+
     media_id = request.POST["media_id"]
     source = request.POST["source"]
     media_type = request.POST["media_type"]
@@ -510,120 +492,83 @@ def episode_bulk_save(request):
         fallback_media_type=fallback_media_type,
     )
 
-    metadata_item = None
-    base_metadata = None
-    metadata_resolution_result = None
-    podcast_show = None
+    start_date_str = (request.POST.get("start_date") or "").strip()
+    end_date_str = (request.POST.get("end_date") or "").strip()
 
-    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
-        podcast_show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
-    else:
-        item_lookup = {
-            "media_id": media_id,
-            "source": source,
-            "media_type": metadata_resolution.get_tracking_media_type(
-                media_type,
-                source=source,
-                identity_media_type=request.POST.get("identity_media_type") or None,
-            ),
-        }
-        if media_type == MediaTypes.ANIME.value and source in {
-            Sources.TMDB.value,
-            Sources.TVDB.value,
-        }:
-            item_lookup["library_media_type"] = MediaTypes.ANIME.value
-        metadata_item = Item.objects.filter(**item_lookup).first()
-
-        base_metadata = services.get_media_metadata(
-            media_type,
-            media_id,
-            source,
-        )
-        if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-            metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
-                request.user,
-                item=metadata_item,
-                route_media_type=media_type,
-                media_id=media_id,
-                source=source,
-                base_metadata=base_metadata,
-            )
-
-    episode_domain = bulk_episode_tracking.build_episode_play_domain(
-        request.user,
-        media_type,
-        source,
-        media_id,
-        metadata_item=metadata_item,
-        base_metadata=base_metadata,
-        metadata_resolution_result=metadata_resolution_result,
-        podcast_show=podcast_show,
-    )
-    if not episode_domain:
-        messages.error(
-            request,
-            "Bulk episode tracking is not available for this title.",
-        )
-        redirect_url = _episode_bulk_redirect_url(
-            request,
-            bulk_episode_tracking.BulkEpisodePlayResult(
-                created_count=0,
-                replaced_episode_count=0,
-            ),
-        )
+    if not start_date_str or not end_date_str:
         if request.headers.get("HX-Request"):
-            return HttpResponse(status=400, headers={"HX-Redirect": redirect_url})
-        return redirect(redirect_url)
+            response = HttpResponse(status=422)
+            response["HX-Trigger"] = json.dumps({
+                "showToast": {
+                    "message": "Start and end dates are required.",
+                    "type": "error",
+                },
+            })
+            return response
+        messages.error(request, "Start and end dates are required.")
+        return redirect(request.POST.get("return_url") or "/")
 
-    bulk_form = BulkEpisodeTrackForm(
-        request.POST,
-        domain=episode_domain,
-    )
-    if not bulk_form.is_valid():
-        if podcast_show is not None:
-            return _render_podcast_show_track_modal(
-                request,
-                podcast_show,
-                bulk_form_override=bulk_form,
-                initial_active_tab="episode-plays",
-            )
-        return _render_standard_track_modal(
-            request,
-            source,
-            media_type,
-            media_id,
-            form_override=None,
-            bulk_form_override=bulk_form,
-            initial_active_tab="episode-plays",
-        )
+    try:
+        first_season_number = int(request.POST["first_season_number"])
+        first_episode_number = int(request.POST["first_episode_number"])
+        last_season_number = int(request.POST["last_season_number"])
+        last_episode_number = int(request.POST["last_episode_number"])
+    except (KeyError, ValueError):
+        if request.headers.get("HX-Request"):
+            response = HttpResponse(status=422)
+            response["HX-Trigger"] = json.dumps({
+                "showToast": {
+                    "message": "Invalid episode range.",
+                    "type": "error",
+                },
+            })
+            return response
+        messages.error(request, "Invalid episode range.")
+        return redirect(request.POST.get("return_url") or "/")
 
-    result = bulk_episode_tracking.apply_bulk_episode_plays(
-        request.user,
-        episode_domain,
-        selected_episodes=bulk_form.cleaned_data["selected_domain_episodes"],
-        write_mode=bulk_form.cleaned_data["write_mode"],
-        distribution_mode=bulk_form.cleaned_data["distribution_mode"],
-        start_date=bulk_form.cleaned_data.get("start_date"),
-        end_date=bulk_form.cleaned_data.get("end_date"),
+    episode_count = max(int(request.POST.get("episode_count") or 0), 0)
+    write_mode = request.POST.get("write_mode", "add")
+    distribution_mode = request.POST.get("distribution_mode", "even")
+    identity_media_type = request.POST.get("identity_media_type") or None
+    library_media_type = request.POST.get("library_media_type") or None
+
+    task = bulk_episode_plays_task.apply_async(
+        kwargs={
+            "user_id": request.user.id,
+            "media_type": media_type,
+            "source": source,
+            "media_id": media_id,
+            "first_season_number": first_season_number,
+            "first_episode_number": first_episode_number,
+            "last_season_number": last_season_number,
+            "last_episode_number": last_episode_number,
+            "write_mode": write_mode,
+            "distribution_mode": distribution_mode,
+            "start_date_str": start_date_str,
+            "end_date_str": end_date_str,
+            "identity_media_type": identity_media_type,
+            "library_media_type": library_media_type,
+        },
+        priority=settings.CELERY_TASK_PRIORITY_INTERACTIVE,
+    )
+    logger.info(
+        "bulk_episode_plays_task_dispatched task_id=%s user_id=%d media_id=%s",
+        task.id,
+        request.user.id,
+        media_id,
     )
 
-    action_verb = (
-        "Replaced"
-        if bulk_form.cleaned_data["write_mode"] == BulkEpisodeTrackForm.WRITE_MODE_REPLACE
-        else "Added"
-    )
-    detail_bits = []
-    if result.migrated_flat_anime:
-        detail_bits.append("after migrating grouped anime tracking")
-    elif result.created_grouped_tracking and result.grouped_item:
-        detail_bits.append("after creating grouped anime tracking")
-    detail_suffix = f" {' '.join(detail_bits)}" if detail_bits else ""
-    messages.success(
-        request,
-        f"{action_verb} {result.created_count} episode play{'s' if result.created_count != 1 else ''}{detail_suffix}.",
-    )
-
-    redirect_url = _episode_bulk_redirect_url(request, result)
     if request.headers.get("HX-Request"):
-        return HttpResponse(status=204, headers={"HX-Redirect": redirect_url})
-    return redirect(redirect_url)
+        plural = "s" if episode_count != 1 else ""
+        response = HttpResponse(status=204)
+        response["HX-Trigger"] = json.dumps({
+            "closeModal": {},
+            "showToast": {
+                "message": f"Adding plays to {episode_count} episode{plural}.",
+                "type": "info",
+            },
+        })
+        return response
+
+    messages.info(request, f"Adding plays to {episode_count} episodes.")
+    return redirect(request.POST.get("return_url") or "/")

@@ -16,6 +16,7 @@
   {{ episode_plays_form.return_url }}
   {{ episode_plays_form.context_kind }}
   {{ episode_plays_form.context_id }}
+  <input type="hidden" name="episode_count" :value="selectedRangeEpisodes().length">
 
   {% if episode_plays_mode_notice %}
     <div class="mb-5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
