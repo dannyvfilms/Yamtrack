@@ -305,6 +305,13 @@ class TraktImporter:
                 if error.response.status_code == requests.codes.unauthorized:
                     msg = "This account is set to private, use OAuth import instead."
                     raise MediaImportError(msg) from error
+
+                if error.response.status_code == requests.codes.method_not_allowed:
+                    logger.warning(
+                        "Trakt endpoint %s returned 405 (not available for this account), skipping.",
+                        endpoint,
+                    )
+                    return []
                 raise
 
             if not page_data:
@@ -710,14 +717,15 @@ class TraktImporter:
         if not self.refresh_token:
             return
         logger.info("Importing dropped shows for user %s", self.username)
-        hidden_endpoint = f"{self.user_base_url}/hidden/progress_watched"
-        hidden_data = self._get_paginated_data(hidden_endpoint)
-        for entry in hidden_data:
-            if entry.get("type") != "show":
-                continue
-            tmdb_id = self._get_tmdb_id(entry["show"])
-            if tmdb_id:
-                self.dropped_tmdb_ids.add(tmdb_id)
+        for section in ("progress_watched", "progress_watched_reset"):
+            endpoint = f"{self.user_base_url}/hidden/{section}"
+            hidden_data = self._get_paginated_data(endpoint)
+            for entry in hidden_data:
+                if entry.get("type") != "show":
+                    continue
+                tmdb_id = self._get_tmdb_id(entry["show"])
+                if tmdb_id:
+                    self.dropped_tmdb_ids.add(tmdb_id)
 
     def _process_generic_entry(self, entry, entry_type, attribute_updates):
         """Process a generic entry (watchlist, rating, or comment)."""
