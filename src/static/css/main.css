@@ -4716,7 +4716,6 @@
   max-height: calc(100vh - 4rem);
 }
 .track-release-shortcut-input {
-  padding-right: calc(var(--spacing) * 24);
   font-size: 0.875rem;
   line-height: 1.25rem;
 }
@@ -4732,7 +4731,6 @@
 }
 @media (min-width: 40rem) {
   .track-release-shortcut-input {
-    padding-right: calc(var(--spacing) * 28);
     font-size: 1rem;
     line-height: 1.5rem;
   }

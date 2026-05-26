@@ -96,31 +96,35 @@
                     </div>
                   {% elif field.name == "start_date" or field.name == "end_date" %}
                     {% if release_date_shortcut %}
-                      {{ field|add_class:"track-release-shortcut-input w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
-                      <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      <div class="flex-1 flex items-stretch border border-gray-600 rounded-md bg-[#39404b] focus-within:ring-2 focus-within:ring-[#4a9eff]">
+                        {{ field|add_class:"flex-1 p-2 bg-transparent border-0 outline-none text-white text-sm" }}
+                        <div class="w-px bg-gray-600 self-stretch my-1"></div>
                         <button type="button"
                                 onclick="clearTrackModalDate(this, '{{ field.name }}')"
                                 aria-label="Clear date"
-                                class="hidden md:inline-flex items-center text-gray-400 hover:text-gray-200 transition-colors bg-[#2a2f35] p-1 rounded cursor-pointer">
+                                class="hidden md:inline-flex items-center text-gray-400 hover:text-gray-200 hover:bg-[#313840] transition-colors px-2 cursor-pointer">
                           {% include "app/icons/x.svg" with classes="w-3.5 h-3.5" %}
                         </button>
                         <button type="button"
                                 onclick="applyTrackModalReleaseDate(this, '{{ release_date_shortcut }}', '{{ field.name }}'{% if field.name == 'end_date' and release_date_runtime_minutes %}, '{{ release_date_runtime_minutes }}'{% endif %})"
                                 aria-label="Release date"
-                                class="track-release-shortcut-button flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                                class="track-release-shortcut-button flex items-center text-sm text-indigo-400 hover:text-indigo-300 hover:bg-[#313840] transition-colors px-2 cursor-pointer rounded-r-md">
                           {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
                           <span class="track-release-shortcut-mobile-label">Release</span>
                           <span class="track-release-shortcut-desktop-label">Release Date</span>
                         </button>
                       </div>
                     {% else %}
-                      {{ field|add_class:"w-full p-2 pr-8 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
-                      <button type="button"
-                              onclick="clearTrackModalDate(this, '{{ field.name }}')"
-                              aria-label="Clear date"
-                              class="absolute right-2 top-1/2 -translate-y-1/2 hidden md:inline-flex items-center text-gray-400 hover:text-gray-200 transition-colors bg-[#2a2f35] p-1 rounded cursor-pointer">
-                        {% include "app/icons/x.svg" with classes="w-3.5 h-3.5" %}
-                      </button>
+                      <div class="flex-1 flex items-stretch border border-gray-600 rounded-md bg-[#39404b] focus-within:ring-2 focus-within:ring-[#4a9eff]">
+                        {{ field|add_class:"flex-1 p-2 bg-transparent border-0 outline-none text-white text-sm" }}
+                        <div class="w-px bg-gray-600 self-stretch my-1"></div>
+                        <button type="button"
+                                onclick="clearTrackModalDate(this, '{{ field.name }}')"
+                                aria-label="Clear date"
+                                class="hidden md:inline-flex items-center text-gray-400 hover:text-gray-200 hover:bg-[#313840] transition-colors px-2 cursor-pointer rounded-r-md">
+                          {% include "app/icons/x.svg" with classes="w-3.5 h-3.5" %}
+                        </button>
+                      </div>
                     {% endif %}
                   {% else %}
                     {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
