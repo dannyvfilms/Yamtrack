@@ -172,6 +172,8 @@ def user_date_format(date, user):
             return local_dt.strftime("%d.%m.%Y")
         if user.date_format == DateFormatChoices.YYYY_MM_DD:
             return f"{local_dt.year}/{local_dt.month:02d}/{local_dt.day:02d}"
+        if user.date_format == DateFormatChoices.LONG_EU:
+            return f"{local_dt.day} {local_dt.strftime('%b')}, {local_dt.year}"
         # Default to system format
         return formats.date_format(local_dt, "DATE_FORMAT")
 

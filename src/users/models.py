@@ -129,6 +129,7 @@ class DateFormatChoices(models.TextChoices):
     D_M_YYYY = "d_m_yyyy", "D/M/YYYY"
     DD_MM_YYYY = "dd_mm_yyyy", "DD.MM.YYYY"
     YYYY_MM_DD = "yyyy_mm_dd", "YYYY/MM/DD"
+    LONG_EU = "long_eu", "18 Jan, 2026"
 
 
 class TimeFormatChoices(models.TextChoices):

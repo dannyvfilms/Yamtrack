@@ -28,6 +28,7 @@ DATE_FORMAT_DJANGO_MAP = {
     DateFormatChoices.D_M_YYYY: "j/n/Y",
     DateFormatChoices.DD_MM_YYYY: "d.m.Y",
     DateFormatChoices.YYYY_MM_DD: "Y/m/d",
+    DateFormatChoices.LONG_EU: "j M, Y",
 }
 
 logger = logging.getLogger(__name__)
