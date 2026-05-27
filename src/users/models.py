@@ -599,6 +599,10 @@ class User(AbstractUser):
         default=False,
         help_text="Hide zero ratings from media cards",
     )
+    obfuscate_episodes = models.BooleanField(
+        default=False,
+        help_text="Blur unseen episode thumbnails to avoid spoilers",
+    )
 
     # Watch provider region
     watch_provider_region = models.CharField(

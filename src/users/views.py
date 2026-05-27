@@ -588,6 +588,21 @@ def toggle_home_screen_row_direction(request, row_id: int):
     return redirect("home")
 
 
+@login_required
+@require_POST
+def toggle_obfuscate_episodes(request):
+    """Flip the user's obfuscate_episodes setting and return to the referrer."""
+    if request.user.is_demo:
+        messages.error(request, "This section is view-only for demo accounts.")
+    else:
+        user = request.user
+        user.obfuscate_episodes = not user.obfuscate_episodes
+        user.save(update_fields=["obfuscate_episodes"])
+    return redirect(
+        request.POST.get("next") or request.META.get("HTTP_REFERER") or "home"
+    )
+
+
 @require_GET
 def ui_preferences(request):
     """Redirect to sidebar page (UI preferences renamed to Sidebar)."""

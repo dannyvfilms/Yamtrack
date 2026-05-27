@@ -31,6 +31,11 @@ urlpatterns = [
         views.toggle_home_screen_row_direction,
         name="toggle_home_screen_row_direction",
     ),
+    path(
+        "settings/toggle-obfuscate-episodes",
+        views.toggle_obfuscate_episodes,
+        name="toggle_obfuscate_episodes",
+    ),
     path("settings/preferences", views.preferences, name="preferences"),
     path("settings/integrations", views.integrations, name="integrations"),
     path("settings/import", views.import_data, name="import_data"),

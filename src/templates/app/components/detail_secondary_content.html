@@ -545,13 +545,93 @@
                   {% if media_type == MediaTypes.SEASON.value and media.source and media.media_id and media.season_number %}{% url 'episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% endif %}
                   <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
                     <div class="flex flex-col md:flex-row">
-                      {% if ep_detail_url %}<a href="{{ ep_detail_url }}" class="shrink-0 block">{% endif %}
-                      <img src="{{ IMG_NONE }}"
-                           alt="E{{ episode.display_episode_number|default:episode.episode_number }}"
-                           data-src="{{ episode.image }}"
-                           data-image-source="{{ episode.image_source|default:'primary' }}"
-                           class="lazyload {% if media_type == MediaTypes.PODCAST.value %}md:w-40 md:h-40{% else %}md:w-64 md:h-40{% endif %} {% if ep_detail_url %}hover:opacity-90 transition-opacity{% endif %} shrink-0 {% if episode.image != IMG_NONE %}object-cover{% endif %}">
-                      {% if ep_detail_url %}</a>{% endif %}
+                      <div x-data="{
+                             revealed: false,
+                             hovering: false,
+                             epWatched: {{ episode.history|yesno:'true,false' }},
+                             blurActive: {% if not public_view|default:False and user.is_authenticated %}{{ user.obfuscate_episodes|yesno:'true,false' }}{% else %}false{% endif %},
+                             syncBlurState(active) {
+                               this.blurActive = active;
+                               if (active) this.revealed = false;
+                             },
+                             init() {
+                               this.handleEpisodeBlurChange = (event) => {
+                                 this.syncBlurState(event.detail.active);
+                               };
+                               window.addEventListener('episode-blur-changed', this.handleEpisodeBlurChange);
+
+                               if (typeof window.__episodeBlurActive === 'boolean') {
+                                 this.syncBlurState(window.__episodeBlurActive);
+                               } else {
+                                 window.__episodeBlurActive = this.blurActive;
+                               }
+                             },
+                             destroy() {
+                               if (this.handleEpisodeBlurChange) {
+                                 window.removeEventListener('episode-blur-changed', this.handleEpisodeBlurChange);
+                               }
+                             },
+                             toggleBlur() {
+                               const nextActive = !this.blurActive;
+                               window.__episodeBlurActive = nextActive;
+                               window.dispatchEvent(new CustomEvent('episode-blur-changed', {
+                                 detail: { active: nextActive }
+                               }));
+                               fetch('{% url 'toggle_obfuscate_episodes' %}', {
+                                 method: 'POST',
+                                 headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+                                 body: new URLSearchParams(),
+                                 redirect: 'manual'
+                               });
+                             }
+                           }"
+                           @mouseenter="hovering = true"
+                           @mouseleave="hovering = false"
+                           class="relative shrink-0 self-start overflow-hidden">
+                        {% if ep_detail_url %}<a href="{{ ep_detail_url }}" class="block">{% endif %}
+                        <img src="{{ IMG_NONE }}"
+                             alt="E{{ episode.display_episode_number|default:episode.episode_number }}"
+                             data-src="{{ episode.image }}"
+                             data-image-source="{{ episode.image_source|default:'primary' }}"
+                             class="lazyload {% if media_type == MediaTypes.PODCAST.value %}md:w-40 md:h-40{% else %}md:w-64 md:h-40{% endif %} {% if ep_detail_url %}hover:opacity-90 transition-opacity{% endif %} shrink-0 {% if episode.image != IMG_NONE %}object-cover{% endif %}"
+                             :style="{ filter: (blurActive && !epWatched && !revealed) ? 'blur(8px)' : '', transition: 'filter 0.4s ease' }">
+                        {% if ep_detail_url %}</a>{% endif %}
+                        {% if not public_view|default:False and user.is_authenticated %}
+                          {# Centered reveal button — shows on hover when blurred and not yet revealed #}
+                          <div class="absolute inset-0 z-20 flex items-center justify-center"
+                               x-show="hovering && blurActive && !epWatched && !revealed"
+                               x-transition:enter="transition-opacity duration-150"
+                               x-transition:enter-start="opacity-0"
+                               x-transition:enter-end="opacity-100"
+                               x-transition:leave="transition-opacity duration-150"
+                               x-transition:leave-start="opacity-100"
+                               x-transition:leave-end="opacity-0"
+                               style="display:none">
+                            <button @click.prevent="revealed = true"
+                                    class="bg-black/70 rounded-full p-3 text-white hover:bg-black/90 transition-colors"
+                                    title="Reveal thumbnail">
+                              {% include "app/icons/eye.svg" with classes="w-5 h-5" %}
+                            </button>
+                          </div>
+                          {# Corner eyeball — shows on hover; toggles the global blur setting #}
+                          <div class="absolute top-2 right-2 z-20"
+                               x-show="hovering && (!blurActive || epWatched || revealed)"
+                               x-transition:enter="transition-opacity duration-150"
+                               x-transition:enter-start="opacity-0"
+                               x-transition:enter-end="opacity-100"
+                               x-transition:leave="transition-opacity duration-150"
+                               x-transition:leave-start="opacity-100"
+                               x-transition:leave-end="opacity-0"
+                               style="display:none">
+                            <button @click.prevent="toggleBlur()"
+                                    class="bg-black/60 rounded-full p-1.5 text-white hover:bg-black/80 transition-colors"
+                                    :title="blurActive ? 'Show all thumbnails' : 'Hide unseen thumbnails'">
+                              <span x-show="blurActive">{% include "app/icons/eye.svg" with classes="w-3.5 h-3.5" %}</span>
+                              <span x-show="!blurActive">{% include "app/icons/eye-closed.svg" with classes="w-3.5 h-3.5" %}</span>
+                            </button>
+                          </div>
+                        {% endif %}
+                      </div>
                       <div class="py-3 flex-1 flex flex-col">
                         <div class="flex-1">
                           <div class="flex justify-between items-start mb-2 space-x-2 px-4">
