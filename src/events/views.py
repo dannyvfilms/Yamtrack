@@ -16,7 +16,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from app.models import MediaTypes, PodcastEpisode
 from events import tasks
 from events.models import Event
-from users.models import User
+from users.models import User, WeekStartDayChoices
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +62,12 @@ def calendar(request):
     ) - timedelta(days=1)
 
     # Get calendar data
-    calendar_format = cal.monthcalendar(year, month)
+    week_start_sunday = request.user.week_start_day == WeekStartDayChoices.SUNDAY
+    first_weekday = 6 if week_start_sunday else 0
+    calendar_format = cal.Calendar(firstweekday=first_weekday).monthdayscalendar(year, month)
     month_name = cal.month_name[month]
+    base_weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    weekday_headers = [base_weekdays[6], *base_weekdays[:6]] if week_start_sunday else base_weekdays
 
     # Get events and organize by day
     releases = Event.objects.get_user_events(request.user, first_day, last_day)
@@ -141,6 +145,7 @@ def calendar(request):
         "available_media_types": available_media_types,
         "days_in_month": days_in_month,
         "selected_day": selected_day,
+        "weekday_headers": weekday_headers,
     }
     return render(request, "events/calendar.html", context)
 

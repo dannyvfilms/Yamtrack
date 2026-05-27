@@ -142,6 +142,13 @@ class TimeFormatChoices(models.TextChoices):
     HH_MM_SS = "hh_mm_ss", "24-hour with seconds (HH:mm:ss)"
 
 
+class WeekStartDayChoices(models.TextChoices):
+    """Choices for week start day preference."""
+
+    MONDAY = "monday", "Monday"
+    SUNDAY = "sunday", "Sunday"
+
+
 class RatingScaleChoices(models.TextChoices):
     """Choices for rating scale preferences."""
 
@@ -781,6 +788,12 @@ class User(AbstractUser):
         choices=TimeFormatChoices.choices,
     )
 
+    week_start_day = models.CharField(
+        max_length=10,
+        default=WeekStartDayChoices.MONDAY,
+        choices=WeekStartDayChoices.choices,
+    )
+
     import_frequency = models.CharField(
         max_length=10,
         default=ImportFrequencyChoices.ONCE,
@@ -1109,6 +1122,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="rating_scale_valid",
                 condition=models.Q(rating_scale__in=RatingScaleChoices.values),
+            ),
+            models.CheckConstraint(
+                name="week_start_day_valid",
+                condition=models.Q(week_start_day__in=WeekStartDayChoices.values),
             ),
         ]
 

@@ -2401,7 +2401,7 @@ def _build_daily_hours_chart(day_minutes_by_type, day_list):
     return {"labels": labels, "datasets": datasets}
 
 
-def _build_activity_data(date_counts, day_minutes_by_type, day_list, start_date, end_date):
+def _build_activity_data(date_counts, day_minutes_by_type, day_list, start_date, end_date, *, week_start_sunday=False):
     """Build activity data for the calendar heatmap and stats cards.
 
     Args:
@@ -2418,11 +2418,12 @@ def _build_activity_data(date_counts, day_minutes_by_type, day_list, start_date,
         min_date = min(date_counts)
         start_date = _day_boundary_datetime(min_date)
 
-    start_date_aligned = stats.get_aligned_monday(start_date)
+    start_date_aligned = stats.get_aligned_week_start(start_date, week_start_sunday=week_start_sunday)
     if start_date_aligned is None:
         return {
             "calendar_weeks": [],
             "months": [],
+            "weekday_labels": [],
             "stats": {
                 "most_active_day": None,
                 "most_active_day_percentage": 0,
@@ -2460,13 +2461,17 @@ def _build_activity_data(date_counts, day_minutes_by_type, day_list, start_date,
 
     calendar_weeks = [activity_data[i : i + 7] for i in range(0, len(activity_data), 7)]
 
+    base_weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    weekday_labels = [base_weekdays[6], *base_weekdays[:6]] if week_start_sunday else base_weekdays
+    week_start_weekday = 6 if week_start_sunday else 0
+
     months = []
     mondays_per_month = []
     current_month = date_range[0].strftime("%b") if date_range else None
     monday_count = 0
 
     for current_date in date_range:
-        if current_date.weekday() == 0:
+        if current_date.weekday() == week_start_weekday:
             month = current_date.strftime("%b")
             if current_month != month:
                 if current_month is not None:
@@ -2483,6 +2488,7 @@ def _build_activity_data(date_counts, day_minutes_by_type, day_list, start_date,
     return {
         "calendar_weeks": calendar_weeks,
         "months": list(zip(months, mondays_per_month, strict=False)),
+        "weekday_labels": weekday_labels,
         "stats": {
             "most_active_day": most_active_day,
             "most_active_day_percentage": day_percentage,
@@ -3844,12 +3850,15 @@ def _aggregate_statistics_from_days(
         end_date = _day_boundary_datetime(day_list[-1], end_of_day=True)
 
     activity_counts_by_date = {day: activity_counts.get(day, 0) for day in day_list}
+    from users.models import WeekStartDayChoices  # noqa: PLC0415 - avoid circular import
+    week_start_sunday = user.week_start_day == WeekStartDayChoices.SUNDAY
     activity_data = _build_activity_data(
         activity_counts_by_date,
         day_minutes_by_type,
         day_list,
         start_date,
         end_date,
+        week_start_sunday=week_start_sunday,
     )
 
     media_type_distribution = stats.get_media_type_distribution(

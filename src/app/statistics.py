@@ -30,6 +30,7 @@ from app.models import (
 )
 from app.statistics_cache import STATISTICS_TOP_N, STATISTICS_TOP_RATED_OVERALL
 from app.templatetags import app_tags
+from users.models import WeekStartDayChoices
 
 logger = logging.getLogger(__name__)
 
@@ -793,7 +794,8 @@ def get_activity_data(user, start_date, end_date, daily_hours_data=None):
     if end_date is None:
         end_date = timezone.localtime()
 
-    start_date_aligned = get_aligned_monday(start_date)
+    week_start_sunday = user.week_start_day == WeekStartDayChoices.SUNDAY
+    start_date_aligned = get_aligned_week_start(start_date, week_start_sunday=week_start_sunday)
 
     combined_data = get_filtered_historical_data(start_date_aligned, end_date, user)
 
@@ -804,7 +806,7 @@ def get_activity_data(user, start_date, end_date, daily_hours_data=None):
             min(dates) if dates else timezone.localdate(),
             datetime.time.min,
         )
-        start_date_aligned = get_aligned_monday(start_date)
+        start_date_aligned = get_aligned_week_start(start_date, week_start_sunday=week_start_sunday)
 
     # Aggregate counts by date
     date_counts = {}
@@ -855,14 +857,21 @@ def get_activity_data(user, start_date, end_date, daily_hours_data=None):
     # Format data into calendar weeks
     calendar_weeks = [activity_data[i : i + 7] for i in range(0, len(activity_data), 7)]
 
-    # Generate months list with their Monday counts
+    base_weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    if week_start_sunday:
+        weekday_labels = [base_weekdays[6], *base_weekdays[:6]]
+    else:
+        weekday_labels = base_weekdays
+
+    # Generate months list with their week-start day counts
     months = []
     mondays_per_month = []
     current_month = date_range[0].strftime("%b")
     monday_count = 0
+    week_start_weekday = 6 if week_start_sunday else 0
 
     for current_date in date_range:
-        if current_date.weekday() == 0:  # Monday
+        if current_date.weekday() == week_start_weekday:
             month = current_date.strftime("%b")
 
             if current_month != month:
@@ -885,6 +894,7 @@ def get_activity_data(user, start_date, end_date, daily_hours_data=None):
     return {
         "calendar_weeks": calendar_weeks,
         "months": list(zip(months, mondays_per_month, strict=False)),
+        "weekday_labels": weekday_labels,
         "stats": {
             "most_active_day": most_active_day,
             "most_active_day_percentage": day_percentage,
@@ -896,12 +906,13 @@ def get_activity_data(user, start_date, end_date, daily_hours_data=None):
     }
 
 
-def get_aligned_monday(datetime_obj):
-    """Get the Monday of the week containing the given date."""
+def get_aligned_week_start(datetime_obj, *, week_start_sunday=False):
+    """Get the week-start day of the week containing the given date."""
     if datetime_obj is None:
         return None
 
-    days_to_subtract = datetime_obj.weekday()  # 0=Monday, 6=Sunday
+    target_weekday = 6 if week_start_sunday else 0  # Sun=6, Mon=0
+    days_to_subtract = (datetime_obj.weekday() - target_weekday) % 7
     return datetime_obj - datetime.timedelta(days=days_to_subtract)
 
 

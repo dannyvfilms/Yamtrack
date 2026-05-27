@@ -60,6 +60,7 @@ from users.models import (
     TitleDisplayPreferenceChoices,
     TopTalentSortChoices,
     TimeFormatChoices,
+    WeekStartDayChoices,
 )
 
 try:
@@ -670,6 +671,7 @@ def preferences(request):
         fields_to_update = []
         rating_scale_changed = False
         top_talent_sort_changed = False
+        week_start_day_changed = False
 
         # Backwards-compatible handling for older clients/tests that still submit
         # media library checkboxes to the preferences endpoint.
@@ -691,6 +693,13 @@ def preferences(request):
             if request.user.time_format != time_format:
                 request.user.time_format = time_format
                 fields_to_update.append("time_format")
+
+        week_start_day = request.POST.get("week_start_day")
+        if week_start_day and week_start_day in WeekStartDayChoices.values:
+            if request.user.week_start_day != week_start_day:
+                request.user.week_start_day = week_start_day
+                fields_to_update.append("week_start_day")
+                week_start_day_changed = True
 
         if (
             activity_history_view
@@ -839,7 +848,7 @@ def preferences(request):
                     force=True,
                     logging_styles=("sessions", "repeats"),
                 )
-            if rating_scale_changed or top_talent_sort_changed:
+            if rating_scale_changed or top_talent_sort_changed or week_start_day_changed:
                 statistics_cache.invalidate_statistics_cache(request.user.id)
                 statistics_cache.schedule_all_ranges_refresh(
                     request.user.id,
@@ -864,6 +873,7 @@ def preferences(request):
         "anime_metadata_source_choices": anime_metadata_source_choices,
         "anime_library_mode_choices": AnimeLibraryModeChoices.choices,
         "session_duration_choices": SessionDurationChoices.choices,
+        "week_start_day_choices": WeekStartDayChoices.choices,
         "tvdb_enabled": tvdb_enabled,
     }
 

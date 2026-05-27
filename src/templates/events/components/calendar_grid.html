@@ -7,13 +7,9 @@
      data-selected-day="{{ selected_day }}"
      data-month-name="{{ month_name }}">
   <div class="grid grid-cols-7 gap-1 mb-2">
-    <div class="text-center text-xs font-medium text-gray-400 py-1">Mon</div>
-    <div class="text-center text-xs font-medium text-gray-400 py-1">Tue</div>
-    <div class="text-center text-xs font-medium text-gray-400 py-1">Wed</div>
-    <div class="text-center text-xs font-medium text-gray-400 py-1">Thu</div>
-    <div class="text-center text-xs font-medium text-gray-400 py-1">Fri</div>
-    <div class="text-center text-xs font-medium text-gray-400 py-1">Sat</div>
-    <div class="text-center text-xs font-medium text-gray-400 py-1">Sun</div>
+    {% for header in weekday_headers %}
+      <div class="text-center text-xs font-medium text-gray-400 py-1">{{ header }}</div>
+    {% endfor %}
   </div>
 
   <div class="grid grid-cols-7 gap-1" role="grid" aria-label="Monthly calendar">
@@ -85,13 +81,9 @@
 
 <div class="calendar-desktop-only hidden md:block">
   <div class="grid grid-cols-7 gap-1 mb-2">
-    <div class="text-center text-sm font-medium text-gray-400 py-2">Mon</div>
-    <div class="text-center text-sm font-medium text-gray-400 py-2">Tue</div>
-    <div class="text-center text-sm font-medium text-gray-400 py-2">Wed</div>
-    <div class="text-center text-sm font-medium text-gray-400 py-2">Thu</div>
-    <div class="text-center text-sm font-medium text-gray-400 py-2">Fri</div>
-    <div class="text-center text-sm font-medium text-gray-400 py-2">Sat</div>
-    <div class="text-center text-sm font-medium text-gray-400 py-2">Sun</div>
+    {% for header in weekday_headers %}
+      <div class="text-center text-sm font-medium text-gray-400 py-2">{{ header }}</div>
+    {% endfor %}
   </div>
 
   <div class="grid grid-cols-7 gap-1">
