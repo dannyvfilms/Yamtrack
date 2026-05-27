@@ -41,20 +41,16 @@ class PlexWebhookTests(TestCase):
         self.user.save()
         self.url = reverse("plex_webhook", kwargs={"token": "test-token"})
         self.fetch_mapping_patcher = patch(
-            "integrations.webhooks.base.BaseWebhookProcessor._fetch_mapping_data",
+            "integrations.webhooks.anime_mappings.fetch_mapping_data",
             return_value={
-                "3651": {
-                    "mal_id": "849",
+                "anidb:3651:R": {
+                    "mal:849": {"1-": "1-"},
                 },
-                "anime_episode": {
-                    "tvdb_id": 9350138,
-                    "tvdb_season": 1,
-                    "tvdb_epoffset": 0,
-                    "mal_id": "52991",
+                "tvdb_show:9350138:s1": {
+                    "mal:52991": {"1-": "1-"},
                 },
-                "anime_movie": {
-                    "tmdb_movie_id": 10494,
-                    "mal_id": "437",
+                "tmdb_movie:10494": {
+                    "mal:437": {},
                 },
             },
         )
