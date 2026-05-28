@@ -5006,22 +5006,25 @@ def season_details(
         )
         from app.models import Item as ItemModel  # Use alias to avoid any potential shadowing
         
-        # Get the season item
+        # season_item is already scoped by library_media_type at the top of this view
         try:
-            season_item = ItemModel.objects.get(
-                media_id=media_id,
-                source=source,
-                media_type=MediaTypes.SEASON.value,
-                season_number=season_number,
-            )
-            
+            if season_item is None:
+                raise ItemModel.DoesNotExist
+
             # Check if the show has collection data, and trigger background fetch if not
             # We check the show item (not season) because episode collection data is tied to the show
             try:
+                # Use parent_media_type to pick the correct show Item (anime vs TV)
+                # so we don't hit MultipleObjectsReturned when both exist.
+                show_media_type = (
+                    MediaTypes.ANIME.value
+                    if parent_media_type == MediaTypes.ANIME.value
+                    else MediaTypes.TV.value
+                )
                 show_item = ItemModel.objects.get(
                     media_id=media_id,
                     source=source,
-                    media_type__in=(MediaTypes.TV.value, MediaTypes.ANIME.value),
+                    media_type=show_media_type,
                 )
                 show_collection_entry = get_item_collection_entries(request.user, show_item).first()
                 
