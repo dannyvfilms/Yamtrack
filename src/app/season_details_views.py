@@ -3,7 +3,7 @@ import logging
 import time
 
 from django.conf import settings
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.contrib.auth.decorators import login_not_required
 from django.shortcuts import render
 from django.utils import timezone
@@ -325,13 +325,14 @@ def season_details(
                 episode_number=episode_number,
             )
             try:
-                episode_item, _ = Item.objects.get_or_create(
-                    **lookup,
-                    defaults={
-                        "title": season_metadata.get("title", ""),
-                        "image": settings.IMG_NONE,
-                    },
-                )
+                with transaction.atomic():
+                    episode_item, _ = Item.objects.get_or_create(
+                        **lookup,
+                        defaults={
+                            "title": season_metadata.get("title", ""),
+                            "image": settings.IMG_NONE,
+                        },
+                    )
             except IntegrityError:
                 episode_item = Item.objects.get(**lookup)
 
