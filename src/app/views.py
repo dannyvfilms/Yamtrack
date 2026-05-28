@@ -4205,6 +4205,11 @@ def media_details(
                     related_items,
                     section_name=section_name,
                     user=list_owner,
+                    library_media_type=(
+                        MediaTypes.ANIME.value
+                        if media_type == MediaTypes.ANIME.value and section_name == "seasons"
+                        else None
+                    ),
                 )
                 if section_name == "seasons":
                     for enriched_item, raw_item in zip(
@@ -4740,6 +4745,7 @@ def season_details(
             media_id=media_id,
             source=source,
             media_type=MediaTypes.SEASON.value,
+            library_media_type=parent_media_type if parent_media_type == MediaTypes.ANIME.value else "",
             season_number=season_number,
             defaults=season_defaults,
         )
@@ -4773,6 +4779,7 @@ def season_details(
                 media_id=media_id,
                 source=source,
                 media_type=MediaTypes.EPISODE.value,
+                library_media_type=parent_media_type if parent_media_type == MediaTypes.ANIME.value else "",
                 season_number=season_number,
                 episode_number=episode_number,
                 defaults={

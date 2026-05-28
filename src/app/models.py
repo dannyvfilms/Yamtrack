@@ -258,24 +258,25 @@ class Item(CalendarTriggerMixin, models.Model):
         """Meta options for the model."""
 
         constraints = [
-            # Ensures items without season/episode numbers are unique
+            # Ensures items without season/episode numbers are unique per library type
             UniqueConstraint(
-                fields=["media_id", "source", "media_type"],
+                fields=["media_id", "source", "media_type", "library_media_type"],
                 condition=Q(season_number__isnull=True, episode_number__isnull=True),
                 name="unique_item_without_season_episode",
             ),
-            # Ensures seasons are unique within a show
+            # Ensures seasons are unique within a show per library type
             UniqueConstraint(
-                fields=["media_id", "source", "media_type", "season_number"],
+                fields=["media_id", "source", "media_type", "library_media_type", "season_number"],
                 condition=Q(season_number__isnull=False, episode_number__isnull=True),
                 name="unique_item_with_season",
             ),
-            # Ensures episodes are unique within a season
+            # Ensures episodes are unique within a season per library type
             UniqueConstraint(
                 fields=[
                     "media_id",
                     "source",
                     "media_type",
+                    "library_media_type",
                     "season_number",
                     "episode_number",
                 ],
@@ -3470,6 +3471,7 @@ class TV(Media):
                 media_id=self.item.media_id,
                 source=self.item.source,
                 media_type=MediaTypes.SEASON.value,
+                library_media_type=self.item.library_media_type,
                 season_number=season_number,
                 defaults={
                     **Item.title_fields_from_metadata(
@@ -3572,13 +3574,13 @@ class TV(Media):
                         media_id=self.item.media_id,
                         source=self.item.source,
                         media_type=MediaTypes.SEASON.value,
+                        library_media_type=self.item.library_media_type,
                         season_number=season_data["season_number"],
                         defaults={
                             **Item.title_fields_from_metadata(
                                 season_data,
                                 fallback_title=self.item.title,
                             ),
-                            "library_media_type": self.item.library_media_type,
                             "image": season_image,
                         },
                     )
@@ -4225,6 +4227,7 @@ class Season(Media):
             media_id=self.item.media_id,
             source=self.item.source,
             media_type=MediaTypes.EPISODE.value,
+            library_media_type=self.item.library_media_type,
             season_number=self.item.season_number,
             episode_number=normalized_episode_number,
             defaults={
@@ -4232,7 +4235,6 @@ class Season(Media):
                     matched_episode,
                     fallback_title=self.item.title,
                 ),
-                "library_media_type": self.item.library_media_type,
                 "image": image,
                 "runtime_minutes": runtime_minutes,
                 "release_datetime": release_datetime,

@@ -219,8 +219,14 @@ def refresh_item_image_if_missing(item, new_image):
     item.save(update_fields=["image"])
 
 
-def enrich_items_with_user_data(request, items, section_name=None, user=None):
-    """Enrich a list of items with user tracking data."""
+def enrich_items_with_user_data(request, items, section_name=None, user=None, library_media_type=None):
+    """Enrich a list of items with user tracking data.
+
+    Args:
+        library_media_type: When provided and media_type is SEASON, only return
+            Season tracking objects whose Item has this library_media_type. Used
+            to isolate anime season tracking from TV season tracking.
+    """
     if not items:
         return []
 
@@ -254,6 +260,11 @@ def enrich_items_with_user_data(request, items, section_name=None, user=None):
         q_objects |= Q(**filter_params)
 
     q_objects &= Q(user=target_user)
+
+    # For season enrichment, optionally restrict to a specific library_media_type
+    # so anime and TV seasons are tracked independently.
+    if media_type == MediaTypes.SEASON.value and library_media_type is not None:
+        q_objects &= Q(item__library_media_type=library_media_type)
 
     # Bulk fetch all media with prefetch
     model = apps.get_model(app_label="app", model_name=media_type)
