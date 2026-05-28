@@ -7,6 +7,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Prefetch
+from django.utils import timezone
 from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
 from app import cache_utils
@@ -164,17 +165,20 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
     if item_changes:
         _clear_tv_time_left_cache(tv_item.media_id, tv_item.source)
 
-    reopen_completed_tv_with_new_seasons(tv_item, processed_season_items)
+    reopen_completed_tv_with_new_seasons(tv_item, processed_season_items, events_bulk)
 
     return processed_season_items
 
 
-def reopen_completed_tv_with_new_seasons(tv_item, season_items):
+def reopen_completed_tv_with_new_seasons(tv_item, season_items, events_bulk):
     """Reopen completed TV entries and create planning seasons when needed."""
-    season_item_map = {
-        season_item.season_number: season_item
+    eligible_season_items = [
+        season_item
         for season_item in season_items
         if season_item.season_number and season_item.season_number > 0
+    ]
+    season_item_map = {
+        season_item.season_number: season_item for season_item in eligible_season_items
     }
     if not season_item_map:
         logger.info(
@@ -183,7 +187,21 @@ def reopen_completed_tv_with_new_seasons(tv_item, season_items):
         )
         return
 
-    sorted_season_numbers = sorted(season_item_map)
+    now = timezone.now()
+    future_season_numbers = {
+        event.item.season_number
+        for event in events_bulk
+        if event.item in eligible_season_items and event.datetime >= now
+    }
+    if not future_season_numbers:
+        logger.info(
+            "%s - Processed seasons have no future events; "
+            "skipping completed-TV reopening",
+            tv_item,
+        )
+        return
+
+    sorted_season_numbers = sorted(future_season_numbers)
     completed_tvs = list(
         TV.objects.filter(
             item__media_id=tv_item.media_id,
