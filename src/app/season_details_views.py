@@ -320,7 +320,7 @@ def season_details(
                 media_id=media_id,
                 source=source,
                 media_type=MediaTypes.EPISODE.value,
-                library_media_type=parent_media_type if parent_media_type == MediaTypes.ANIME.value else "",
+                library_media_type=parent_media_type if parent_media_type == MediaTypes.ANIME.value else MediaTypes.EPISODE.value,
                 season_number=season_number,
                 episode_number=episode_number,
             )
