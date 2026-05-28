@@ -4556,16 +4556,33 @@ def season_details(
     public_view = is_anonymous
     public_list_view = request.GET.get("public_view") == "1" and is_anonymous
 
+    # Scope all Season Item / tracking lookups to the correct library type so that
+    # anime seasons and TV seasons are fully independent.
+    season_library_media_type = (
+        MediaTypes.ANIME.value
+        if parent_media_type == MediaTypes.ANIME.value
+        else None
+    )
+
+    def _scoped_season_item_qs():
+        """Return a queryset for the Season Item scoped by library_media_type."""
+        qs = Item.objects.filter(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=season_number,
+        )
+        if season_library_media_type:
+            qs = qs.filter(library_media_type=season_library_media_type)
+        else:
+            qs = qs.exclude(library_media_type=MediaTypes.ANIME.value)
+        return qs
+
     # For public views, find a public list containing this item to get the owner
     list_owner = None
     if public_list_view:
         try:
-            item = Item.objects.filter(
-                media_id=media_id,
-                source=source,
-                media_type=MediaTypes.SEASON.value,
-                season_number=season_number,
-            ).first()
+            item = _scoped_season_item_qs().first()
             if item:
                 public_list = CustomList.objects.filter(
                     visibility="public",
@@ -4577,12 +4594,7 @@ def season_details(
             # If we can't find a list owner, list_owner stays None
             pass
 
-    season_item = Item.objects.filter(
-        media_id=media_id,
-        source=source,
-        media_type=MediaTypes.SEASON.value,
-        season_number=season_number,
-    ).first()
+    season_item = _scoped_season_item_qs().first()
     show_item = _get_local_show_item(media_id, source)
     season_key = f"season/{season_number}"
     season_item_is_local_only = (
@@ -4597,15 +4609,23 @@ def season_details(
         current_instance = None
     else:
         if season_item_is_local_only:
-            user_medias = list(
-                Season.objects.filter(
-                    item__media_id=media_id,
-                    item__media_type=MediaTypes.SEASON.value,
-                    item__source=source,
-                    item__season_number=season_number,
-                    user=request.user,
+            season_qs = Season.objects.filter(
+                item__media_id=media_id,
+                item__media_type=MediaTypes.SEASON.value,
+                item__source=source,
+                item__season_number=season_number,
+                user=request.user,
+            )
+            if season_library_media_type:
+                season_qs = season_qs.filter(
+                    item__library_media_type=season_library_media_type,
                 )
-                .select_related("item", "related_tv", "related_tv__item")
+            else:
+                season_qs = season_qs.exclude(
+                    item__library_media_type=MediaTypes.ANIME.value,
+                )
+            user_medias = list(
+                season_qs.select_related("item", "related_tv", "related_tv__item")
                 .prefetch_related("episodes", "episodes__item")
             )
         else:
@@ -4616,6 +4636,15 @@ def season_details(
                 source,
                 season_number=season_number,
             )
+            if season_library_media_type:
+                user_medias = user_medias.filter(
+                    item__library_media_type=season_library_media_type,
+                )
+            else:
+                user_medias = user_medias.exclude(
+                    item__library_media_type=MediaTypes.ANIME.value,
+                )
+            user_medias = list(user_medias)
         current_instance = user_medias[0] if user_medias else None
 
     episodes_in_db = current_instance.episodes.all() if current_instance else []
