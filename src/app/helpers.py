@@ -204,6 +204,21 @@ def is_caught_up_media(media) -> bool:
     return progress_value >= max_progress_value
 
 
+def _needs_image_refresh(item, new_image):
+    """Return True when item.image should be replaced with new_image."""
+    if item is None or not new_image or new_image == settings.IMG_NONE:
+        return False
+    return not item.image or item.image == settings.IMG_NONE
+
+
+def refresh_item_image_if_missing(item, new_image):
+    """Update an Item's stored image when it's missing and a real one is available."""
+    if not _needs_image_refresh(item, new_image):
+        return
+    item.image = new_image
+    item.save(update_fields=["image"])
+
+
 def enrich_items_with_user_data(request, items, section_name=None, user=None):
     """Enrich a list of items with user tracking data."""
     if not items:

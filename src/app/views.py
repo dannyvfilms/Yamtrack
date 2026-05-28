@@ -4080,6 +4080,15 @@ def media_details(
             user_medias.sort(key=_activity_key, reverse=True)
         current_instance = user_medias[0] if user_medias else None
 
+    if current_instance is not None:
+        _best_effort_detail_followup(
+            lambda: helpers.refresh_item_image_if_missing(
+                current_instance.item,
+                media_metadata.get("image") if isinstance(media_metadata, dict) else None,
+            ),
+            operation_name="image refresh",
+        )
+
     if media_type in (
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
@@ -4641,6 +4650,15 @@ def season_details(
                 season_item=season_item,
                 show_item=show_item,
             )
+
+    if current_instance is not None and isinstance(season_metadata, dict):
+        _best_effort_detail_followup(
+            lambda: helpers.refresh_item_image_if_missing(
+                current_instance.item,
+                season_metadata.get("image"),
+            ),
+            operation_name="season image refresh",
+        )
 
     default_season_title = (
         "Specials" if season_number == 0 else f"Season {season_number}"

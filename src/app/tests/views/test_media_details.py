@@ -6898,3 +6898,89 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "The Blade Itself")
         mock_openlibrary_book.assert_not_called()
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_refreshes_missing_item_image(self, mock_get_metadata):
+        """Viewing a detail page replaces a missing Item image with the provider's."""
+        fresh_image = "https://images.example.com/godfather.jpg"
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "The Godfather",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": fresh_image,
+            "max_progress": 1,
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Godfather",
+            image=settings.IMG_NONE,
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "the-godfather",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.image, fresh_image)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_keeps_existing_item_image(self, mock_get_metadata):
+        """Viewing a detail page does NOT overwrite an Item that already has an image."""
+        existing_image = "https://images.example.com/existing.jpg"
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "The Godfather",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "https://images.example.com/different.jpg",
+            "max_progress": 1,
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Godfather",
+            image=existing_image,
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "the-godfather",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.image, existing_image)
