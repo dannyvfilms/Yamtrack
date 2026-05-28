@@ -1040,11 +1040,30 @@ class BaseWebhookProcessor:
         # Use season poster if available, otherwise fallback to TV show poster
         season_image = season_metadata.get("image") or tv_metadata.get("image")
 
+        # If the user is already tracking this show via the anime pathway (TMDB-based
+        # anime, separate from MAL anime), keep scrobbles in that same bucket so that
+        # anime-scoped Season Items stay separate from TV-scoped ones.  This also
+        # prevents MultipleObjectsReturned when both anime and TV Season Items exist.
+        uses_anime_tracking = app.models.Item.objects.filter(
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            library_media_type=MediaTypes.ANIME.value,
+        ).exists()
+        # Use the post-save normalised value ('season') not '' so the lookup hits
+        # existing Season Items that were created via Item.save() normalisation.
+        season_library_media_type = (
+            MediaTypes.ANIME.value
+            if uses_anime_tracking
+            else MediaTypes.SEASON.value
+        )
+
         season_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
+            library_media_type=season_library_media_type,
             defaults={
                 "title": tv_metadata["title"],
                 "image": season_image,

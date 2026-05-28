@@ -1962,6 +1962,139 @@ class PlexWebhookTests(TestCase):
         # Call might happen via title search if GUID resolution falls back
         mock_tmdb_search.assert_called()
 
+    def test_scrobble_uses_anime_library_media_type_when_show_already_tracked_as_anime(
+        self,
+    ):
+        """Plex scrobble should land in the anime bucket when the show is already tracked
+        as anime (TMDB-based, library_media_type='anime').  The Season Item created by
+        the scrobble must carry library_media_type='anime' so it appears on the anime
+        season page rather than the TV season page."""
+        # Pre-create a Season Item with library_media_type='anime' to simulate the user
+        # having previously tracked this show via the anime URL pathway.
+        show_item, _ = Item.objects.get_or_create(
+            media_id="85987",
+            source="tmdb",
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Friends", "image": ""},
+        )
+        Item.objects.get_or_create(
+            media_id="85987",
+            source="tmdb",
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            library_media_type=MediaTypes.ANIME.value,
+            defaults={"title": "Friends", "image": ""},
+        )
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+
+        response = self._post_payload(payload)
+
+        self.assertEqual(response.status_code, 200)
+
+        # Season Item should reuse the existing anime-typed item, not create a new
+        # TV-typed one.
+        self.assertEqual(
+            Item.objects.filter(
+                media_id="85987",
+                source="tmdb",
+                media_type=MediaTypes.SEASON.value,
+                season_number=1,
+                library_media_type=MediaTypes.ANIME.value,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            Item.objects.filter(
+                media_id="85987",
+                source="tmdb",
+                media_type=MediaTypes.SEASON.value,
+                season_number=1,
+                library_media_type=MediaTypes.SEASON.value,
+            ).count(),
+            0,
+        )
+
+        # Episode should be recorded under the anime-typed season.
+        episode = Episode.objects.get(
+            item__media_id="85987",
+            item__season_number=1,
+            item__episode_number=1,
+        )
+        self.assertEqual(episode.item.library_media_type, MediaTypes.ANIME.value)
+
+    def test_scrobble_does_not_crash_when_both_anime_and_tv_season_items_exist(
+        self,
+    ):
+        """When a show has both TV-typed and anime-typed Season Items (user tracked
+        it via both pathways), a scrobble must not raise MultipleObjectsReturned and
+        should land in the anime bucket since anime Items exist."""
+        Item.objects.get_or_create(
+            media_id="85987",
+            source="tmdb",
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Friends", "image": ""},
+        )
+        Item.objects.get_or_create(
+            media_id="85987",
+            source="tmdb",
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            library_media_type=MediaTypes.SEASON.value,
+            defaults={"title": "Friends", "image": ""},
+        )
+        Item.objects.get_or_create(
+            media_id="85987",
+            source="tmdb",
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            library_media_type=MediaTypes.ANIME.value,
+            defaults={"title": "Friends", "image": ""},
+        )
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "index": 2,
+                "parentIndex": 1,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+
+        # Should not raise MultipleObjectsReturned.
+        response = self._post_payload(payload)
+
+        self.assertEqual(response.status_code, 200)
+
+        # Anime-typed Season Items exist, so the scrobble lands in the anime bucket.
+        episode = Episode.objects.get(
+            item__media_id="85987",
+            item__season_number=1,
+            item__episode_number=2,
+        )
+        self.assertEqual(episode.item.library_media_type, MediaTypes.ANIME.value)
+
 
 class LivePlaybackScrobbleClearingTests(TestCase):
     """Unit tests for scrobble-based now-playing card expiry calculation."""
