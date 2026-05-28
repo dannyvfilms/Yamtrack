@@ -7,6 +7,7 @@ from datetime import datetime
 from django.conf import settings
 from django.contrib.auth.decorators import login_not_required
 from django.core.cache import cache
+from django.utils import timezone
 from django.shortcuts import render
 from django.views.decorators.http import require_GET
 
