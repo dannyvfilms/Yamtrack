@@ -783,12 +783,14 @@ def media_url(media):
     if not is_dict and not hasattr(media, "media_type"):
         return ""
 
-    # Get attributes using either dict access or object attribute
-    media_type = (
-        media.get("route_media_type") or media["media_type"]
-        if is_dict
-        else getattr(media, "route_media_type", None) or media.media_type
+    # Actual content type — never overridden (season is always "season")
+    actual_media_type = media["media_type"] if is_dict else media.media_type
+    # Route override — used to route TV items to anime show pages, or season items
+    # to anime season URLs when the parent show is anime
+    route_media_type = (
+        media.get("route_media_type") if is_dict else getattr(media, "route_media_type", None)
     )
+
     source = media["source"] if is_dict else media.source
     media_id = media["media_id"] if is_dict else media.media_id
     title = media["title"] if is_dict else media.title
@@ -797,10 +799,9 @@ def media_url(media):
         fallback = str(media_id) if media_id is not None else "item"
         slug_title = slug(fallback) or "item"
 
-    if media_type in [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]:
+    if actual_media_type in [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]:
         season_number = media["season_number"] if is_dict else media.season_number
-        route_mt = media.get("route_media_type") if is_dict else getattr(media, "route_media_type", None)
-        if route_mt == MediaTypes.ANIME.value:
+        if route_media_type == MediaTypes.ANIME.value:
             return reverse(
                 "anime_season_details",
                 kwargs={
@@ -820,11 +821,14 @@ def media_url(media):
             },
         )
 
+    # For show/movie/etc, route_media_type overrides actual_media_type
+    # (e.g. a TV Item with library_media_type=anime routes to the anime show page)
+    effective_media_type = route_media_type or actual_media_type
     return reverse(
         "media_details",
         kwargs={
             "source": source,
-            "media_type": media_type,
+            "media_type": effective_media_type,
             "media_id": media_id,
             "title": slug_title,
         },
