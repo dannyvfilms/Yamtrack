@@ -163,6 +163,8 @@
                   {% else %}
                     {% if key == 'first_air_date' or key == 'last_air_date' %}
                       <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
+                    {% elif key == 'format' and media_type == MediaTypes.ANIME.value %}
+                      <p class="text-gray-200">Anime</p>
                     {% else %}
                       <p class="text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
                     {% endif %}
