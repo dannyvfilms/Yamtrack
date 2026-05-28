@@ -3,6 +3,7 @@ import logging
 import time
 
 from django.conf import settings
+from django.db import IntegrityError
 from django.contrib.auth.decorators import login_not_required
 from django.shortcuts import render
 from django.utils import timezone
@@ -314,19 +315,25 @@ def season_details(
             if episode_number is None:
                 continue
 
-            # Get or create episode item
-            episode_item, _ = Item.objects.get_or_create(
+            # Get or create episode item — retry on race condition
+            lookup = dict(
                 media_id=media_id,
                 source=source,
                 media_type=MediaTypes.EPISODE.value,
                 library_media_type=parent_media_type if parent_media_type == MediaTypes.ANIME.value else "",
                 season_number=season_number,
                 episode_number=episode_number,
-                defaults={
-                    "title": season_metadata.get("title", ""),
-                    "image": settings.IMG_NONE,
-                },
             )
+            try:
+                episode_item, _ = Item.objects.get_or_create(
+                    **lookup,
+                    defaults={
+                        "title": season_metadata.get("title", ""),
+                        "image": settings.IMG_NONE,
+                    },
+                )
+            except IntegrityError:
+                episode_item = Item.objects.get(**lookup)
 
             # Extract runtime from raw episode data (TMDB returns integer minutes)
             runtime_minutes = None
