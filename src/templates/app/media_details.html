@@ -31,7 +31,7 @@
         <div class="mb-1 text-center md:text-start">
           <div class="inline-flex items-center gap-2 md:flex md:gap-2">
             <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">
-              <a href="{% url 'media_details' source=media.source media_type=MediaTypes.TV.value media_id=media.media_id title=media.title|slug %}">{{ media|display_title:user }}</a>
+              <a href="{% url 'media_details' source=media.source media_type=parent_media_type|default:MediaTypes.TV.value media_id=media.media_id title=media.title|slug %}">{{ media|display_title:user }}</a>
             </h1>
             {% if media.season_alternative_title %}
               <div class="relative shrink-0" x-data="{ tooltipOpen: false }">
@@ -127,7 +127,7 @@
                      class="absolute right-1/2 md:right-0 translate-x-1/2 md:translate-x-0 mt-2 w-64 bg-[#2a2f35] rounded-md shadow-lg overflow-hidden z-10">
                   <div class="max-h-[300px] overflow-y-auto">
                     {% for tv_season in tv.related.seasons %}
-                      <a href="{% url 'season_details' source=media.source media_id=media.media_id title=media.title|slug season_number=tv_season.season_number %}"
+                      <a href="{% if parent_media_type == MediaTypes.ANIME.value %}{% url 'anime_season_details' source=media.source media_id=media.media_id title=media.title|slug season_number=tv_season.season_number %}{% else %}{% url 'season_details' source=media.source media_id=media.media_id title=media.title|slug season_number=tv_season.season_number %}{% endif %}"
                          class="w-full px-4 py-3 flex items-center space-x-3 hover:bg-gray-700 transition-colors duration-200 cursor-pointer {% if tv_season.season_number == media.season_number %}bg-[#343a40]{% endif %}">
                         <div class="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-600 text-white">
                           {{ tv_season.season_number }}

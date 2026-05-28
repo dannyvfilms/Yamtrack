@@ -525,7 +525,7 @@
               {% else %}
               <div class="space-y-6" id="episodes-batch">
                 {% for episode in media.episodes %}
-                  {% if media_type == MediaTypes.SEASON.value and media.source and media.media_id and media.season_number %}{% url 'episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% endif %}
+                  {% if media_type == MediaTypes.SEASON.value and media.source and media.media_id and media.season_number %}{% if parent_media_type == MediaTypes.ANIME.value %}{% url 'anime_episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% else %}{% url 'episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% endif %}{% endif %}
                   {% include "app/components/episode_row.html" %}
                 {% endfor %}
                 {% if episode_load_more %}

@@ -799,6 +799,17 @@ def media_url(media):
 
     if media_type in [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]:
         season_number = media["season_number"] if is_dict else media.season_number
+        route_mt = media.get("route_media_type") if is_dict else getattr(media, "route_media_type", None)
+        if route_mt == MediaTypes.ANIME.value:
+            return reverse(
+                "anime_season_details",
+                kwargs={
+                    "source": source,
+                    "media_id": media_id,
+                    "title": slug_title,
+                    "season_number": season_number,
+                },
+            )
         return reverse(
             "season_details",
             kwargs={

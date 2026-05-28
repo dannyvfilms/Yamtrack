@@ -36,9 +36,21 @@ urlpatterns = [
         name="episode_details",
     ),
     path(
+        "details/<source:source>/anime/<str:media_id>/<str:title>/season/<int:season_number>/episode/<int:episode_number>",
+        views.episode_details,
+        kwargs={"parent_media_type": "anime"},
+        name="anime_episode_details",
+    ),
+    path(
         "details/<source:source>/tv/<str:media_id>/<str:title>/season/<int:season_number>",
         views.season_details,
         name="season_details",
+    ),
+    path(
+        "details/<source:source>/anime/<str:media_id>/<str:title>/season/<int:season_number>",
+        views.season_details,
+        kwargs={"parent_media_type": "anime"},
+        name="anime_season_details",
     ),
     path(
         "details/<source:source>/<media_type:media_type>/<path:media_id>/<str:title>",

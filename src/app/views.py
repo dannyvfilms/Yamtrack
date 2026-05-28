@@ -4237,6 +4237,13 @@ def media_details(
                         elif season_number is not None:
                             enriched_item["card_title"] = f"Season {season_number}"
 
+                # For anime shows, tag season items so media_url routes to anime season URLs
+                if section_name == "seasons" and media_type == MediaTypes.ANIME.value:
+                    for enriched_item in enriched_related_items:
+                        item_dict = enriched_item.get("item")
+                        if isinstance(item_dict, dict):
+                            item_dict["route_media_type"] = MediaTypes.ANIME.value
+
                 media_metadata["related"][section_name] = enriched_related_items
 
     # For music tracks, get linked artist and album for navigation
@@ -4527,7 +4534,7 @@ def media_details(
 @login_not_required
 @require_GET
 def season_details(
-    request, source, media_id, title, season_number,
+    request, source, media_id, title, season_number, parent_media_type=None,
 ):
     """Return the details page for a season."""
     detail_view_started_at = time.perf_counter()
@@ -5099,11 +5106,18 @@ def season_details(
             season_metadata["episodes"],
         )
 
+    # Resolve parent media type: anime URL kwarg takes priority, else detect via DB
+    if parent_media_type is None and anime_show_item and getattr(request.user, "anime_enabled", False):
+        parent_media_type = MediaTypes.ANIME.value
+    if parent_media_type is None:
+        parent_media_type = MediaTypes.TV.value
+
     context = {
         "user": request.user,
         "media": season_metadata,
         "tv": tv_with_seasons_metadata,
         "media_type": MediaTypes.SEASON.value,
+        "parent_media_type": parent_media_type,
         "user_medias": user_medias,
         "current_instance": current_instance,
         "public_view": public_view,
@@ -5167,7 +5181,7 @@ def season_details(
     )
 
 
-def episode_details(request, source, media_id, title, season_number, episode_number):
+def episode_details(request, source, media_id, title, season_number, episode_number, parent_media_type=None):
     """Return the details page for a single episode."""
     is_anonymous = not request.user.is_authenticated
     public_view = is_anonymous
@@ -5230,7 +5244,7 @@ def episode_details(request, source, media_id, title, season_number, episode_num
         episode_data["item"] = episode_item
 
     season_url = reverse(
-        "season_details",
+        "anime_season_details" if parent_media_type == MediaTypes.ANIME.value else "season_details",
         kwargs={
             "source": source,
             "media_id": media_id,
@@ -5246,6 +5260,7 @@ def episode_details(request, source, media_id, title, season_number, episode_num
         "season_metadata": season_metadata,
         "current_instance": current_season_instance,
         "public_view": public_view,
+        "parent_media_type": parent_media_type or MediaTypes.TV.value,
         "season_url": season_url,
         "media_id": media_id,
         "source": source,
