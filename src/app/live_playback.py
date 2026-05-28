@@ -11,6 +11,7 @@ from django.utils import timezone
 from django.utils.text import slugify
 
 from app import helpers
+from app.metadata_utils import ANIME_SUPPLEMENT_GENRE, genre_list_has_name
 from app.models import Item, MediaTypes, Sources
 
 logger = logging.getLogger(__name__)
@@ -431,7 +432,7 @@ def _slugify_title(title: str, media_id: str | None = None) -> str:
     return cleaned
 
 
-def _build_details_url(state: dict) -> str:
+def _build_details_url(state: dict, library_media_type: str | None = None) -> str:
     """Build a URL to the media details page for the playing item."""
     media_id = state.get("media_id")
     source = state.get("source") or Sources.TMDB.value
@@ -443,6 +444,16 @@ def _build_details_url(state: dict) -> str:
     slug_title = _slugify_title(title, media_id)
 
     if playback_media_type == MediaTypes.EPISODE.value:
+        if library_media_type == MediaTypes.ANIME.value:
+            return reverse(
+                "media_details",
+                kwargs={
+                    "source": source,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": media_id,
+                    "title": slug_title,
+                },
+            )
         season_number = _coerce_int(state.get("season_number"))
         if season_number is not None:
             return reverse(
@@ -674,6 +685,25 @@ def build_home_playback_card(user) -> dict | None:
 
     episode_title = (state.get("episode_title") or "").strip() or None
 
+    library_media_type = None
+    if state.get("media_type") == MediaTypes.EPISODE.value and getattr(
+        user, "anime_enabled", False
+    ):
+        _ep_media_id = state.get("media_id")
+        _ep_source = state.get("source") or Sources.TMDB.value
+        if _ep_media_id:
+            tv_item = Item.objects.filter(
+                media_id=_ep_media_id,
+                source=_ep_source,
+                media_type=MediaTypes.TV.value,
+            ).values("library_media_type", "genres").first()
+            if tv_item:
+                if (
+                    tv_item["library_media_type"] == MediaTypes.ANIME.value
+                    or genre_list_has_name(tv_item["genres"], ANIME_SUPPLEMENT_GENRE)
+                ):
+                    library_media_type = MediaTypes.ANIME.value
+
     return {
         "title": title,
         "subtitle": subtitle,
@@ -687,7 +717,7 @@ def build_home_playback_card(user) -> dict | None:
             if status in (PLAYBACK_STATUS_PAUSED, PLAYBACK_STATUS_STOPPED)
             else "Playing"
         ),
-        "details_url": _build_details_url(state),
+        "details_url": _build_details_url(state, library_media_type=library_media_type),
         "progress_display": progress_display,
         "progress_percent": progress_percent,
         "offset_seconds": max(0, _coerce_int(state.get("view_offset_seconds"), 0)),

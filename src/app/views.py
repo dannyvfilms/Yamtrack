@@ -4652,13 +4652,17 @@ def season_details(
             )
 
     if current_instance is not None and isinstance(season_metadata, dict):
-        _best_effort_detail_followup(
-            lambda: helpers.refresh_item_image_if_missing(
+        try:
+            helpers.refresh_item_image_if_missing(
                 current_instance.item,
                 season_metadata.get("image"),
-            ),
-            operation_name="season image refresh",
-        )
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Skipping season image refresh for %s due to error",
+                request.path,
+                exc_info=True,
+            )
 
     default_season_title = (
         "Specials" if season_number == 0 else f"Season {season_number}"
