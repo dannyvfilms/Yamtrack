@@ -162,7 +162,7 @@ class TVTimeLeftSortTests(TestCase):
         the TV list as untracked MediaListEntry objects. Their .progress is None
         (via __getattr__ fallback), which caused TypeError in max() at line 286.
         """
-        from app.views import MediaListEntry
+        from app.media_list_views import MediaListEntry
 
         tv = self._create_tv(
             "Tracked Show",
@@ -208,7 +208,7 @@ class TVTimeLeftSortTests(TestCase):
         """
         import pickle
 
-        from app.views import MediaListEntry
+        from app.media_list_views import MediaListEntry
 
         tv = self._create_tv(
             "Test Show",
