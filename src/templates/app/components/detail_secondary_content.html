@@ -326,61 +326,7 @@
         {% endif %}
 
         {% if media.related.seasons %}
-          {% if media_type == MediaTypes.ANIME.value %}
-            <section class="mb-8">
-              <h2 class="text-xl font-bold mb-4">Seasons</h2>
-              {% for result in media.related.seasons %}
-                <div x-data="{ open: false }" class="mb-3">
-                  <button @click="open = !open"
-                          class="w-full flex items-center justify-between px-4 py-3 bg-[#2a2f35] hover:bg-[#343a40] rounded-lg transition-colors cursor-pointer">
-                    <div class="flex items-center gap-3">
-                      {% if result.item.image and result.item.image != IMG_NONE %}
-                        <img src="{{ result.item.image }}" class="w-8 h-12 object-cover rounded shrink-0" alt="">
-                      {% endif %}
-                      <div class="text-left">
-                        <div class="font-semibold text-white text-sm">{{ result.item.season_title|default:"Season" }}</div>
-                        <div class="text-xs text-gray-400">
-                          {% if result.media %}{{ result.media.progress|default:0 }}{% else %}0{% endif %}/{{ result.item.episode_count|default:0 }} episodes
-                        </div>
-                      </div>
-                    </div>
-                    <div class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-200" :class="{ 'rotate-180': open }">
-                      {% include "app/icons/chevron-down.svg" %}
-                    </div>
-                  </button>
-                  <div x-show="open"
-                       x-transition:enter="transition ease-out duration-150"
-                       x-transition:enter-start="opacity-0"
-                       x-transition:enter-end="opacity-100"
-                       class="space-y-6 mt-4">
-                    {% for episode in result.item.processed_episodes %}
-                      {% url 'episode_details' source=result.item.source media_id=media.media_id title=media.title|slug season_number=result.item.season_number episode_number=episode.episode_number as ep_detail_url %}
-                      {% include "app/components/episode_row.html" %}
-                    {% endfor %}
-                  </div>
-                </div>
-              {% endfor %}
-            </section>
-          {% else %}
-            <section class="mb-8"
-                     x-data="{ detailGridExpanded: false, detailGridIsMobile: false, detailGridVisibleCount: 6, syncDetailGrid() { this.detailGridIsMobile = window.matchMedia('(max-width: 768px)').matches; this.detailGridVisibleCount = document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6; }, shouldShowDetailCard(index) { return !this.detailGridIsMobile || this.detailGridExpanded || index < this.detailGridVisibleCount; }, canToggleDetailGrid(total) { return this.detailGridIsMobile && total > this.detailGridVisibleCount; } }"
-                     x-init="syncDetailGrid()"
-                     @resize.window="syncDetailGrid()">
-              <h2 class="text-xl font-bold mb-4">Seasons</h2>
-              <div class="detail-media-grid">
-                {% for result in media.related.seasons %}
-                  <div x-show="shouldShowDetailCard({{ forloop.counter0 }})">
-                    {% include "app/components/media_card.html" with item=result.item title=result.item.season_header_title|default:result.item.title season_card_title_override=result.card_title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
-                  </div>
-                {% endfor %}
-              </div>
-              <button x-show="canToggleDetailGrid({{ media.related.seasons|length }})"
-                      @click="detailGridExpanded = !detailGridExpanded"
-                      class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden">
-                <span x-text="detailGridExpanded ? 'Show less' : 'Show more'"></span>
-              </button>
-            </section>
-          {% endif %}
+          {% include "app/components/seasons_grid.html" %}
         {% endif %}
 
         {% if media.source == Sources.TMDB.value and media.cast %}

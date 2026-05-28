@@ -3972,7 +3972,6 @@ def media_details(
                     media_id,
                 )
 
-        grouped_season_metadata = None
         if render_secondary_only and seasons and source in {Sources.TMDB.value, Sources.TVDB.value}:
             season_numbers = sorted(
                 {
@@ -4058,52 +4057,6 @@ def media_details(
                     season_image = season.get("image")
                     if not season_image or season_image == settings.IMG_NONE:
                         season["image"] = tv_poster
-
-        if (
-            media_type == MediaTypes.ANIME.value
-            and render_secondary_only
-            and not public_view
-            and isinstance(grouped_season_metadata, dict)
-        ):
-            season_instances = (
-                Season.objects.filter(
-                    item__media_id=media_id,
-                    item__source=source,
-                    item__media_type=MediaTypes.SEASON.value,
-                    user=request.user,
-                )
-                .select_related("item")
-                .prefetch_related("episodes", "episodes__item")
-            )
-            episodes_by_season = {
-                s.item.season_number: list(s.episodes.all())
-                for s in season_instances
-            }
-            for season in seasons:
-                season_number = season.get("season_number")
-                season_payload = grouped_season_metadata.get(f"season/{season_number}")
-                if not isinstance(season_payload, dict):
-                    continue
-                episodes_in_db = episodes_by_season.get(season_number, [])
-                processed = tmdb.process_episodes(season_payload, episodes_in_db)
-                processed = _normalize_detail_episode_actions(processed)
-                ep_numbers = [ep.get("episode_number") for ep in processed]
-                ep_items = Item.objects.filter(
-                    media_id=media_id,
-                    source=source,
-                    media_type=MediaTypes.EPISODE.value,
-                    season_number=season_number,
-                    episode_number__in=ep_numbers,
-                )
-                item_by_ep = {
-                    item.episode_number: item
-                    for item in ep_items
-                    if item.episode_number is not None
-                }
-                for ep in processed:
-                    ep["item"] = item_by_ep.get(ep.get("episode_number"))
-                    ep["library_media_type"] = MediaTypes.ANIME.value
-                season["processed_episodes"] = processed
 
     # For public views, we don't need user media data
     if public_view:
