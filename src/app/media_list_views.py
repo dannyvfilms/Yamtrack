@@ -9,6 +9,7 @@ from datetime import UTC, date
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
 
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth.decorators import login_required, login_not_required
 from django.core.paginator import Paginator
 from django.db.models import F, Min
