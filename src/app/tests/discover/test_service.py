@@ -12,6 +12,16 @@ from app.discover import cache_repo, tab_cache
 from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 from app.discover.registry import ALL_MEDIA_KEY
 from app.discover.schemas import CandidateItem, RowDefinition, RowResult
+from app.discover.match_signals import (
+    _comfort_match_signal,
+    _row_match_signal,
+    _row_match_signal_with_details,
+)
+from app.discover.movie_comfort import _prefer_strong_phase_opening_window
+from app.discover.provider_candidates import (
+    _musicbrainz_coming_soon_recording_candidates,
+    _provider_row_candidates,
+)
 from app.discover.service import (
     MAX_ITEMS_PER_ROW,
     ROW_CACHE_ACTIVITY_VERSION_META_KEY,
@@ -20,15 +30,9 @@ from app.discover.service import (
     _build_comfort_debug_payload,
     _clear_out_next_candidates,
     _comfort_candidates,
-    _comfort_match_signal,
     _entries_to_candidates,
     _get_all_media_component_rows,
-    _musicbrainz_coming_soon_recording_candidates,
     _prepare_row_from_candidates,
-    _provider_row_candidates,
-    _row_match_signal,
-    _row_match_signal_with_details,
-    _prefer_strong_phase_opening_window,
     _rewatch_counts,
     _top_picks_candidates,
     get_discover_rows,
@@ -331,8 +335,8 @@ class DiscoverServiceTests(TestCase):
             ],
         )
 
-    @patch("app.discover.service.musicbrainz.get_cover_art")
-    @patch("app.discover.service._api_cached_results")
+    @patch("app.discover.provider_candidates.musicbrainz.get_cover_art")
+    @patch("app.discover.provider_candidates._api_cached_results")
     def test_music_coming_soon_candidates_defer_cover_art_fetches(
         self,
         mock_cached_results,
@@ -1553,7 +1557,7 @@ class DiscoverServiceTests(TestCase):
                 rows = get_discover_rows(self.user, media_type, show_more=False)
                 self.assertEqual([row.key for row in rows], expected_order)
 
-    @patch("app.discover.service._igdb_games_candidates", return_value=[])
+    @patch("app.discover.provider_candidates._igdb_games_candidates", return_value=[])
     def test_game_provider_rows_dispatch_to_igdb(self, mock_igdb_candidates):
         self.assertEqual(
             _provider_row_candidates(MediaTypes.GAME.value, "trending_right_now"),
@@ -1569,11 +1573,11 @@ class DiscoverServiceTests(TestCase):
         )
         self.assertEqual(mock_igdb_candidates.call_count, 3)
 
-    @patch("app.discover.service._musicbrainz_coming_soon_recording_candidates")
-    @patch("app.discover.service._itunes_top_podcasts_candidates")
-    @patch("app.discover.service._bgg_hot_candidates")
-    @patch("app.discover.service._comicvine_coming_soon_volume_candidates")
-    @patch("app.discover.service._openlibrary_coming_soon_candidates")
+    @patch("app.discover.provider_candidates._musicbrainz_coming_soon_recording_candidates")
+    @patch("app.discover.provider_candidates._itunes_top_podcasts_candidates")
+    @patch("app.discover.provider_candidates._bgg_hot_candidates")
+    @patch("app.discover.provider_candidates._comicvine_coming_soon_volume_candidates")
+    @patch("app.discover.provider_candidates._openlibrary_coming_soon_candidates")
     def test_provider_coming_soon_dispatch_for_remaining_media_types(
         self,
         mock_book_soon,
@@ -5093,7 +5097,7 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("recent-90", content)
         self.assertNotIn("title-days", content)
 
-    @patch("app.discover.service._is_holiday_window", return_value=False)
+    @patch("app.discover.comfort_scoring._is_holiday_window", return_value=False)
     def test_movie_behavior_first_applies_keyword_holiday_penalty_out_of_season(self, _mock_window):
         candidates = [
             CandidateItem(
@@ -5178,7 +5182,7 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual(by_id["neutral"].score_breakdown["seasonal_adjustment"], 0.0)
         self.assertLess(by_id["keyword-holiday"].final_score, by_id["neutral"].final_score)
 
-    @patch("app.discover.service._is_holiday_window", return_value=False)
+    @patch("app.discover.comfort_scoring._is_holiday_window", return_value=False)
     def test_movie_behavior_first_debug_payload_exposes_holiday_penalty(self, _mock_window):
         candidates = [
             CandidateItem(
@@ -5578,7 +5582,7 @@ class DiscoverServiceTests(TestCase):
             steady.final_score,
         )
 
-    @patch("app.discover.service._is_holiday_window", return_value=False)
+    @patch("app.discover.comfort_scoring._is_holiday_window", return_value=False)
     def test_comfort_confidence_applies_out_of_season_holiday_penalty(self, _mock_window):
         candidates = [
             CandidateItem(
@@ -5872,7 +5876,7 @@ class DiscoverServiceTests(TestCase):
         self.assertGreaterEqual(display_scores[0], display_scores[1])
         self.assertGreaterEqual(display_scores[1], display_scores[2])
 
-    @patch("app.discover.service._is_holiday_window", return_value=False)
+    @patch("app.discover.comfort_scoring._is_holiday_window", return_value=False)
     def test_comfort_debug_payload_exposes_spread_and_penalty_stack(self, _mock_window):
         candidates = [
             CandidateItem(
