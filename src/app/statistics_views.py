@@ -17,7 +17,11 @@ from app import config, statistics_cache
 from app import statistics as stats
 from app.models import MediaTypes
 from app.templatetags import app_tags
-from users.models import DateFormatChoices, TopTalentSortChoices
+from users.models import (
+    DateFormatChoices,
+    StatisticsCompareChoices,
+    TopTalentSortChoices,
+)
 
 DATE_FORMAT_DJANGO_MAP = {
     DateFormatChoices.SYSTEM_DEFAULT: "",
@@ -362,8 +366,18 @@ def statistics(request):
 
         show_year_charts = selected_range_name in (None, "All Time")
         has_finite_range = start_date is not None and end_date is not None
+        compare_mode_param = request.GET.get("compare")
+        compare_mode_source = (
+            compare_mode_param
+            if compare_mode_param is not None
+            else getattr(
+                request.user,
+                "statistics_compare_mode",
+                StatisticsCompareChoices.PREVIOUS_PERIOD,
+            )
+        )
         selected_compare_mode = _normalize_statistics_compare_mode(
-            request.GET.get("compare"),
+            compare_mode_source,
             finite_range=has_finite_range,
         )
         comparison_start_date, comparison_end_date = _resolve_statistics_comparison_range(
@@ -530,8 +544,18 @@ def statistics(request):
             else None
         )
         has_finite_range = error_start_date is not None and error_end_date is not None
+        compare_mode_param = request.GET.get("compare")
+        compare_mode_source = (
+            compare_mode_param
+            if compare_mode_param is not None
+            else getattr(
+                request.user,
+                "statistics_compare_mode",
+                StatisticsCompareChoices.PREVIOUS_PERIOD,
+            )
+        )
         selected_compare_mode = _normalize_statistics_compare_mode(
-            request.GET.get("compare"),
+            compare_mode_source,
             finite_range=has_finite_range,
         )
         selected_range_name = _identify_predefined_range(error_start_date, error_end_date)
@@ -679,6 +703,33 @@ def update_top_talent_sort(request):
             "changed": changed,
             "requires_reload": requires_reload,
             "grid_html": grid_html,
+        },
+    )
+
+
+@require_POST
+def update_statistics_compare_mode(request):
+    """Autosave statistics comparison mode preference from page controls."""
+    compare_mode = request.POST.get("compare_mode")
+
+    valid_compare_values = list(StatisticsCompareChoices.values)
+    if compare_mode not in valid_compare_values:
+        return JsonResponse(
+            {
+                "error": "Invalid compare_mode",
+                "valid_values": valid_compare_values,
+            },
+            status=400,
+        )
+
+    previous_mode = request.user.statistics_compare_mode
+    updated_mode = request.user.update_preference("statistics_compare_mode", compare_mode)
+
+    return JsonResponse(
+        {
+            "success": True,
+            "changed": previous_mode != updated_mode,
+            "compare_mode": updated_mode,
         },
     )
 

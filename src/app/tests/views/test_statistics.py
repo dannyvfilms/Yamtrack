@@ -399,6 +399,38 @@ class StatisticsViewTests(TestCase):
             "1h 0min",
         )
 
+    def test_statistics_view_uses_saved_compare_mode_when_query_is_absent(self):
+        """Finite statistics ranges should fall back to the saved compare preference."""
+        cache.clear()
+        self.user.statistics_compare_mode = "last_year"
+        self.user.save(update_fields=["statistics_compare_mode"])
+        self.client.login(**self.credentials)
+
+        current_date = date(2026, 3, 1)
+        last_year_date = date(2025, 3, 1)
+        self._create_movie_play("movie-current-saved-last-year", "Current Movie", current_date, 90)
+        self._create_movie_play("movie-saved-last-year", "Last Year Movie", last_year_date, 60)
+
+        response = self.client.get(
+            reverse("statistics")
+            + f"?start-date={current_date.isoformat()}&end-date={current_date.isoformat()}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_compare_mode"], "last_year")
+
+    def test_statistics_view_ignores_saved_compare_mode_for_all_time(self):
+        """All-time statistics should still force no comparison."""
+        cache.clear()
+        self.user.statistics_compare_mode = "last_year"
+        self.user.save(update_fields=["statistics_compare_mode"])
+        self.client.login(**self.credentials)
+
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_compare_mode"], "none")
+
     def test_statistics_view_uses_year_labels_for_ytd_last_year_comparison(self):
         """Year-to-date cards should prefer semantic year labels over raw date spans."""
         cache.clear()
@@ -1927,6 +1959,39 @@ class StatisticsViewTests(TestCase):
         mock_invalidate.assert_not_called()
         mock_refresh.assert_not_called()
         mock_schedule_all_ranges_refresh.assert_not_called()
+
+    def test_update_statistics_compare_mode_updates_preference(self):
+        """Statistics compare autosave should persist the selected preference."""
+        self.user.statistics_compare_mode = "previous_period"
+        self.user.save(update_fields=["statistics_compare_mode"])
+
+        response = self.client.post(
+            reverse("update_statistics_compare_mode"),
+            {"compare_mode": "last_year"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["changed"])
+        self.assertEqual(payload["compare_mode"], "last_year")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.statistics_compare_mode, "last_year")
+
+    def test_update_statistics_compare_mode_rejects_invalid_value(self):
+        """Statistics compare autosave should reject invalid values."""
+        self.user.statistics_compare_mode = "previous_period"
+        self.user.save(update_fields=["statistics_compare_mode"])
+
+        response = self.client.post(
+            reverse("update_statistics_compare_mode"),
+            {"compare_mode": "not_valid"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.statistics_compare_mode, "previous_period")
 
     @patch("app.views.statistics_cache.schedule_all_ranges_refresh")
     @patch("app.views.statistics_cache.refresh_statistics_cache")

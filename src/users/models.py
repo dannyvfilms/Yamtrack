@@ -200,6 +200,14 @@ class TopTalentSortChoices(models.TextChoices):
     TITLES = "titles", "Titles"
 
 
+class StatisticsCompareChoices(models.TextChoices):
+    """Choices for the default comparison mode on the statistics page."""
+
+    PREVIOUS_PERIOD = "previous_period", "Previous period"
+    LAST_YEAR = "last_year", "Last year"
+    NONE = "none", "No comparison"
+
+
 class GameLoggingStyleChoices(models.TextChoices):
     """Choices for how game history entries are displayed."""
 
@@ -822,6 +830,12 @@ class User(AbstractUser):
         choices=StatisticsRangeChoices.choices,
         help_text="Default predefined range for the Statistics page",
     )
+    statistics_compare_mode = models.CharField(
+        max_length=20,
+        default=StatisticsCompareChoices.PREVIOUS_PERIOD,
+        choices=StatisticsCompareChoices.choices,
+        help_text="Default comparison mode for finite ranges on the Statistics page",
+    )
     top_talent_sort_by = models.CharField(
         max_length=20,
         default=TopTalentSortChoices.PLAYS,
@@ -1042,6 +1056,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="statistics_default_range_valid",
                 condition=models.Q(statistics_default_range__in=StatisticsRangeChoices.values),
+            ),
+            models.CheckConstraint(
+                name="statistics_compare_mode_valid",
+                condition=models.Q(statistics_compare_mode__in=StatisticsCompareChoices.values),
             ),
             models.CheckConstraint(
                 name="top_talent_sort_by_valid",

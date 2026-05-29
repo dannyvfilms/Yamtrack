@@ -211,6 +211,7 @@ from app.statistics_views import (
     _statistics_day_boundary,
     refresh_statistics,
     statistics,
+    update_statistics_compare_mode,
     update_top_talent_sort,
 )
 

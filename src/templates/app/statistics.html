@@ -623,6 +623,7 @@
     initialEndDate: '{{ end_date_str|default:""|escapejs }}',
     initialCompareMode: '{{ selected_compare_mode|default:"previous_period"|escapejs }}',
     refreshUrl: '{% url "refresh_statistics" %}',
+    compareModeUpdateUrl: '{% url "update_statistics_compare_mode" %}',
     csrfToken: '{{ csrf_token }}'
   })" x-init="init()">
     <div class="mb-4 sm:mb-8">

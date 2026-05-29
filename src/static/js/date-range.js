@@ -5,6 +5,7 @@ function dateRangePicker(options = {}) {
     initialEndDate = "",
     initialCompareMode = "previous_period",
     refreshUrl = "",
+    compareModeUpdateUrl = "",
     csrfToken = "",
   } = options;
 
@@ -146,14 +147,22 @@ function dateRangePicker(options = {}) {
       return mode !== "none" && !this.hasFiniteRange();
     },
 
-    selectComparisonMode(mode) {
+    async selectComparisonMode(mode) {
       if (this.isComparisonDisabled(mode) || this.compareMode === mode) {
         this.isCompareOpen = false;
         return;
       }
 
+      const previousMode = this.compareMode;
       this.compareMode = mode;
       this.isCompareOpen = false;
+      try {
+        await this.saveCompareModePreference(mode);
+      } catch (error) {
+        this.compareMode = previousMode;
+        console.error("Failed to save statistics compare mode:", error);
+        return;
+      }
       this.applyDateFilter();
     },
 
@@ -268,6 +277,30 @@ function dateRangePicker(options = {}) {
       url.searchParams.set("end-date", this.endDate);
       url.searchParams.set("compare", this.normalizeCompareMode(this.compareMode));
       window.location.href = url.toString();
+    },
+
+    async saveCompareModePreference(mode) {
+      if (!compareModeUpdateUrl) {
+        return;
+      }
+
+      const body = new URLSearchParams();
+      body.set("compare_mode", mode);
+
+      const response = await fetch(compareModeUpdateUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-CSRFToken": csrfToken,
+          "X-Requested-With": "XMLHttpRequest",
+        },
+        body: body.toString(),
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || "Failed to save compare mode");
+      }
     },
 
     formatDisplayDate(dateString) {
