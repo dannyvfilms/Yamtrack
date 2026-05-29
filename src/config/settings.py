@@ -77,14 +77,15 @@ def secret(key, default=undefined, **kwargs):
 # See https://docs.djangoproject.com/en/stable/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config(
-    "SECRET",
-    default=secret("SECRET_FILE", default="ifx7bdUWo5EwC2NQNihjRjOrW00Cdv5Y"),
-)
+SECRET_KEY = config("SECRET", default=secret("SECRET_FILE", default=None))
+if not SECRET_KEY:
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured("SECRET env var or SECRET_FILE must be set")
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config("DEBUG", default=True, cast=bool)
+DEBUG = config("DEBUG", default=False, cast=bool)
 ENABLE_DEBUG_TOOLBAR = DEBUG and config(
     "ENABLE_DEBUG_TOOLBAR",
     default=True,
@@ -98,7 +99,7 @@ DEBUG_TOOLBAR_INCLUDE_TEMPLATES_PANEL = config(
 
 INTERNAL_IPS = ["127.0.0.1"]
 
-ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="*", cast=Csv())
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
 if ALLOWED_HOSTS != ["*"]:
     if "localhost" not in ALLOWED_HOSTS:
