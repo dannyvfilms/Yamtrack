@@ -88,14 +88,34 @@ if isinstance(SECRET_KEY, Undefined):
     SECRET_KEY = None
 
 if not SECRET_KEY:
-    from django.core.exceptions import ImproperlyConfigured
+    if Path("/.dockerenv").exists():
+        # Docker container: auto-generate and persist to the db volume so the
+        # key survives container restarts without user intervention.
+        import secrets as _secrets
+        import warnings
 
-    raise ImproperlyConfigured(
-        "SECRET env var is not set. To fix, run:\n\n"
-        "  python -c \""
-        "import secrets; print('SECRET=' + secrets.token_urlsafe(50))"
-        "\" >> .env\n"
-    )
+        _secret_file = BASE_DIR / "db" / "secret_key"
+        if _secret_file.exists():
+            SECRET_KEY = _secret_file.read_text().strip()
+        else:
+            SECRET_KEY = _secrets.token_urlsafe(50)
+            _secret_file.parent.mkdir(parents=True, exist_ok=True)
+            _secret_file.write_text(SECRET_KEY)
+            warnings.warn(
+                "SECRET env var is not set. A random key has been generated and "
+                f"saved to {_secret_file}. For production, set SECRET explicitly "
+                "in your docker-compose.yml environment section.",
+                stacklevel=2,
+            )
+    else:
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            "SECRET env var is not set. To fix, run:\n\n"
+            "  python -c \""
+            "import secrets; print('SECRET=' + secrets.token_urlsafe(50))"
+            "\" >> .env\n"
+        )
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
