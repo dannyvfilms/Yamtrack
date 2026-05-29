@@ -133,7 +133,10 @@ DEBUG_TOOLBAR_INCLUDE_TEMPLATES_PANEL = config(
 
 INTERNAL_IPS = ["127.0.0.1"]
 
-ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+# Docker users access via unpredictable LAN IPs, so keep the permissive
+# default there. Local dev gets a strict default.
+_allowed_hosts_default = "*" if Path("/.dockerenv").exists() else "localhost,127.0.0.1"
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default=_allowed_hosts_default, cast=Csv())
 
 if ALLOWED_HOSTS != ["*"]:
     if "localhost" not in ALLOWED_HOSTS:
