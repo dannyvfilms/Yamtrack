@@ -1341,6 +1341,17 @@ def cache_status(request):
 
 
 @require_GET
+def date_range_script(request):
+    """Serve the statistics date-range picker script."""
+    script_path = Path(settings.STATICFILES_DIRS[0]) / "js" / "date-range.js"
+    with script_path.open(encoding="utf-8") as script_file:
+        return HttpResponse(
+            script_file.read(),
+            content_type="application/javascript",
+        )
+
+
+@require_GET
 def service_worker(request):
     """Serve the service worker file from static files."""
     sw_path = Path(settings.STATICFILES_DIRS[0]) / "js" / "serviceworker.js"
@@ -1351,4 +1362,3 @@ def service_worker(request):
     response["Pragma"] = "no-cache"
     response["Expires"] = "0"
     return response
-

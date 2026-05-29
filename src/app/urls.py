@@ -167,6 +167,7 @@ urlpatterns = [
         name="active_playback_fragment",
     ),
     path("api/cache-status/", views.cache_status, name="cache_status"),
+    path("static/js/date-range.js", views.date_range_script, name="date_range_script"),
     path("serviceworker.js", views.service_worker, name="service_worker"),
     # Music hierarchy navigation
     path("music/artist/<int:artist_id>/", views.artist_detail, name="artist_detail"),

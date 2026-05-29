@@ -5,14 +5,16 @@ The `urlpatterns` list routes URLs to views. For more information please see:
 
 """
 
+import re
+
 from allauth.account import views as allauth_account_views
 from allauth.socialaccount import views as allauth_social_account_views
 from allauth.urls import build_provider_urlpatterns
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
 from django.contrib.auth.decorators import login_not_required
-from django.urls import include, path
+from django.urls import include, path, re_path
+from django.views.static import serve
 from health_check.views import MainView
 
 handler400 = "app.error_views.bad_request"
@@ -86,6 +88,14 @@ if settings.ADMIN_ENABLED:
 if settings.ENABLE_DEBUG_TOOLBAR:
     urlpatterns.append(path("__debug__/", include("debug_toolbar.urls")))
 
-# Serve static files in development
-if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=str(settings.STATICFILES_DIRS[0]))
+# Serve static files for local Django commands like runserver even when
+# DEBUG is disabled in the user's .env.
+if not settings.IS_PROD:
+    static_url_pattern = re.escape(settings.STATIC_URL.lstrip("/"))
+    urlpatterns.append(
+        re_path(
+            rf"^{static_url_pattern}(?P<path>.*)$",
+            serve,
+            {"document_root": str(settings.STATICFILES_DIRS[0])},
+        ),
+    )

@@ -557,3 +557,9 @@ function formatDateForInput(date) {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+if (typeof window !== "undefined") {
+  // Keep the controller on window for Alpine expressions in the statistics page.
+  // The separate asset is loaded outside the inline Alpine scope.
+  window.dateRangePicker = dateRangePicker;
+}
