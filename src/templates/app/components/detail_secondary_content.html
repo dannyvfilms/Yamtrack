@@ -155,20 +155,37 @@
           {% for key, value in media.details.items %}
             {% if not authors_linked or key not in author_detail_keys %}
               {% if not studios_linked or key not in studio_detail_keys %}
-                {% if key != "themes" %}
+                {% if key != "themes" and key != "last_air_date" and key != "episodes" and key != "runtime" and key != "seasons" %}
                 <div class="mb-4">
-                  <h3 class="text-sm font-semibold text-gray-400">{{ key|no_underscore|upper }}</h3>
-                  {% if value|is_list %}
-                    {% for item in value %}<p class="text-gray-200">{{ item|iso_date_format:request.user }}</p>{% endfor %}
+                  {% if key == "first_air_date" %}
+                    <h3 class="text-sm font-semibold text-gray-400 tracking-wide">AIR DATES</h3>
+                    <p class="text-sm text-gray-200">
+                      {{ value|user_date_format:user|default_if_none:"Unknown" }}{% if media.details.last_air_date %} – {{ media.details.last_air_date|user_date_format:user }}{% endif %}
+                    </p>
+                  {% elif key == "total_runtime" %}
+                    <h3 class="text-sm font-semibold text-gray-400 tracking-wide">RUNTIME{% if media.details.seasons %} ({{ media.details.seasons }} SEASON{{ media.details.seasons|pluralize }}){% endif %}</h3>
+                    <p class="text-sm text-gray-200">
+                      {{ value|default_if_none:"Unknown" }}{% if media.details.episodes %}<span class="text-gray-500 mx-1">·</span>{{ media.details.episodes }} episode{{ media.details.episodes|pluralize }}{% endif %}
+                    </p>
                   {% else %}
-                    {% if key == 'first_air_date' or key == 'last_air_date' %}
-                      <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
-                    {% elif key == 'format' and media_type == MediaTypes.ANIME.value %}
-                      <p class="text-gray-200">Anime</p>
+                    <h3 class="text-sm font-semibold text-gray-400 tracking-wide">{{ key|no_underscore|upper }}</h3>
+                    {% if value|is_list %}
+                      {% for item in value %}<p class="text-sm text-gray-200">{{ item|iso_date_format:request.user }}</p>{% endfor %}
                     {% else %}
-                      <p class="text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
+                      {% if key == 'format' and media_type == MediaTypes.ANIME.value %}
+                        <p class="text-sm text-gray-200">Anime</p>
+                      {% else %}
+                        <p class="text-sm text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
+                      {% endif %}
                     {% endif %}
                   {% endif %}
+                </div>
+                {% elif key == "runtime" and not media.details.total_runtime %}
+                <div class="mb-4">
+                  <h3 class="text-sm font-semibold text-gray-400 tracking-wide">RUNTIME</h3>
+                  <p class="text-sm text-gray-200">
+                    {{ value|default_if_none:"Unknown" }}{% if media.details.episodes %}<span class="text-gray-500 mx-1">·</span>{{ media.details.episodes }} episode{{ media.details.episodes|pluralize }}{% endif %}
+                  </p>
                 </div>
                 {% endif %}
               {% endif %}
@@ -196,7 +213,7 @@
           <div class="flex flex-col gap-1">
             {% for studio in studios_linked|slice:":12" %}
               <a href="{{ studio|studio_url }}"
-                 class="text-gray-200 hover:text-indigo-500 transition-colors duration-200">
+                 class="text-sm text-gray-200 hover:text-indigo-500 transition-colors duration-200">
                 {{ studio.name|default:"Unknown Studio" }}
               </a>
             {% endfor %}
@@ -234,7 +251,7 @@
               {# For seasons, only show episode stats #}
               <div class="{% if has_collection_data %}mb-4{% endif %}">
                 <h3 class="text-sm font-semibold text-gray-400">COLLECTED EPISODES</h3>
-                <p class="text-gray-200">
+                <p class="text-sm text-gray-200">
                   {{ collection_stats.collected_episodes }}/{{ collection_stats.total_episodes }}
                   {% if collection_stats.total_episodes > 0 %}
                     {% widthratio collection_stats.collected_episodes collection_stats.total_episodes 100 as episode_percentage %}
@@ -248,7 +265,7 @@
               {# For TV shows/Anime, show season and episode stats #}
               <div class="mb-4">
                 <h3 class="text-sm font-semibold text-gray-400">COLLECTED SEASONS</h3>
-                <p class="text-gray-200">
+                <p class="text-sm text-gray-200">
                   {{ collection_stats.collected_seasons }}/{{ collection_stats.total_seasons }}
                   {% if collection_stats.total_seasons > 0 %}
                     {% widthratio collection_stats.collected_seasons collection_stats.total_seasons 100 as season_percentage %}
@@ -260,7 +277,7 @@
               
               <div class="{% if has_collection_data %}mb-4{% endif %}">
                 <h3 class="text-sm font-semibold text-gray-400">COLLECTED EPISODES</h3>
-                <p class="text-gray-200">
+                <p class="text-sm text-gray-200">
                   {{ collection_stats.collected_episodes }}/{{ collection_stats.total_episodes }}
                   {% if collection_stats.total_episodes > 0 %}
                     {% widthratio collection_stats.collected_episodes collection_stats.total_episodes 100 as episode_percentage %}

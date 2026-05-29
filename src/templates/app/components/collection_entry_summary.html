@@ -8,7 +8,7 @@
       {% if show_date != False and not show_delete and collection_entry.collected_at %}
         <div class="flex items-start justify-between gap-3">
           {% if show_format_header != False %}
-            <p class="text-xs tracking-wide text-gray-400">
+            <p class="text-sm tracking-wide text-gray-400">
               {% if collection_entry.media_type %}
                 Format: {{ collection_entry.media_type|title_preserve_acronyms }}
               {% else %}
@@ -16,10 +16,10 @@
               {% endif %}
             </p>
           {% endif %}
-          <p class="text-xs text-gray-400 whitespace-nowrap">{{ collection_entry.collected_at|user_date_format:user }}</p>
+          <p class="text-sm text-gray-400 whitespace-nowrap">{{ collection_entry.collected_at|user_date_format:user }}</p>
         </div>
       {% elif show_format_header != False %}
-        <p class="text-xs tracking-wide text-gray-400">
+        <p class="text-sm tracking-wide text-gray-400">
           {% if collection_entry.media_type %}
             Format: {{ collection_entry.media_type|title_preserve_acronyms }}
           {% else %}
@@ -55,7 +55,7 @@
       {% if show_entry_details != False %}
       {% if media_type == "game" %}
         {% if source_style_game_meta %}
-          <p class="{% if show_format_header != False %}mt-1 {% endif %}text-gray-200 leading-tight break-words">
+          <p class="{% if show_format_header != False %}mt-1 {% endif %}text-sm text-gray-200 leading-tight break-words">
             {% if collection_entry.resolution %}
               {{ collection_entry.resolution }}
             {% elif collection_entry.media_type %}
@@ -95,46 +95,16 @@
           {% endif %}
         {% endif %}
       {% else %}
-        <p class="mt-1 text-base font-semibold leading-tight text-gray-100 break-words">
-          {% if collection_entry.media_type %}
-            {{ collection_entry.media_type|title_preserve_acronyms }}
-          {% elif collection_entry.resolution %}
-            {{ collection_entry.resolution }}
-          {% elif collection_entry.audio_codec %}
-            {{ collection_entry.audio_codec }}
-          {% else %}
-            Collection Entry
-          {% endif %}
-        </p>
-        {% if collection_entry.resolution or collection_entry.hdr %}
-          <p class="mt-0.5 text-sm text-gray-400 leading-tight">
+        {% if collection_entry.resolution or collection_entry.hdr or collection_entry.audio_codec or collection_entry.audio_channels or collection_entry.bitrate or collection_entry.is_3d %}
+          <p class="mt-1 text-sm text-gray-200 leading-tight">
             {% if collection_entry.resolution %}{{ collection_entry.resolution }}{% endif %}
-            {% if collection_entry.resolution and collection_entry.hdr %} • {% endif %}
-            {% if collection_entry.hdr %}{{ collection_entry.hdr }}{% endif %}
+            {% if collection_entry.hdr %}{% if collection_entry.resolution %} • {% endif %}{{ collection_entry.hdr }}{% endif %}
+            {% if collection_entry.audio_codec %}{% if collection_entry.resolution or collection_entry.hdr %} • {% endif %}{{ collection_entry.audio_codec }}{% endif %}
+            {% if collection_entry.audio_channels %}{% if collection_entry.resolution or collection_entry.hdr or collection_entry.audio_codec %} • {% endif %}{{ collection_entry.audio_channels }}{% endif %}
+            {% if collection_entry.bitrate %}{% if collection_entry.resolution or collection_entry.hdr or collection_entry.audio_codec or collection_entry.audio_channels %} • {% endif %}{{ collection_entry.bitrate }} kbps{% endif %}
+            {% if collection_entry.is_3d %}{% if collection_entry.resolution or collection_entry.hdr or collection_entry.audio_codec or collection_entry.audio_channels or collection_entry.bitrate %} • {% endif %}3D{% endif %}
           </p>
         {% endif %}
-      {% endif %}
-
-      {% if collection_entry.audio_codec or collection_entry.audio_channels or collection_entry.bitrate or collection_entry.is_3d %}
-        <p class="mt-2 text-sm text-gray-300">
-          {% if collection_entry.audio_codec %}{{ collection_entry.audio_codec }}{% endif %}
-          {% if collection_entry.audio_codec and collection_entry.audio_channels %} • {% endif %}
-          {% if collection_entry.audio_channels %}{{ collection_entry.audio_channels }}{% endif %}
-          {% if collection_entry.bitrate and collection_entry.audio_codec %}
-            •
-          {% elif collection_entry.bitrate and collection_entry.audio_channels %}
-            •
-          {% endif %}
-          {% if collection_entry.bitrate %}{{ collection_entry.bitrate }} kbps{% endif %}
-          {% if collection_entry.is_3d and collection_entry.audio_codec %}
-            •
-          {% elif collection_entry.is_3d and collection_entry.audio_channels %}
-            •
-          {% elif collection_entry.is_3d and collection_entry.bitrate %}
-            •
-          {% endif %}
-          {% if collection_entry.is_3d %}3D{% endif %}
-        </p>
       {% endif %}
       {% endif %}
     </div>
