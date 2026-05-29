@@ -78,8 +78,13 @@ def secret(key, default=undefined, **kwargs):
 
 # SECURITY WARNING: keep the secret key used in production secret!
 try:
-    SECRET_KEY = config("SECRET", default=secret("SECRET_FILE", default=None))
+    SECRET_KEY = config("SECRET")
 except UndefinedValueError:
+    SECRET_KEY = secret("SECRET_FILE")
+
+# secret() returns the `undefined` sentinel (truthy) when the env var is absent;
+# normalize it so the check below works correctly.
+if isinstance(SECRET_KEY, Undefined):
     SECRET_KEY = None
 
 if not SECRET_KEY:
