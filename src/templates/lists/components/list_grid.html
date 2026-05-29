@@ -8,10 +8,10 @@
          style="aspect-ratio: 3/2 !important;">
       <div class="relative">
         <a href="{% url 'list_detail' custom_list.public_reference %}">
-          <img alt="{{ custom_list.name }}"
-               class="media-card-poster lazyload w-full aspect-[3/2] bg-[#3e454d] {% if custom_list.image != IMG_NONE %}object-cover{% endif %}"
-               data-src="{{ custom_list.image }}"
-               src="{{ IMG_NONE }}">
+          <div class="media-card-poster w-full aspect-[3/2] bg-[#3e454d] animate-pulse"
+               hx-get="{% url 'list_cover_image' custom_list.id %}"
+               hx-trigger="revealed"
+               hx-swap="outerHTML"></div>
         </a>
 
         {% if not profile_username and custom_list.form %}

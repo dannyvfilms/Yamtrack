@@ -790,6 +790,33 @@ def lists(request):
 
 
 @login_required
+@require_GET
+def list_cover_image(request, list_id):
+    """Return an <img> fragment for a list card's cover image (HTMX lazy load).
+
+    Called per-card via hx-trigger="revealed" so the expensive IGDB/TMDB
+    backdrop lookups happen after the page has already rendered.
+    """
+    custom_list = get_object_or_404(
+        CustomList.objects.prefetch_related(
+            Prefetch(
+                "customlistitem_set",
+                queryset=CustomListItem.objects.select_related("item").order_by(
+                    "-date_added"
+                ),
+            )
+        ),
+        id=list_id,
+    )
+    image_url = custom_list.image
+    return render(
+        request,
+        "lists/components/list_cover_image.html",
+        {"image_url": image_url, "name": custom_list.name},
+    )
+
+
+@login_required
 @require_POST
 def trakt_lists_credentials(request):
     """Store Trakt client credentials for list imports."""

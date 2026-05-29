@@ -1,0 +1,4 @@
+{% load app_tags %}
+<img alt="{{ name }}"
+     class="media-card-poster w-full aspect-[3/2] bg-[#3e454d] {% if image_url != IMG_NONE %}object-cover{% endif %}"
+     src="{{ image_url }}">

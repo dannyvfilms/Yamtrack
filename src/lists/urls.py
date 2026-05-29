@@ -37,6 +37,11 @@ urlpatterns = [
     path("list/<slug:list_reference>/rss", feeds.list_rss_feed, name="list_rss"),
     path("list/<slug:list_reference>/json", feeds.list_json, name="list_json"),
     path(
+        "list/<int:list_id>/cover-image",
+        views.list_cover_image,
+        name="list_cover_image",
+    ),
+    path(
         "list/<int:list_id>/reorder",
         views.reorder_list_item,
         name="list_reorder_item",
