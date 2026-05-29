@@ -22,15 +22,15 @@ from app.discover.provider_candidates import (
     _musicbrainz_coming_soon_recording_candidates,
     _provider_row_candidates,
 )
+from app.discover.entry_candidates import _entries_to_candidates
+from app.discover.row_cache_schema import ROW_CACHE_ACTIVITY_VERSION_META_KEY
 from app.discover.service import (
     MAX_ITEMS_PER_ROW,
-    ROW_CACHE_ACTIVITY_VERSION_META_KEY,
     _apply_comfort_confidence,
     _apply_wildcard_novelty,
     _build_comfort_debug_payload,
     _clear_out_next_candidates,
     _comfort_candidates,
-    _entries_to_candidates,
     _get_all_media_component_rows,
     _prepare_row_from_candidates,
     _rewatch_counts,

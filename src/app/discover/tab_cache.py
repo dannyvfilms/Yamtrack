@@ -878,7 +878,7 @@ def apply_cached_action(
     preloaded_payloads: list[dict] | None = None,
 ) -> list[RowResult] | None:
     """Optimistically patch cached Discover tabs after a card action."""
-    from app.discover.service import hydrate_visible_row_artwork
+    from app.discover.artwork import hydrate_visible_row_artwork
 
     started = time.monotonic()
     normalized_active_media_type = _normalize_media_type(active_media_type)

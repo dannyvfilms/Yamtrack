@@ -4,25 +4,14 @@ from __future__ import annotations
 
 import logging
 import math
-from collections import defaultdict
 from datetime import timedelta
 
-from django.conf import settings
 from django.core.cache import cache
 from django.db import OperationalError
-from django.db.models import Q
 from django.utils import timezone
 
 from app.discover import cache_repo, tab_cache
 from app.discover.provider_candidates import _provider_row_candidates
-from app.discover.feature_metadata import (
-    normalize_certification,
-    normalize_features,
-    normalize_keyword,
-    normalize_studio,
-    release_decade_label,
-    runtime_bucket_label,
-)
 from app.discover.filters import (
     dedupe_candidates,
     exclude_tracked_items,
@@ -42,9 +31,44 @@ from app.discover.comfort_scoring import (
 from app.discover.match_signals import (
     _row_match_signal,
     _row_match_signal_with_details,
+    _wildcard_genres,
+)
+from app.discover.trakt_candidates import (
+    ADAPTIVE_PULL_TARGET_META_KEY,
+    ROW_CACHE_SCHEMA_META_KEY,
+    _genre_discovery_candidates,
+    _merge_unique_candidates,
+    _related_candidates_for_anchors,
+    _related_row_candidates,
+    _select_recent_anchors,
+    _top_profile_genres,
+    _trakt_anticipated_candidates,
+    _trakt_canon_candidates,
 )
 from app.discover.profile import MODEL_BY_MEDIA_TYPE, get_or_compute_taste_profile
-from app.discover.adapters import TMDB_ADAPTER, TRAKT_ADAPTER
+from app.discover.adapters import TMDB_ADAPTER
+from app.discover.artwork import (
+    PROVIDER_ARTWORK_HYDRATION_ROW_KEYS,
+    _hydrate_provider_ranked_artwork,
+    _hydrate_trakt_ranked_artwork,
+    _row_ttl_seconds,
+    hydrate_visible_row_artwork,
+)
+from app.discover.entry_candidates import (
+    _clear_out_next_entries,
+    _coerce_media_type,
+    _entries_to_candidates,
+    _in_progress_candidates,
+    _planning_candidates,
+)
+from app.discover.row_cache_schema import (
+    ROW_CACHE_ACTIVITY_VERSION_META_KEY,
+    _apply_row_definition_metadata,
+    _is_row_cache_compatible,
+    _required_row_cache_schema_version,
+    _row_cache_matches_activity_version,
+    _row_requires_artwork_rebuild,
+)
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
 from app.discover.service_helpers import (
     BEHAVIOR_FIRST_MEDIA_TYPES,
@@ -57,8 +81,6 @@ from app.discover.service_helpers import (
     _calibrate_display_score,
     _clamp_unit,
     _entry_activity_datetime,
-    _item_credit_feature_maps,
-    _item_studio_map,
     _item_tag_map,
     _model_for_media_type,
     _model_has_field,
@@ -67,51 +89,16 @@ from app.discover.service_helpers import (
 from app.discover.schemas import CandidateItem, DiscoverPayload, RowDefinition, RowResult
 from app.discover.scoring import score_candidates
 from app.models import (
-    BasicMedia,
     Item,
     MediaTypes,
-    Season,
-    Sources,
     Status,
 )
-from app.providers import services
 
 logger = logging.getLogger(__name__)
 
-ROW_CACHE_TTL_SECONDS = 60 * 60
-ROW_CACHE_TTL_LOCAL_SECONDS = 60 * 30
 STALE_REFRESH_LOCK_SECONDS = 60
-TRAKT_POPULAR_PAGE_SIZE = 100
-TRAKT_POPULAR_PULL_STEP = 100
-TRAKT_POPULAR_DEFAULT_PULL_TARGET = 100
-TRAKT_POPULAR_MAX_PULL_TARGET = 2000
-ADAPTIVE_PULL_TARGET_META_KEY = "adaptive_pull_target"
-ROW_CACHE_SCHEMA_META_KEY = "schema_version"
-ROW_CACHE_ACTIVITY_VERSION_META_KEY = "activity_version"
-MOVIE_CANON_ROW_SCHEMA_VERSION = 2
-MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
-MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 6
-TV_ANIME_TRAKT_ROW_SCHEMA_VERSION = 1
-TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 4
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
 ARTWORK_HYDRATION_ITEMS_PER_ROW = MAX_ITEMS_PER_ROW * 2
-MOVIE_PERSONALIZED_ROW_KEYS = {
-    "top_picks_for_you",
-    "comfort_rewatches",
-}
-TV_ANIME_PERSONALIZED_ROW_KEYS = {
-    "top_picks_for_you",
-    "clear_out_next",
-    "comfort_rewatches",
-}
-TV_ANIME_ROW_KEYS = {
-    "trending_right_now",
-    "all_time_greats_unseen",
-    "coming_soon",
-    "top_picks_for_you",
-    "clear_out_next",
-    "comfort_rewatches",
-}
 FIVE_ROW_DISCOVER_KEYS = {
     "trending_right_now",
     "all_time_greats_unseen",
@@ -137,225 +124,6 @@ ALWAYS_VISIBLE_EMPTY_ROWS = {
     "continue_up_next",
     "next_episode",
 }
-PROVIDER_ARTWORK_HYDRATION_ROW_KEYS = {
-    "trending_right_now",
-    "all_time_greats_unseen",
-    "coming_soon",
-}
-
-
-def _coerce_media_type(media_type: str | None) -> str:
-    media_type = (media_type or ALL_MEDIA_KEY).strip().lower()
-    if media_type == ALL_MEDIA_KEY:
-        return media_type
-    if media_type in DISCOVER_MEDIA_TYPES:
-        return media_type
-    return ALL_MEDIA_KEY
-
-
-def _entries_to_candidates(
-    entries,
-    *,
-    user,
-    row_key: str,
-    source_reason: str,
-    override_media_type: str | None = None,
-    rewatch_counts: dict[int, float] | None = None,
-    phase_evidence_by_item: dict[int, float] | None = None,
-    phase_pool_bucket_by_item: dict[int, str] | None = None,
-    recent_history_tag_coverage: float | None = None,
-) -> list[CandidateItem]:
-    entries = list(entries)
-    if not entries:
-        return []
-    rewatch_counts = rewatch_counts or {}
-    phase_evidence_by_item = phase_evidence_by_item or {}
-    phase_pool_bucket_by_item = phase_pool_bucket_by_item or {}
-
-    item_ids = [entry.item_id for entry in entries if entry.item_id]
-    tag_map = _item_tag_map(user, item_ids)
-
-    include_people = bool(
-        override_media_type in BEHAVIOR_FIRST_MEDIA_TYPES
-        or (entries and entries[0].item.media_type in BEHAVIOR_FIRST_MEDIA_TYPES)
-    )
-    people_map: dict[int, list[str]] = defaultdict(list)
-    directors_map: dict[int, list[str]] = defaultdict(list)
-    lead_cast_map: dict[int, list[str]] = defaultdict(list)
-    studio_map: dict[int, list[str]] = defaultdict(list)
-    if include_people:
-        people_map, directors_map, lead_cast_map = _item_credit_feature_maps(item_ids)
-        studio_map = _item_studio_map(item_ids)
-
-    candidates: list[CandidateItem] = []
-    for entry in entries:
-        item = entry.item
-        media_type = override_media_type or item.media_type
-        release_date = item.release_datetime.date().isoformat() if item.release_datetime else None
-        activity_dt = _entry_activity_datetime(entry)
-        entry_status = str(getattr(entry, "status", "") or "")
-        candidate = CandidateItem(
-            media_type=media_type,
-            source=item.source,
-            media_id=str(item.media_id),
-            title=item.title,
-            original_title=item.original_title,
-            localized_title=item.localized_title,
-            image=item.image,
-            release_date=release_date,
-            activity_at=activity_dt.isoformat() if activity_dt else None,
-            genres=[str(genre).strip() for genre in (item.genres or []) if str(genre).strip()],
-            tags=tag_map.get(item.id, []),
-            people=people_map.get(item.id, []),
-            keywords=normalize_features(item.provider_keywords or [], normalize_keyword),
-            studios=studio_map.get(item.id) or normalize_features(item.studios or [], normalize_studio),
-            directors=directors_map.get(item.id, []),
-            lead_cast=lead_cast_map.get(item.id, []),
-            collection_id=str(item.provider_collection_id or "").strip() or None,
-            collection_name=str(item.provider_collection_name or "").strip() or None,
-            certification=normalize_certification(item.provider_certification) or None,
-            runtime_bucket=runtime_bucket_label(item.runtime_minutes) or None,
-            release_decade=release_decade_label(item.release_datetime) or None,
-            popularity=item.provider_popularity,
-            rating=item.provider_rating,
-            rating_count=item.provider_rating_count,
-            row_key=row_key,
-            source_reason=source_reason,
-        )
-        candidate.score_breakdown["provider_rating"] = item.provider_rating
-        candidate.score_breakdown["provider_rating_count"] = item.provider_rating_count
-        candidate.score_breakdown["trakt_rating"] = item.trakt_rating
-        candidate.score_breakdown["trakt_rating_count"] = item.trakt_rating_count
-        if getattr(entry, "score", None) is not None:
-            entry_score = float(entry.score)
-            candidate.score_breakdown["user_score"] = entry_score
-            if candidate.rating is None:
-                candidate.rating = entry_score
-        candidate.score_breakdown["rewatch_count"] = float(
-            rewatch_counts.get(item.id, 1),
-        )
-        candidate.score_breakdown["phase_evidence"] = float(
-            phase_evidence_by_item.get(item.id, 0.0),
-        )
-        if recent_history_tag_coverage is not None:
-            candidate.score_breakdown["recent_history_tag_coverage"] = float(
-                _clamp_unit(recent_history_tag_coverage),
-            )
-        phase_bucket = phase_pool_bucket_by_item.get(item.id, "")
-        candidate.score_breakdown["phase_pool_strong"] = 1.0 if phase_bucket == "strong_phase" else 0.0
-        candidate.score_breakdown["phase_pool_medium"] = 1.0 if phase_bucket == "medium_phase" else 0.0
-        candidate.score_breakdown["phase_pool_backfill"] = 1.0 if phase_bucket == "weak_backfill" else 0.0
-        candidate.score_breakdown["phase_pool_weak_only"] = 1.0 if phase_bucket == "weak_only" else 0.0
-        is_movie_top_picks_planning = (
-            row_key == "top_picks_for_you"
-            and media_type == MediaTypes.MOVIE.value
-            and entry_status == Status.PLANNING.value
-        )
-        if is_movie_top_picks_planning:
-            candidate.score_breakdown["planning_entry"] = 1.0
-            created_at = getattr(entry, "created_at", None)
-            if created_at:
-                candidate.score_breakdown["days_since_planned"] = float(
-                    max(0, (timezone.now() - created_at).days),
-                )
-        elif activity_dt:
-            candidate.score_breakdown["days_since_activity"] = float(
-                max(0, (timezone.now() - activity_dt).days),
-            )
-        candidates.append(candidate)
-
-    return candidates
-
-
-def _in_progress_candidates(user, media_type: str, *, row_key: str, source_reason: str) -> list[CandidateItem]:
-    if media_type == MediaTypes.TV.value and row_key == "next_episode":
-        entries = (
-            Season.objects.filter(user=user, status=Status.IN_PROGRESS.value)
-            .select_related("item")
-            .order_by("-progressed_at", "-created_at")
-        )
-        return _entries_to_candidates(
-            entries,
-            user=user,
-            row_key=row_key,
-            source_reason=source_reason,
-            override_media_type=MediaTypes.TV.value,
-        )
-
-    model = _model_for_media_type(media_type)
-    if not model:
-        return []
-    entries = (
-        model.objects.filter(user=user, status=Status.IN_PROGRESS.value)
-        .select_related("item")
-        .order_by(*_activity_ordering(model))
-    )
-    return _entries_to_candidates(
-        entries,
-        user=user,
-        row_key=row_key,
-        source_reason=source_reason,
-    )
-
-
-def _clear_out_next_entries(user, media_type: str):
-    model = _model_for_media_type(media_type)
-    if not model:
-        return []
-
-    entries = list(
-        model.objects.filter(user=user, status=Status.IN_PROGRESS.value)
-        .select_related("item")
-        .order_by(*_activity_ordering(model))
-    )
-    if not entries:
-        return []
-
-    BasicMedia.objects.annotate_max_progress(entries, media_type)
-    return [
-        entry
-        for entry in entries
-        if not _is_caught_up_in_progress_entry(entry)
-    ]
-
-
-def _is_caught_up_in_progress_entry(entry) -> bool:
-    max_progress = getattr(entry, "max_progress", None)
-    if max_progress is None:
-        return False
-
-    try:
-        max_progress_value = int(max_progress)
-    except (TypeError, ValueError):
-        return False
-
-    if max_progress_value <= 0:
-        return False
-
-    try:
-        progress_value = int(getattr(entry, "progress", 0) or 0)
-    except (TypeError, ValueError):
-        return False
-
-    return progress_value >= max_progress_value
-
-
-def _planning_candidates(user, media_type: str, *, row_key: str, source_reason: str) -> list[CandidateItem]:
-    model = _model_for_media_type(media_type)
-    if not model:
-        return []
-
-    entries = (
-        model.objects.filter(user=user, status=Status.PLANNING.value)
-        .select_related("item")
-        .order_by("-created_at")
-    )
-    return _entries_to_candidates(
-        entries,
-        user=user,
-        row_key=row_key,
-        source_reason=source_reason,
-    )
 
 
 def _recent_completed_tag_coverage(
@@ -531,308 +299,6 @@ def _comfort_candidates(
         phase_pool_bucket_by_item=phase_pool_bucket_by_item,
         recent_history_tag_coverage=recent_history_tag_coverage,
     )
-
-
-def _select_recent_anchors(user, media_type: str, *, max_anchors: int = 3):
-    model = _model_for_media_type(media_type)
-    if not model:
-        return []
-
-    anchors = (
-        model.objects.filter(user=user)
-        .filter(
-            Q(status=Status.COMPLETED.value)
-            | Q(score__gte=8),
-        )
-        .select_related("item")
-        .order_by("-end_date", "-progressed_at", "-created_at")[: max_anchors * 3]
-    )
-
-    selected = []
-    seen_ids = set()
-    for entry in anchors:
-        if entry.item_id in seen_ids:
-            continue
-        selected.append(entry)
-        seen_ids.add(entry.item_id)
-        if len(selected) >= max_anchors:
-            break
-
-    return selected
-
-def _clamp_adaptive_pull_target(value: int | None) -> int:
-    if value is None:
-        return TRAKT_POPULAR_DEFAULT_PULL_TARGET
-    return max(TRAKT_POPULAR_PAGE_SIZE, min(int(value), TRAKT_POPULAR_MAX_PULL_TARGET))
-
-
-def _get_cached_adaptive_pull_target(user_id: int, media_type: str, row_key: str) -> int:
-    cached_payload, _is_stale = cache_repo.get_row_cache(user_id, media_type, row_key)
-    if not cached_payload:
-        return TRAKT_POPULAR_DEFAULT_PULL_TARGET
-
-    meta = cached_payload.get("meta")
-    if not isinstance(meta, dict):
-        return TRAKT_POPULAR_DEFAULT_PULL_TARGET
-
-    try:
-        return _clamp_adaptive_pull_target(int(meta.get(ADAPTIVE_PULL_TARGET_META_KEY)))
-    except (TypeError, ValueError):
-        return TRAKT_POPULAR_DEFAULT_PULL_TARGET
-
-
-def _trakt_ranked_candidates(
-    user,
-    media_type: str,
-    *,
-    row_key: str,
-    fetch_page,
-    row_schema_version: int | None,
-    seen_identities: set[tuple[str, str, str]] | None = None,
-) -> tuple[list[CandidateItem], dict[str, int]]:
-    blocked_statuses = {
-        Status.COMPLETED.value,
-        Status.DROPPED.value,
-        Status.PLANNING.value,
-    }
-    tracked_keys = get_tracked_keys_by_media_type(
-        user,
-        media_type,
-        statuses=blocked_statuses,
-    )
-    blocked_identities = set(tracked_keys)
-    blocked_identities.update(get_feedback_keys_by_media_type(user, media_type))
-    if seen_identities and row_key != "all_time_greats_unseen":
-        blocked_identities.update(seen_identities)
-
-    required_pull = _get_cached_adaptive_pull_target(user.id, media_type, row_key)
-    page = 1
-    seen_identities: set[tuple[str, str, str]] = set()
-    candidates: list[CandidateItem] = []
-    filtered_candidates: list[CandidateItem] = []
-    first_success_pull: int | None = None
-
-    while len(candidates) < required_pull and len(candidates) < TRAKT_POPULAR_MAX_PULL_TARGET:
-        page_candidates = fetch_page(
-            page=page,
-            limit=TRAKT_POPULAR_PAGE_SIZE,
-        )
-        if not page_candidates:
-            break
-
-        count_before = len(candidates)
-        for candidate in page_candidates:
-            identity = candidate.identity()
-            if identity in seen_identities:
-                continue
-            seen_identities.add(identity)
-            candidates.append(candidate)
-
-        filtered_candidates = exclude_tracked_items(candidates, blocked_identities)
-        if len(filtered_candidates) >= MAX_ITEMS_PER_ROW and first_success_pull is None:
-            first_success_pull = len(candidates)
-
-        if len(page_candidates) < TRAKT_POPULAR_PAGE_SIZE:
-            break
-
-        if len(candidates) >= required_pull and len(filtered_candidates) < MAX_ITEMS_PER_ROW:
-            required_pull = _clamp_adaptive_pull_target(required_pull + TRAKT_POPULAR_PULL_STEP)
-
-        if len(candidates) == count_before:
-            break
-
-        page += 1
-
-    if not filtered_candidates:
-        filtered_candidates = exclude_tracked_items(candidates, blocked_identities)
-
-    if len(filtered_candidates) >= MAX_ITEMS_PER_ROW:
-        next_pull_target = first_success_pull or len(candidates)
-    else:
-        next_pull_target = max(required_pull, len(candidates))
-    next_pull_target = _clamp_adaptive_pull_target(next_pull_target)
-
-    meta: dict[str, int] = {
-        ADAPTIVE_PULL_TARGET_META_KEY: next_pull_target,
-        "last_pulled_count": len(candidates),
-        "last_filtered_count": len(filtered_candidates),
-    }
-    if row_schema_version is not None:
-        meta[ROW_CACHE_SCHEMA_META_KEY] = row_schema_version
-    return filtered_candidates, meta
-
-
-def _trakt_canon_candidates(
-    user,
-    media_type: str,
-    *,
-    row_key: str,
-    seen_identities: set[tuple[str, str, str]] | None = None,
-) -> tuple[list[CandidateItem], dict[str, int]]:
-    if media_type == MediaTypes.MOVIE.value:
-        fetch_page = TRAKT_ADAPTER.movie_popular
-        row_schema_version: int | None = MOVIE_CANON_ROW_SCHEMA_VERSION
-    elif media_type == MediaTypes.TV.value:
-        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_popular(  # noqa: E731
-            page=page,
-            limit=limit,
-            media_type=MediaTypes.TV.value,
-        )
-        row_schema_version = None
-    elif media_type == MediaTypes.ANIME.value:
-        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_popular(  # noqa: E731
-            page=page,
-            limit=limit,
-            media_type=MediaTypes.ANIME.value,
-            trakt_genres=["anime"],
-        )
-        row_schema_version = None
-    else:
-        return [], {
-            ADAPTIVE_PULL_TARGET_META_KEY: TRAKT_POPULAR_DEFAULT_PULL_TARGET,
-            "last_pulled_count": 0,
-            "last_filtered_count": 0,
-        }
-
-    return _trakt_ranked_candidates(
-        user,
-        media_type,
-        row_key=row_key,
-        fetch_page=fetch_page,
-        row_schema_version=row_schema_version,
-        seen_identities=seen_identities,
-    )
-
-
-def _trakt_anticipated_candidates(
-    user,
-    media_type: str,
-    *,
-    row_key: str,
-    seen_identities: set[tuple[str, str, str]] | None = None,
-) -> tuple[list[CandidateItem], dict[str, int]]:
-    if media_type == MediaTypes.MOVIE.value:
-        fetch_page = TRAKT_ADAPTER.movie_anticipated
-        row_schema_version: int | None = MOVIE_COMING_SOON_ROW_SCHEMA_VERSION
-    elif media_type == MediaTypes.TV.value:
-        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_anticipated(  # noqa: E731
-            page=page,
-            limit=limit,
-            media_type=MediaTypes.TV.value,
-        )
-        row_schema_version = None
-    elif media_type == MediaTypes.ANIME.value:
-        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_anticipated(  # noqa: E731
-            page=page,
-            limit=limit,
-            media_type=MediaTypes.ANIME.value,
-            trakt_genres=["anime"],
-        )
-        row_schema_version = None
-    else:
-        return [], {
-            ADAPTIVE_PULL_TARGET_META_KEY: TRAKT_POPULAR_DEFAULT_PULL_TARGET,
-            "last_pulled_count": 0,
-            "last_filtered_count": 0,
-        }
-
-    return _trakt_ranked_candidates(
-        user,
-        media_type,
-        row_key=row_key,
-        fetch_page=fetch_page,
-        row_schema_version=row_schema_version,
-        seen_identities=seen_identities,
-    )
-
-
-def _related_candidates_for_anchors(
-    anchors,
-    media_type: str,
-    *,
-    row_key: str,
-    source_reason: str,
-) -> list[CandidateItem]:
-    candidates: list[CandidateItem] = []
-    seen = set()
-
-    for anchor in anchors:
-        related = TMDB_ADAPTER.related(media_type, anchor.item.media_id, limit=120)
-        for candidate in related:
-            identity = candidate.identity()
-            if identity in seen:
-                continue
-            seen.add(identity)
-            candidate.row_key = row_key
-            candidate.anchor_title = anchor.item.title
-            candidate.source_reason = source_reason.format(anchor_title=anchor.item.title)
-            candidates.append(candidate)
-
-    return candidates
-
-
-def _top_profile_genres(profile_payload: dict, *, limit: int = 3) -> list[str]:
-    genre_affinity = profile_payload.get("genre_affinity") or {}
-    if not genre_affinity:
-        return []
-
-    return [
-        genre
-        for genre, _ in sorted(
-            genre_affinity.items(),
-            key=lambda item: item[1],
-            reverse=True,
-        )[:limit]
-    ]
-
-
-def _genre_discovery_candidates(
-    media_type: str,
-    row_key: str,
-    profile_payload: dict,
-    *,
-    genres: list[str] | None = None,
-    apply_scoring: bool = True,
-) -> list[CandidateItem]:
-    target_genres = genres or _top_profile_genres(profile_payload, limit=3)
-    if not target_genres:
-        return []
-
-    candidates = TMDB_ADAPTER.genre_discovery(media_type, target_genres, limit=120)
-    for candidate in candidates:
-        candidate.row_key = row_key
-        candidate.source_reason = "Genre affinity"
-
-    if apply_scoring:
-        score_candidates(candidates, profile_payload)
-
-    return candidates
-
-
-def _merge_unique_candidates(*candidate_sets: list[CandidateItem]) -> list[CandidateItem]:
-    merged: list[CandidateItem] = []
-    seen: set[tuple[str, str, str]] = set()
-    for candidate_set in candidate_sets:
-        for candidate in candidate_set:
-            identity = candidate.identity()
-            if identity in seen:
-                continue
-            seen.add(identity)
-            merged.append(candidate)
-    return merged
-
-
-def _related_row_candidates(user, media_type: str, row_key: str, profile_payload: dict) -> list[CandidateItem]:
-    anchors = _select_recent_anchors(user, media_type, max_anchors=3)
-    candidates = _related_candidates_for_anchors(
-        anchors,
-        media_type,
-        row_key=row_key,
-        source_reason="Because you watched {anchor_title}",
-    )
-
-    score_candidates(candidates, profile_payload)
-    return candidates
 
 
 def _top_picks_candidates(user, media_type: str, row_key: str, profile_payload: dict) -> list[CandidateItem]:
@@ -1164,212 +630,6 @@ def _build_row_candidates(
     return []
 
 
-def _row_ttl_seconds(row_definition: RowDefinition) -> int:
-    return ROW_CACHE_TTL_LOCAL_SECONDS if row_definition.source == "local" else ROW_CACHE_TTL_SECONDS
-
-
-def _is_missing_image(candidate: CandidateItem) -> bool:
-    return not candidate.image or candidate.image == settings.IMG_NONE
-
-
-def _provider_media_type_for_artwork(candidate_media_type: str) -> str | None:
-    if candidate_media_type == MediaTypes.MOVIE.value:
-        return MediaTypes.MOVIE.value
-    if candidate_media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
-        return MediaTypes.TV.value
-    return None
-
-
-def _supports_provider_artwork_hydration(candidate: CandidateItem) -> bool:
-    return (
-        (
-            candidate.media_type == MediaTypes.BOARDGAME.value
-            and candidate.source == Sources.BGG.value
-        )
-        or (
-            candidate.media_type == MediaTypes.MUSIC.value
-            and candidate.source == Sources.MUSICBRAINZ.value
-        )
-    )
-
-
-def _hydrate_provider_ranked_artwork(
-    candidates: list[CandidateItem],
-    *,
-    allow_remote: bool = True,
-    hydrate_limit: int = MAX_ITEMS_PER_ROW,
-) -> None:
-    """Hydrate missing artwork for top provider-ranked boardgame/music candidates."""
-    display_candidates = [
-        candidate
-        for candidate in candidates[:hydrate_limit]
-        if _supports_provider_artwork_hydration(candidate)
-    ]
-    if not display_candidates:
-        return
-
-    missing = [candidate for candidate in display_candidates if _is_missing_image(candidate)]
-    if not missing:
-        return
-
-    local_images = {
-        (item.media_type, item.source, str(item.media_id)): item.image
-        for item in Item.objects.filter(
-            media_id__in=[candidate.media_id for candidate in missing],
-            media_type__in=[MediaTypes.BOARDGAME.value, MediaTypes.MUSIC.value],
-            source__in=[Sources.BGG.value, Sources.MUSICBRAINZ.value],
-        ).only("media_type", "source", "media_id", "image")
-        if item.image and item.image != settings.IMG_NONE
-    }
-
-    for candidate in missing:
-        local_image = local_images.get(candidate.identity())
-        if local_image:
-            candidate.image = local_image
-
-    if not allow_remote:
-        return
-
-    for candidate in missing:
-        if not _is_missing_image(candidate):
-            continue
-        try:
-            metadata = services.get_media_metadata(
-                candidate.media_type,
-                candidate.media_id,
-                candidate.source,
-            )
-        except Exception as error:  # noqa: BLE001
-            logger.warning(
-                "discover_provider_artwork_lookup_failed media_type=%s source=%s media_id=%s error=%s",
-                candidate.media_type,
-                candidate.source,
-                candidate.media_id,
-                error,
-            )
-            continue
-
-        image = (metadata or {}).get("image")
-        if image and image != settings.IMG_NONE:
-            candidate.image = image
-
-
-def _hydrate_trakt_ranked_artwork(
-    media_type: str,
-    candidates: list[CandidateItem],
-    *,
-    allow_remote: bool = True,
-    hydrate_limit: int = MAX_ITEMS_PER_ROW,
-) -> None:
-    """Hydrate missing artwork for displayed Trakt-ranked TMDB candidates."""
-    provider_media_type = _provider_media_type_for_artwork(media_type)
-    if provider_media_type is None:
-        return
-
-    display_candidates = [
-        candidate
-        for candidate in candidates[:hydrate_limit]
-        if candidate.media_type == media_type
-        and candidate.source == TMDB_ADAPTER.provider
-    ]
-    if not display_candidates:
-        return
-
-    missing = [candidate for candidate in display_candidates if _is_missing_image(candidate)]
-    if not missing:
-        return
-
-    local_images = {
-        str(item.media_id): item.image
-        for item in Item.objects.filter(
-            media_type=media_type,
-            source=TMDB_ADAPTER.provider,
-            media_id__in=[candidate.media_id for candidate in missing],
-        ).only("media_id", "image")
-        if item.image and item.image != settings.IMG_NONE
-    }
-
-    for candidate in missing:
-        local_image = local_images.get(str(candidate.media_id))
-        if local_image:
-            candidate.image = local_image
-
-    if not allow_remote:
-        return
-
-    for candidate in missing:
-        if not _is_missing_image(candidate):
-            continue
-        try:
-            metadata = services.get_media_metadata(
-                provider_media_type,
-                candidate.media_id,
-                TMDB_ADAPTER.provider,
-            )
-        except Exception as error:  # noqa: BLE001
-            logger.warning(
-                "discover_tmdb_artwork_lookup_failed media_id=%s error=%s",
-                candidate.media_id,
-                error,
-            )
-            continue
-
-        image = (metadata or {}).get("image")
-        if image:
-            candidate.image = image
-
-
-def hydrate_visible_row_artwork(
-    row: RowResult,
-    *,
-    allow_remote: bool = True,
-) -> None:
-    """Hydrate missing artwork for currently visible row items.
-
-    This is used by the optimistic Discover tab-cache patching path so a
-    reserve item promoted into the visible 12 can render with poster artwork
-    immediately instead of waiting for a later full row rebuild.
-    """
-    if not row.items:
-        return
-
-    if not any(_is_missing_image(item) for item in row.items[:MAX_ITEMS_PER_ROW]):
-        return
-
-    effective_media_type = next(
-        (
-            candidate.media_type
-            for candidate in [*row.items, *row.reserve_items]
-            if candidate.media_type
-        ),
-        None,
-    )
-    if not effective_media_type:
-        return
-
-    if effective_media_type in {
-        MediaTypes.MOVIE.value,
-        MediaTypes.TV.value,
-        MediaTypes.ANIME.value,
-    } and row.key in {
-        "trending_right_now",
-        "all_time_greats_unseen",
-        "coming_soon",
-    }:
-        _hydrate_trakt_ranked_artwork(
-            effective_media_type,
-            row.items,
-            allow_remote=allow_remote,
-        )
-        return
-
-    if row.source == "provider" and row.key in PROVIDER_ARTWORK_HYDRATION_ROW_KEYS:
-        _hydrate_provider_ranked_artwork(
-            row.items,
-            allow_remote=allow_remote,
-        )
-
-
 def _blocked_statuses_for_row(row_definition: RowDefinition) -> set[str] | None:
     if row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}:
         return {
@@ -1661,95 +921,6 @@ def _build_and_cache_row(
     )
 
     return row
-
-
-def _apply_row_definition_metadata(
-    row: RowResult,
-    row_definition: RowDefinition,
-) -> RowResult:
-    """Keep display metadata aligned with the current registry definition."""
-    row.title = row_definition.title
-    row.mission = row_definition.mission
-    row.why = row_definition.why
-    row.source = row_definition.source
-    row.show_more = row_definition.show_more
-    return row
-
-
-def _row_requires_artwork_rebuild(
-    media_type: str,
-    row_definition: RowDefinition,
-    row: RowResult,
-) -> bool:
-    if media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value} and row_definition.key in {
-        "trending_right_now",
-        "all_time_greats_unseen",
-        "coming_soon",
-    }:
-        return any(_is_missing_image(item) for item in row.items[:MAX_ITEMS_PER_ROW])
-
-    if row_definition.source == "provider" and row_definition.key in PROVIDER_ARTWORK_HYDRATION_ROW_KEYS:
-        return any(
-            _supports_provider_artwork_hydration(item) and _is_missing_image(item)
-            for item in row.items[:MAX_ITEMS_PER_ROW]
-        )
-    return False
-
-
-def _is_row_cache_compatible(
-    media_type: str,
-    row_definition: RowDefinition,
-    cached_payload: dict,
-) -> bool:
-    required_schema_version = _required_row_cache_schema_version(media_type, row_definition.key)
-    if required_schema_version is None:
-        return True
-
-    meta = cached_payload.get("meta")
-    if not isinstance(meta, dict):
-        return False
-
-    try:
-        return int(meta.get(ROW_CACHE_SCHEMA_META_KEY, 0)) >= required_schema_version
-    except (TypeError, ValueError):
-        return False
-
-
-def _required_row_cache_schema_version(media_type: str, row_key: str) -> int | None:
-    if media_type == MediaTypes.MOVIE.value:
-        if row_key == "all_time_greats_unseen":
-            return MOVIE_CANON_ROW_SCHEMA_VERSION
-        if row_key == "coming_soon":
-            return MOVIE_COMING_SOON_ROW_SCHEMA_VERSION
-        if row_key in MOVIE_PERSONALIZED_ROW_KEYS:
-            return MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION
-        return None
-    if media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
-        if row_key in {
-            "trending_right_now",
-            "all_time_greats_unseen",
-            "coming_soon",
-        }:
-            return TV_ANIME_TRAKT_ROW_SCHEMA_VERSION
-        if row_key in TV_ANIME_PERSONALIZED_ROW_KEYS:
-            return TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION
-    return None
-
-
-def _row_cache_matches_activity_version(
-    user_id: int,
-    media_type: str,
-    cached_payload: dict,
-) -> bool:
-    meta = cached_payload.get("meta")
-    if not isinstance(meta, dict):
-        return True
-
-    cached_activity_version = str(meta.get(ROW_CACHE_ACTIVITY_VERSION_META_KEY) or "")
-    if not cached_activity_version:
-        return True
-
-    return cached_activity_version == tab_cache.get_activity_version(user_id, media_type)
 
 
 def _allow_empty_row(
