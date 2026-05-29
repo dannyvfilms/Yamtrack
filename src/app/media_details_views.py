@@ -4,6 +4,7 @@ import logging
 import time
 from datetime import datetime
 
+from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.decorators import login_not_required
 from django.core.cache import cache
@@ -1815,4 +1816,3 @@ def media_details(
         ),
         context,
     )
-
