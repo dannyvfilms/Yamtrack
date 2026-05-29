@@ -77,11 +77,20 @@ def secret(key, default=undefined, **kwargs):
 # See https://docs.djangoproject.com/en/stable/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = config("SECRET", default=secret("SECRET_FILE", default=None))
+try:
+    SECRET_KEY = config("SECRET", default=secret("SECRET_FILE", default=None))
+except UndefinedValueError:
+    SECRET_KEY = None
+
 if not SECRET_KEY:
     from django.core.exceptions import ImproperlyConfigured
 
-    raise ImproperlyConfigured("SECRET env var or SECRET_FILE must be set")
+    raise ImproperlyConfigured(
+        "SECRET env var is not set. To fix, run:\n\n"
+        "  python -c \""
+        "import secrets; print('SECRET=' + secrets.token_urlsafe(50))"
+        "\" >> .env\n"
+    )
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
