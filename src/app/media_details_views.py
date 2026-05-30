@@ -423,7 +423,7 @@ def media_details(
             episodes = PodcastEpisode.objects.filter(show=show).annotate(
                 published_or_old=Coalesce(
                     "published",
-                    Value(datetime(1970, 1, 1, tzinfo=UTC),
+                    Value(datetime(1970, 1, 1, tzinfo=timezone.utc),
                           output_field=DateTimeField()),
                 ),
             ).order_by("-published_or_old", "-episode_number")
@@ -571,7 +571,7 @@ def media_details(
 
                     # Sort by end_date descending (most recent first) for display
                     all_history.sort(
-                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=UTC),
+                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
                         reverse=True,
                     )
 
@@ -628,12 +628,12 @@ def media_details(
                                     if order == "end_date":
                                         sorted_list = sorted(
                                             self._history,
-                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=UTC),
+                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
                                         )
                                     elif order == "-end_date":
                                         sorted_list = sorted(
                                             self._history,
-                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=UTC),
+                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
                                             reverse=True,
                                         )
                                     else:
