@@ -50,13 +50,18 @@ def _infer_user_from_user_media(user_media):
     for media_list in user_media.values():
         if media_list is None:
             continue
-        try:
+        # media_list may be a list of querysets (combined anime bucket)
+        first_media = None
+        if isinstance(media_list, _CombinedMediaBucket):
             first_media = media_list.first()
-        except (AttributeError, TypeError):
+        else:
             try:
-                first_media = next(iter(media_list), None)
-            except TypeError:
-                first_media = None
+                first_media = media_list.first()
+            except (AttributeError, TypeError):
+                try:
+                    first_media = next(iter(media_list), None)
+                except TypeError:
+                    first_media = None
 
         if first_media is not None and hasattr(first_media, "user"):
             return first_media.user
@@ -87,18 +92,23 @@ def get_user_media(user, start_date, end_date):
                 end_date__range=(start_date, end_date),
             )
 
+    _tv_ids = None  # saved for grouped-anime pass after the main loop
+
     for model in media_models:
         media_type = model.__name__.lower()
         queryset = None
 
         if model == TV:
-            tv_ids = base_episodes.values_list(
+            _tv_ids = base_episodes.values_list(
                 "related_season__related_tv",
                 flat=True,
             ).distinct()
+            # Exclude grouped anime (library_media_type="anime") — they belong in the anime bucket
             queryset = TV.objects.filter(
-                id__in=tv_ids,
+                id__in=_tv_ids,
                 status__in=[Status.IN_PROGRESS.value, Status.COMPLETED.value, Status.DROPPED.value, Status.PAUSED.value],
+            ).exclude(
+                item__library_media_type=MediaTypes.ANIME.value,
             ).prefetch_related(
                 Prefetch(
                     "seasons",
@@ -110,7 +120,7 @@ def get_user_media(user, start_date, end_date):
                         Prefetch(
                             "episodes",
                             queryset=base_episodes.filter(
-                                related_season__related_tv__in=tv_ids,
+                                related_season__related_tv__in=_tv_ids,
                             ),
                         ),
                     ),
@@ -172,6 +182,55 @@ def get_user_media(user, start_date, end_date):
         count = queryset.count()
         media_count[media_type] = count
         media_count["total"] += count
+
+    # Pull grouped anime (TV-structured, library_media_type="anime") into the anime bucket
+    if _tv_ids is not None and base_episodes is not None:
+        _grouped_anime_qs = (
+            TV.objects.filter(
+                id__in=_tv_ids,
+                item__library_media_type=MediaTypes.ANIME.value,
+                status__in=[
+                    Status.IN_PROGRESS.value,
+                    Status.COMPLETED.value,
+                    Status.DROPPED.value,
+                    Status.PAUSED.value,
+                ],
+            )
+            .select_related("item")
+            .prefetch_related(
+                Prefetch(
+                    "seasons",
+                    queryset=Season.objects.filter(
+                        status__in=[
+                            Status.IN_PROGRESS.value,
+                            Status.COMPLETED.value,
+                            Status.DROPPED.value,
+                            Status.PAUSED.value,
+                        ],
+                    )
+                    .select_related("item")
+                    .prefetch_related(
+                        Prefetch(
+                            "episodes",
+                            queryset=base_episodes.filter(
+                                related_season__related_tv__in=_tv_ids,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+        _grouped_anime_count = _grouped_anime_qs.count()
+        if _grouped_anime_count > 0:
+            anime_key = MediaTypes.ANIME.value
+            if anime_key in user_media:
+                # Combine with flat anime (MAL) queryset already in the bucket
+                user_media[anime_key] = _CombinedMediaBucket(user_media[anime_key], _grouped_anime_qs)
+                media_count[anime_key] = media_count.get(anime_key, 0) + _grouped_anime_count
+            else:
+                user_media[anime_key] = _grouped_anime_qs
+                media_count[anime_key] = _grouped_anime_count
+            media_count["total"] += _grouped_anime_count
 
     logger.info(
         "%s - Retrieved media %s",
@@ -235,6 +294,77 @@ def get_media_type_distribution(media_count, minutes_per_type=None):
     return chart_data
 
 
+class _CombinedMediaBucket:
+    """Wraps two querysets (e.g. flat anime + grouped anime TV) into one iterable bucket."""
+
+    def __init__(self, *querysets):
+        self._querysets = querysets
+
+    def __iter__(self):
+        for qs in self._querysets:
+            yield from qs
+
+    def exists(self):
+        return any(qs.exists() for qs in self._querysets)
+
+    def first(self):
+        for qs in self._querysets:
+            obj = qs.first()
+            if obj is not None:
+                return obj
+        return None
+
+    def select_related(self, *args):
+        return _CombinedMediaBucket(*(qs.select_related(*args) for qs in self._querysets))
+
+    def count(self):
+        return sum(qs.count() for qs in self._querysets)
+
+    def values(self, *fields):
+        # Returns a lazy iterator of dicts; used only to drive status/score counts
+        return _CombinedValuesResult(self._querysets, fields)
+
+
+class _CombinedValuesResult:
+    """Wraps .values(...).annotate(count=Count('id')) results from multiple querysets."""
+
+    def __init__(self, querysets, fields):
+        self._querysets = querysets
+        self._fields = fields
+        self._annotation = None
+        self._annotation_field = None
+
+    def annotate(self, **kwargs):
+        self._annotation = kwargs
+        if kwargs:
+            self._annotation_field = next(iter(kwargs))
+        return self
+
+    def __iter__(self):
+        if not self._annotation:
+            for qs in self._querysets:
+                yield from qs.values(*self._fields)
+            return
+        # Merge counts from each queryset
+        merged: dict = {}
+        for qs in self._querysets:
+            for row in qs.values(*self._fields).annotate(**self._annotation):
+                key = tuple(row[f] for f in self._fields)
+                if key not in merged:
+                    merged[key] = dict(zip(self._fields, key))
+                    merged[key][self._annotation_field] = 0
+                merged[key][self._annotation_field] += row[self._annotation_field]
+        yield from merged.values()
+
+
+def _iter_media_list(media_list):
+    """Iterate over a queryset or a _CombinedMediaBucket."""
+    if isinstance(media_list, _CombinedMediaBucket):
+        yield from media_list
+    else:
+        yield from media_list
+
+
 def get_status_distribution(user_media):
     """Get status distribution for each media type within date range."""
     distribution = {}
@@ -245,7 +375,9 @@ def get_status_distribution(user_media):
         status_counts = dict.fromkeys(status_order, 0)
         counts = media_list.values("status").annotate(count=models.Count("id"))
         for count_data in counts:
-            status_counts[count_data["status"]] = count_data["count"]
+            status_counts[count_data["status"]] = (
+                status_counts.get(count_data["status"], 0) + count_data["count"]
+            )
             if count_data["status"] == Status.COMPLETED.value:
                 total_completed += count_data["count"]
 
@@ -321,22 +453,33 @@ def get_score_distribution(user_media):
 
     for media_type, media_list in user_media.items():
         score_counts = dict.fromkeys(score_range, 0)
-        media_list = media_list.select_related("item")
+        # _all_qs: list of individual querysets; handles combined anime bucket (flat + grouped TV)
+        _all_qs = (
+            list(media_list._querysets)
+            if isinstance(media_list, _CombinedMediaBucket)
+            else [media_list]
+        )
 
         # Group media by item to identify which items appear in the date range
         media_by_item = defaultdict(list)
-        for media in media_list:
-            item = getattr(media, "item", None)
-            key = item.id if item else media.id
-            media_by_item[key].append(media)
+        for _qs in _all_qs:
+            for media in _qs.select_related("item"):
+                item = getattr(media, "item", None)
+                key = item.id if item else media.id
+                media_by_item[key].append(media)
 
         # For each item that appears in the date range, fetch ALL entries (not just date-filtered)
         # to find the aggregated score, even if the score was set outside the date range
         deduped_scored = {}
         if user:
-            # Get the model class for this media type
-            model_class = apps.get_model("app", media_type)
-            
+            # Derive model class(es) from actual queryset(s); handles grouped anime (TV) in anime bucket
+            _model_classes_by_item_id = {}
+            for _qs in _all_qs:
+                for entry in _qs.select_related("item"):
+                    item = getattr(entry, "item", None)
+                    if item:
+                        _model_classes_by_item_id[item.id] = type(entry)
+
             # Get all unique item IDs from items that appear in the date range
             item_ids_in_range = set()
             item_id_to_key_map = {}  # Map item.id -> key used in media_by_item
@@ -346,21 +489,26 @@ def get_score_distribution(user_media):
                     if item:
                         item_ids_in_range.add(item.id)
                         item_id_to_key_map[item.id] = key
-            
-            # Fetch ALL entries for these items (not just date-filtered ones)
+
+            # Fetch ALL entries for these items (not just date-filtered ones),
+            # querying each model class separately in case the bucket is mixed (flat + grouped anime)
             if item_ids_in_range:
-                all_entries_query = model_class.objects.filter(
-                    user=user,
-                    item_id__in=item_ids_in_range,
-                ).select_related("item").order_by("-created_at")
-                
-                # Group all entries by item ID
-                all_entries_by_item_id = defaultdict(list)
-                for entry in all_entries_query:
-                    item = getattr(entry, "item", None)
-                    if item:
-                        all_entries_by_item_id[item.id].append(entry)
-                
+                _ids_by_model = defaultdict(set)
+                for item_id, model_cls in _model_classes_by_item_id.items():
+                    if item_id in item_ids_in_range:
+                        _ids_by_model[model_cls].add(item_id)
+
+                all_entries_by_item_id: dict = defaultdict(list)
+                for model_cls, item_ids_for_model in _ids_by_model.items():
+                    _entries_q = model_cls.objects.filter(
+                        user=user,
+                        item_id__in=item_ids_for_model,
+                    ).select_related("item").order_by("-created_at")
+                    for entry in _entries_q:
+                        _item = getattr(entry, "item", None)
+                        if _item:
+                            all_entries_by_item_id[_item.id].append(entry)
+
                 # Now aggregate scores from ALL entries (not just date-filtered ones)
                 for item_id in item_ids_in_range:
                     # Get the key used in media_by_item for this item
@@ -680,7 +828,31 @@ def get_timeline(user_media):
             # TV timeline activity is represented by seasons, not TV shells.
             continue
 
-        for media in queryset:
+        for media in _iter_media_list(queryset):
+            # Grouped anime items are TV model instances with seasons; expand to season level
+            if hasattr(media, "seasons"):
+                seasons_qs = getattr(media, "seasons", None)
+                if seasons_qs is None:
+                    continue
+                for season in seasons_qs.all():
+                    _tl_local_start = (
+                        timezone.localdate(season.start_date) if season.start_date else None
+                    )
+                    _tl_local_end = (
+                        timezone.localdate(season.end_date) if season.end_date else None
+                    )
+                    if season.start_date and season.end_date:
+                        _cur = _tl_local_start
+                        while _cur <= _tl_local_end:
+                            timeline[f"{calendar.month_name[_cur.month]} {_cur.year}"].append(season)
+                            _cur += relativedelta(months=1)
+                            _cur = _cur.replace(day=1)
+                    elif season.start_date:
+                        timeline[f"{calendar.month_name[_tl_local_start.month]} {_tl_local_start.year}"].append(season)
+                    elif season.end_date:
+                        timeline[f"{calendar.month_name[_tl_local_end.month]} {_tl_local_end.year}"].append(season)
+                continue
+
             local_start_date = (
                 timezone.localdate(media.start_date) if media.start_date else None
             )
@@ -1272,7 +1444,7 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date, user=None
             minutes_per_type[media_type] = total_minutes
             continue
 
-        for media_data in media_list:
+        for media_data in _iter_media_list(media_list):
             media = getattr(media_data, "media", media_data)
 
             if media_type == MediaTypes.TV.value:
@@ -1281,7 +1453,11 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date, user=None
                 continue
 
             if media_type == MediaTypes.ANIME.value:
-                anime_minutes, _ = _calculate_anime_time(media, start_date, end_date, logger)
+                # Grouped anime uses TV model (seasons + episodes); flat anime uses progress field
+                if hasattr(media, "seasons"):
+                    anime_minutes, _ = _calculate_tv_time(media, start_date, end_date, logger)
+                else:
+                    anime_minutes, _ = _calculate_anime_time(media, start_date, end_date, logger)
                 total_minutes += anime_minutes
                 continue
 
@@ -2289,7 +2465,7 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
         # Gather all candidate activity datetimes from the provided media
         candidate_dates = []
         for media_list in user_media.values():
-            for media in media_list:
+            for media in _iter_media_list(media_list):
                 activity_dt = _get_activity_datetime(media)
                 if activity_dt:
                     candidate_dates.append(_localize_datetime(activity_dt))
@@ -2329,7 +2505,7 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
     for media_type, media_list in user_media.items():
         # Movies
         if media_type == MediaTypes.MOVIE.value:
-            for media in media_list:
+            for media in _iter_media_list(media_list):
                 activity_dt = _get_activity_datetime(media)
                 if activity_dt is None:
                     continue
@@ -2348,7 +2524,7 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
 
         # TV shows / Seasons: use per-episode end_date and runtime from episode cache
         elif media_type == MediaTypes.TV.value or media_type == MediaTypes.SEASON.value:
-            for tv in media_list:
+            for tv in _iter_media_list(media_list):
                 seasons = getattr(tv, "seasons", None)
                 if seasons is None:
                     continue
@@ -2372,43 +2548,65 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
                             if media_type in per_type_minutes and label in per_type_minutes[media_type]:
                                 per_type_minutes[media_type][label] += minutes
 
-        # Anime: prefer per-media runtime * progress; if a start/end range exists on the media, distribute evenly, otherwise assign to activity date
+        # Anime: grouped anime uses episode-level data; flat anime uses progress * runtime
         elif media_type == MediaTypes.ANIME.value:
-            for media in media_list:
-                # total minutes from cached runtime per episode * progress
-                episode_count = getattr(media, "progress", 0) or 0
-                if episode_count <= 0:
-                    continue
-                minutes = _get_anime_runtime_from_cache(media, episode_count, logger, "(daily aggregation)")
-                if not minutes or minutes <= 0:
-                    continue
-
-                # Determine distribution date range for this media
-                media_start = getattr(media, "start_date", None)
-                media_end = getattr(media, "end_date", None)
-                if media_start and media_end:
-                    # distribute evenly across overlap with requested range
-                    ds = max(media_start.date(), start_date_dt)
-                    de = min(media_end.date(), end_date_dt)
-                    if ds > de:
+            for media in _iter_media_list(media_list):
+                if hasattr(media, "seasons"):
+                    # Grouped anime (TV model) — distribute by episode end_date
+                    seasons = getattr(media, "seasons", None)
+                    if seasons is None:
                         continue
-                    days = (de - ds).days + 1
-                    per_day = minutes / days
-                    for i in range(days):
-                        d = (ds + datetime.timedelta(days=i)).isoformat()
-                        if media_type in per_type_minutes and d in per_type_minutes[media_type]:
-                            per_type_minutes[media_type][d] += per_day
+                    for season in seasons.all():
+                        episodes = getattr(season, "episodes", None)
+                        if episodes is None:
+                            continue
+                        for episode in episodes.all():
+                            if not episode.end_date:
+                                continue
+                            ep_date = _localize_datetime(episode.end_date).date()
+                            if ep_date < start_date_dt or ep_date > end_date_dt:
+                                continue
+                            try:
+                                ep_minutes = _calculate_episode_time_from_cache(episode, logger)
+                            except Exception:
+                                ep_minutes = 0
+                            if ep_minutes and ep_minutes > 0:
+                                label = ep_date.isoformat()
+                                if media_type in per_type_minutes and label in per_type_minutes[media_type]:
+                                    per_type_minutes[media_type][label] += ep_minutes
                 else:
-                    activity_dt = _get_activity_datetime(media)
-                    if not activity_dt:
+                    # Flat anime (Anime model) — total minutes from cached runtime * progress
+                    episode_count = getattr(media, "progress", 0) or 0
+                    if episode_count <= 0:
                         continue
-                    label = _localize_datetime(activity_dt).date().isoformat()
-                    if media_type in per_type_minutes and label in per_type_minutes[media_type]:
-                        per_type_minutes[media_type][label] += minutes
+                    minutes = _get_anime_runtime_from_cache(media, episode_count, logger, "(daily aggregation)")
+                    if not minutes or minutes <= 0:
+                        continue
+
+                    media_start = getattr(media, "start_date", None)
+                    media_end = getattr(media, "end_date", None)
+                    if media_start and media_end:
+                        ds = max(media_start.date(), start_date_dt)
+                        de = min(media_end.date(), end_date_dt)
+                        if ds > de:
+                            continue
+                        days = (de - ds).days + 1
+                        per_day = minutes / days
+                        for i in range(days):
+                            d = (ds + datetime.timedelta(days=i)).isoformat()
+                            if media_type in per_type_minutes and d in per_type_minutes[media_type]:
+                                per_type_minutes[media_type][d] += per_day
+                    else:
+                        activity_dt = _get_activity_datetime(media)
+                        if not activity_dt:
+                            continue
+                        label = _localize_datetime(activity_dt).date().isoformat()
+                        if media_type in per_type_minutes and label in per_type_minutes[media_type]:
+                            per_type_minutes[media_type][label] += minutes
 
         # Music: assign runtime to each play date from history records
         elif media_type == MediaTypes.MUSIC.value:
-            for media in media_list:
+            for media in _iter_media_list(media_list):
                 runtime_minutes = _get_music_runtime_minutes(media)
                 if runtime_minutes <= 0:
                     continue
@@ -2462,7 +2660,7 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
             MediaTypes.COMIC.value,
             MediaTypes.BOARDGAME.value,
         ):
-            for media in media_list:
+            for media in _iter_media_list(media_list):
                 total_progress = getattr(media, "progress", 0) or 0
                 if not total_progress or total_progress <= 0:
                     continue
@@ -2546,7 +2744,7 @@ def get_top_played_media(user_media, start_date, end_date):
         if normalized_type == "movie":
             aggregated_movies = {}
 
-            for media in media_list:
+            for media in _iter_media_list(media_list):
                 total_time_minutes = _calculate_movie_time(media, start_date, end_date, normalized_type, logger)
                 if total_time_minutes <= 0:
                     continue
@@ -2591,7 +2789,7 @@ def get_top_played_media(user_media, start_date, end_date):
         elif normalized_type == "game":
             aggregated_games = {}
 
-            for media in media_list:
+            for media in _iter_media_list(media_list):
                 total_time_minutes = _calculate_game_time_in_range(media, start_date, end_date)
                 if total_time_minutes <= 0:
                     continue
@@ -2634,14 +2832,18 @@ def get_top_played_media(user_media, start_date, end_date):
                 entry.pop('_media_activity', None)
                 media_with_progress.append(entry)
         else:
-            for media in media_list:
+            for media in _iter_media_list(media_list):
                 total_time_minutes = 0
                 episode_count = 0
 
                 if normalized_type == "tv":
                     total_time_minutes, episode_count = _calculate_tv_time(media, start_date, end_date, logger)
                 elif normalized_type == "anime":
-                    total_time_minutes, episode_count = _calculate_anime_time(media, start_date, end_date, logger)
+                    # Grouped anime uses TV model (seasons + episodes)
+                    if hasattr(media, "seasons"):
+                        total_time_minutes, episode_count = _calculate_tv_time(media, start_date, end_date, logger)
+                    else:
+                        total_time_minutes, episode_count = _calculate_anime_time(media, start_date, end_date, logger)
                 elif normalized_type == "boardgame":
                     if (
                         media.end_date

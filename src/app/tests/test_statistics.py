@@ -1431,3 +1431,167 @@ class ConsumptionStatisticsTests(TestCase):
         media_count = response.context["media_count"]
         self.assertNotIn(MediaTypes.SEASON.value, media_count)
         self.assertEqual(response.context["tv_consumption"]["plays"]["total"], 2)
+
+
+class GroupedAnimeStatisticsTests(TestCase):
+    """Grouped anime (TMDB/TVDB) should count as anime, not TV, in all statistics."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="grouped-anime-user",
+            password="password",
+        )
+
+        now = timezone.now()
+        self.start_date = now - datetime.timedelta(days=30)
+        self.end_date = now
+
+        # --- Grouped anime: TV model with library_media_type="anime" ---
+        self.anime_tv_item = Item.objects.get_or_create(
+            media_id="anime_show_1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            defaults={"title": "Attack on Titan (TMDB)"},
+        )[0]
+        self.anime_tv = TV.objects.create(
+            user=self.user,
+            item=self.anime_tv_item,
+            status=Status.COMPLETED.value,
+        )
+        self.anime_season_item = Item.objects.get_or_create(
+            media_id="anime_show_1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            library_media_type=MediaTypes.ANIME.value,
+            defaults={"title": "Attack on Titan S1"},
+        )[0]
+        self.anime_season = Season.objects.create(
+            user=self.user,
+            item=self.anime_season_item,
+            related_tv=self.anime_tv,
+            status=Status.COMPLETED.value,
+        )
+        for ep_num in (1, 2):
+            ep_item = Item.objects.get_or_create(
+                media_id="anime_show_1",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=1,
+                episode_number=ep_num,
+                library_media_type=MediaTypes.ANIME.value,
+                defaults={
+                    "title": f"Episode {ep_num}",
+                    "runtime_minutes": 24,
+                },
+            )[0]
+            Episode.objects.create(
+                item=ep_item,
+                related_season=self.anime_season,
+                end_date=now - datetime.timedelta(days=ep_num),
+            )
+
+        # --- Regular TV show (should stay in TV bucket) ---
+        self.tv_item = Item.objects.get_or_create(
+            media_id="regular_tv_1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Regular TV Show"},
+        )[0]
+        self.tv = TV.objects.create(
+            user=self.user,
+            item=self.tv_item,
+            status=Status.COMPLETED.value,
+        )
+        self.tv_season_item = Item.objects.get_or_create(
+            media_id="regular_tv_1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            defaults={"title": "Regular TV S1"},
+        )[0]
+        self.tv_season = Season.objects.create(
+            user=self.user,
+            item=self.tv_season_item,
+            related_tv=self.tv,
+            status=Status.COMPLETED.value,
+        )
+        self.tv_ep_item = Item.objects.get_or_create(
+            media_id="regular_tv_1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            defaults={"title": "TV Episode 1", "runtime_minutes": 45},
+        )[0]
+        Episode.objects.create(
+            item=self.tv_ep_item,
+            related_season=self.tv_season,
+            end_date=now - datetime.timedelta(days=3),
+        )
+
+    def _get_media(self):
+        return statistics.get_user_media(self.user, self.start_date, self.end_date)
+
+    def test_grouped_anime_is_in_anime_bucket_not_tv(self):
+        """get_user_media must put grouped anime in 'anime', not 'tv'."""
+        user_media, media_count = self._get_media()
+
+        anime_bucket = user_media.get(MediaTypes.ANIME.value)
+        # Anime bucket may be a single queryset or a list of querysets (flat + grouped)
+        anime_ids = [
+            m.id for m in statistics._iter_media_list(anime_bucket) if anime_bucket is not None
+        ] if anime_bucket is not None else []
+        tv_ids = [m.id for m in user_media.get(MediaTypes.TV.value, [])]
+
+        self.assertIn(self.anime_tv.id, anime_ids)
+        self.assertNotIn(self.anime_tv.id, tv_ids)
+        # Regular TV show must stay in tv bucket
+        self.assertIn(self.tv.id, tv_ids)
+
+    def test_grouped_anime_count_in_anime_media_count(self):
+        """media_count must attribute grouped anime to anime, not tv."""
+        _, media_count = self._get_media()
+
+        self.assertGreaterEqual(media_count.get(MediaTypes.ANIME.value, 0), 1)
+        # TV count should reflect only pure TV shows
+        self.assertEqual(media_count.get(MediaTypes.TV.value, 0), 1)
+
+    def test_grouped_anime_minutes_counted_as_anime(self):
+        """Minutes for grouped anime episodes must land in the anime bucket."""
+        user_media, _ = self._get_media()
+        minutes = statistics.calculate_minutes_per_media_type(
+            user_media, self.start_date, self.end_date
+        )
+
+        # 2 episodes × 24 min = 48 min of anime
+        self.assertGreaterEqual(minutes.get(MediaTypes.ANIME.value, 0), 48)
+        # TV minutes should reflect only the regular TV episode (45 min)
+        self.assertLessEqual(minutes.get(MediaTypes.TV.value, 0), 45)
+
+    def test_grouped_anime_status_distribution_is_anime(self):
+        """Status distribution must attribute grouped anime entries to anime."""
+        user_media, _ = self._get_media()
+        distribution = statistics.get_status_distribution(user_media)
+
+        labels = distribution["labels"]
+        self.assertIn("Anime", labels)
+
+        anime_idx = labels.index("Anime")
+        # Sum completed count for anime across all status datasets
+        completed_anime = sum(
+            ds["data"][anime_idx]
+            for ds in distribution["datasets"]
+            if ds["label"] == Status.COMPLETED.value
+        )
+        self.assertGreaterEqual(completed_anime, 1)
+
+    def test_regular_tv_unaffected(self):
+        """Regular TV entries must still be counted as TV after the fix."""
+        user_media, _ = self._get_media()
+        minutes = statistics.calculate_minutes_per_media_type(
+            user_media, self.start_date, self.end_date
+        )
+
+        self.assertGreater(minutes.get(MediaTypes.TV.value, 0), 0)
