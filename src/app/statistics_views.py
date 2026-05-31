@@ -432,6 +432,7 @@ def statistics(request):
         top_rated_by_type = statistics_data.get("top_rated_by_type", {})
         top_rated_movie = top_rated_by_type.get("movie", [])
         top_rated_tv = top_rated_by_type.get("tv", [])
+        top_rated_anime = top_rated_by_type.get("anime", [])
         top_rated_book = top_rated_by_type.get("book", [])
         top_rated_comic = top_rated_by_type.get("comic", [])
         top_rated_manga = top_rated_by_type.get("manga", [])
@@ -458,6 +459,7 @@ def statistics(request):
             "top_rated": statistics_data["top_rated"],
             "top_rated_movie": top_rated_movie,
             "top_rated_tv": top_rated_tv,
+            "top_rated_anime": top_rated_anime,
             "top_rated_book": top_rated_book,
             "top_rated_comic": top_rated_comic,
             "top_rated_manga": top_rated_manga,
@@ -468,6 +470,7 @@ def statistics(request):
             "hours_per_media_type": statistics_data["hours_per_media_type"],
             "tv_consumption": statistics_data["tv_consumption"],
             "movie_consumption": statistics_data["movie_consumption"],
+            "anime_consumption": statistics_data.get("anime_consumption", {}),
             "music_consumption": statistics_data["music_consumption"],
             "podcast_consumption": statistics_data["podcast_consumption"],
             "game_consumption": statistics_data["game_consumption"],
@@ -584,6 +587,7 @@ def statistics(request):
             "top_rated": empty_statistics_data["top_rated"],
             "top_rated_movie": [],
             "top_rated_tv": [],
+            "top_rated_anime": [],
             "top_rated_book": [],
             "top_rated_comic": [],
             "top_rated_manga": [],
@@ -594,6 +598,7 @@ def statistics(request):
             "hours_per_media_type": empty_statistics_data["hours_per_media_type"],
             "tv_consumption": empty_statistics_data["tv_consumption"],
             "movie_consumption": empty_statistics_data["movie_consumption"],
+            "anime_consumption": empty_statistics_data.get("anime_consumption", {}),
             "music_consumption": empty_statistics_data["music_consumption"],
             "podcast_consumption": empty_statistics_data["podcast_consumption"],
             "game_consumption": empty_statistics_data["game_consumption"],

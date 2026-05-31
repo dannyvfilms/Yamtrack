@@ -580,14 +580,17 @@ def clear_time_left_cache_on_season_delete(sender, instance, **kwargs):  # noqa:
 @receiver([post_save, post_delete], sender=Anime)
 def refresh_statistics_cache_on_anime_change(sender, instance, **kwargs):  # noqa: ARG001
     """Schedule statistics cache refresh when anime activity changes.
-    
+
     We schedule a refresh but don't delete the cache immediately,
     so users can see the old data with a notification while refresh happens.
     """
+    user_id = getattr(instance, "user_id", None)
+    day_keys = _collect_reading_statistics_day_keys(instance)
     _handle_media_cache_change(
-        getattr(instance, "user_id", None),
+        user_id,
         MediaTypes.ANIME.value,
         reason="anime_change",
+        statistics_day_values=day_keys,
     )
 
 

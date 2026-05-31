@@ -42,7 +42,7 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_VERSION = 12
+STATISTICS_CACHE_VERSION = 13
 STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 STATISTICS_STALE_AFTER = timedelta(minutes=15)
@@ -340,7 +340,7 @@ def _collect_stale_reading_score_days(user, day_whitelist: set[date] | None = No
         active_media_types = set(MediaTypes.values)
 
     expected_by_day: dict[date, list[tuple[str, int, float]]] = defaultdict(list)
-    for media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
+    for media_type in (MediaTypes.ANIME.value, MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
         if media_type not in active_media_types:
             continue
         model = apps.get_model("app", media_type)
@@ -470,6 +470,12 @@ def build_statistics_data(user, start_date, end_date):
         end_date,
         minutes_per_media_type,
     )
+    anime_consumption = stats.get_anime_consumption_stats(
+        user_media,
+        start_date,
+        end_date,
+        minutes_per_media_type,
+    )
     music_consumption = stats.get_music_consumption_stats(
         user_media,
         start_date,
@@ -535,6 +541,7 @@ def build_statistics_data(user, start_date, end_date):
         "hours_per_media_type": hours_per_media_type,
         "tv_consumption": tv_consumption,
         "movie_consumption": movie_consumption,
+        "anime_consumption": anime_consumption,
         "music_consumption": music_consumption,
         "podcast_consumption": podcast_consumption,
         "game_consumption": game_consumption,
@@ -596,6 +603,7 @@ def _get_empty_statistics_data():
         "hours_per_media_type": {},
         "tv_consumption": {},
         "movie_consumption": {},
+        "anime_consumption": {},
         "music_consumption": {},
         "podcast_consumption": {},
         "game_consumption": {
@@ -1230,6 +1238,7 @@ def build_stats_for_day(user_id: int, day_value):
     daily_minutes_by_type: dict[str, float] = defaultdict(float)
     movie_genres = defaultdict(lambda: {"minutes": 0, "plays": 0})
     tv_genres = defaultdict(lambda: {"minutes": 0, "plays": 0})
+    anime_genres = defaultdict(lambda: {"minutes": 0, "plays": 0})
     game_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "game_ids": set()})
     reading_genres = {
         MediaTypes.BOOK.value: defaultdict(lambda: {"units": 0, "titles": set(), "name": ""}),
@@ -1382,14 +1391,17 @@ def build_stats_for_day(user_id: int, day_value):
                 "related_season__related_tv__score",
                 "related_season__related_tv__created_at",
                 "related_season__related_tv__item__genres",
+            "related_season__related_tv__item__library_media_type",
             )
             .iterator(chunk_size=1000)
         )
         for row in episodes:
             play_dt = row.get("end_date")
-            plays_by_type[MediaTypes.TV.value] += 1
+            ep_lib_type = row.get("related_season__related_tv__item__library_media_type")
+            ep_type = MediaTypes.ANIME.value if ep_lib_type == MediaTypes.ANIME.value else MediaTypes.TV.value
+            plays_by_type[ep_type] += 1
             play_count += 1
-            _add_hour(MediaTypes.TV.value, play_dt)
+            _add_hour(ep_type, play_dt)
 
             runtime_minutes = _safe_runtime_minutes(row.get("item__runtime_minutes"))
             if runtime_minutes <= 0:
@@ -1400,16 +1412,17 @@ def build_stats_for_day(user_id: int, day_value):
                 if media_id and source and season_number is not None:
                     missing_episode_runtime_keys.add((media_id, source, season_number))
             else:
-                minutes_by_type[MediaTypes.TV.value] += runtime_minutes
-                daily_minutes_by_type[MediaTypes.TV.value] += runtime_minutes
+                minutes_by_type[ep_type] += runtime_minutes
+                daily_minutes_by_type[ep_type] += runtime_minutes
 
             tv_item_id = row.get("related_season__related_tv__item_id")
             tv_media_id = row.get("related_season__related_tv_id")
             season_item_id = row.get("related_season__item_id")
             tv_activity = play_dt or row.get("related_season__related_tv__created_at")
+            genre_map = anime_genres if ep_type == MediaTypes.ANIME.value else tv_genres
             if tv_item_id:
                 _update_item_meta(
-                    MediaTypes.TV.value,
+                    ep_type,
                     tv_item_id,
                     tv_media_id,
                     row.get("related_season__related_tv__status"),
@@ -1417,7 +1430,7 @@ def build_stats_for_day(user_id: int, day_value):
                     tv_activity,
                 )
                 _update_top_played(
-                    MediaTypes.TV.value,
+                    ep_type,
                     tv_item_id,
                     tv_media_id,
                     minutes=runtime_minutes,
@@ -1426,7 +1439,7 @@ def build_stats_for_day(user_id: int, day_value):
                     activity_dt=play_dt or tv_activity,
                 )
                 if runtime_minutes > 0 and not _add_genres(
-                    tv_genres,
+                    genre_map,
                     row.get("related_season__related_tv__item__genres"),
                     runtime_minutes,
                 ):
@@ -2159,6 +2172,7 @@ def build_stats_for_day(user_id: int, day_value):
         "genres": {
             "movie": dict(movie_genres),
             "tv": dict(tv_genres),
+            "anime": dict(anime_genres),
             "game": {},
             MediaTypes.BOOK.value: {},
             MediaTypes.COMIC.value: {},
@@ -2509,7 +2523,7 @@ def _fetch_media_objects(media_refs):
 
     for media_type, media_ids in by_type.items():
         model = apps.get_model("app", media_type)
-        queryset = model.objects.filter(id__in=media_ids)
+        queryset = model.objects.filter(id__in=media_ids).select_related("item")
         if media_type == MediaTypes.SEASON.value:
             queryset = queryset.select_related("item", "related_tv__item")
         elif media_type == MediaTypes.EPISODE.value:
@@ -2518,10 +2532,19 @@ def _fetch_media_objects(media_refs):
                 "related_season__item",
                 "related_season__related_tv__item",
             )
-        else:
-            queryset = queryset.select_related("item")
+        found_ids = set()
         for media in queryset:
             media_objects[(media_type, media.id)] = media
+            found_ids.add(media.id)
+
+        # Grouped anime (TV shows with library_media_type='anime') are stored in the TV
+        # table, so any anime IDs not found in the Anime model belong to TV instances.
+        if media_type == MediaTypes.ANIME.value:
+            missing_ids = media_ids - found_ids
+            if missing_ids:
+                TV = apps.get_model("app", MediaTypes.TV.value)
+                for tv in TV.objects.filter(id__in=missing_ids).select_related("item"):
+                    media_objects[(media_type, tv.id)] = tv
 
     return media_objects
 
@@ -3347,6 +3370,7 @@ def _aggregate_statistics_from_days(
     day_minutes_by_type = defaultdict(dict)
     movie_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
     tv_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
+    anime_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
     game_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "game_ids": set()})
     reading_genres = {
         MediaTypes.BOOK.value: defaultdict(lambda: {"units": 0, "titles": 0, "name": ""}),
@@ -3507,6 +3531,11 @@ def _aggregate_statistics_from_days(
                 tv_genres[genre]["minutes"] += payload.get("minutes", 0)
                 tv_genres[genre]["plays"] += payload.get("plays", 0)
                 tv_genres[genre]["name"] = payload.get("name") or genre
+
+            for genre, payload in day_stats.get("genres", {}).get("anime", {}).items():
+                anime_genres[genre]["minutes"] += payload.get("minutes", 0)
+                anime_genres[genre]["plays"] += payload.get("plays", 0)
+                anime_genres[genre]["name"] = payload.get("name") or genre
 
             for genre, payload in day_stats.get("genres", {}).get("game", {}).items():
                 game_genres[genre]["minutes"] += payload.get("minutes", 0)
@@ -3881,6 +3910,12 @@ def _aggregate_statistics_from_days(
         config.get_stats_color(MediaTypes.TV.value),
         "Episode Plays",
     )
+    anime_chart = _build_media_charts_from_counts(
+        day_play_counts.get(MediaTypes.ANIME.value, {}),
+        hour_counts.get(MediaTypes.ANIME.value, {}),
+        config.get_stats_color(MediaTypes.ANIME.value),
+        "Anime Plays",
+    )
     music_chart = _build_media_charts_from_counts(
         day_play_counts.get(MediaTypes.MUSIC.value, {}),
         hour_counts.get(MediaTypes.MUSIC.value, {}),
@@ -3895,12 +3930,14 @@ def _aggregate_statistics_from_days(
     )
 
     tv_total_minutes = minutes_by_type.get(MediaTypes.TV.value, 0)
+    anime_total_minutes = minutes_by_type.get(MediaTypes.ANIME.value, 0)
     movie_total_minutes = minutes_by_type.get(MediaTypes.MOVIE.value, 0)
     music_total_minutes = minutes_by_type.get(MediaTypes.MUSIC.value, 0)
     podcast_total_minutes = minutes_by_type.get(MediaTypes.PODCAST.value, 0)
     game_total_minutes = minutes_by_type.get(MediaTypes.GAME.value, 0)
 
     tv_total_hours = tv_total_minutes / 60 if tv_total_minutes else 0
+    anime_total_hours = anime_total_minutes / 60 if anime_total_minutes else 0
     movie_total_hours = movie_total_minutes / 60 if movie_total_minutes else 0
     game_total_hours = game_total_minutes / 60 if game_total_minutes else 0
 
@@ -3923,6 +3960,17 @@ def _aggregate_statistics_from_days(
         "top_genres": [
             {**item, "formatted_duration": helpers.minutes_to_hhmm(item["minutes"])}
             for item in sorted(movie_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:STATISTICS_TOP_N]
+        ],
+    }
+
+    anime_consumption = {
+        "hours": _compute_metric_breakdown_for_range(anime_total_hours, start_date, end_date),
+        "plays": _compute_metric_breakdown_for_range(plays_by_type.get(MediaTypes.ANIME.value, 0), start_date, end_date),
+        "charts": anime_chart,
+        "has_data": plays_by_type.get(MediaTypes.ANIME.value, 0) > 0,
+        "top_genres": [
+            {**item, "formatted_duration": helpers.minutes_to_hhmm(item["minutes"])}
+            for item in sorted(anime_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:STATISTICS_TOP_N]
         ],
     }
 
@@ -4402,6 +4450,7 @@ def _aggregate_statistics_from_days(
         "hours_per_media_type": hours_per_media_type,
         "tv_consumption": tv_consumption,
         "movie_consumption": movie_consumption,
+        "anime_consumption": anime_consumption,
         "music_consumption": music_consumption,
         "podcast_consumption": podcast_consumption,
         "game_consumption": game_consumption,

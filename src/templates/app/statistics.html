@@ -1403,6 +1403,8 @@
 
       {% include "app/components/statistics/tv_activity_overview.html" %}
 
+      {% include "app/components/statistics/anime_activity_overview.html" %}
+
       {% include "app/components/statistics/movie_activity_overview.html" %}
 
       {% include "app/components/statistics/game_activity_overview.html" %}
@@ -2107,6 +2109,12 @@
   {{ tv_consumption.charts.by_month|json_script:"tv_episodes_by_month" }}
   {{ tv_consumption.charts.by_weekday|json_script:"tv_episodes_by_weekday" }}
   {{ tv_consumption.charts.by_time_of_day|json_script:"tv_episodes_by_time" }}
+  {% if show_year_charts %}
+    {{ anime_consumption.charts.by_year|json_script:"anime_episodes_by_year" }}
+  {% endif %}
+  {{ anime_consumption.charts.by_month|json_script:"anime_episodes_by_month" }}
+  {{ anime_consumption.charts.by_weekday|json_script:"anime_episodes_by_weekday" }}
+  {{ anime_consumption.charts.by_time_of_day|json_script:"anime_episodes_by_time" }}
   {% if show_year_charts %}
     {{ movie_consumption.charts.by_year|json_script:"movie_plays_by_year" }}
   {% endif %}

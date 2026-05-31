@@ -762,6 +762,23 @@ document.addEventListener("DOMContentLoaded", function () {
   );
 
   initializeSingleSeriesBarChart(
+    "animeEpisodesByYearChart",
+    "anime_episodes_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "animeEpisodesByMonthChart",
+    "anime_episodes_by_month"
+  );
+  initializeSingleSeriesBarChart(
+    "animeEpisodesByWeekdayChart",
+    "anime_episodes_by_weekday"
+  );
+  initializeSingleSeriesBarChart(
+    "animeEpisodesByTimeChart",
+    "anime_episodes_by_time"
+  );
+
+  initializeSingleSeriesBarChart(
     "moviePlaysByYearChart",
     "movie_plays_by_year"
   );

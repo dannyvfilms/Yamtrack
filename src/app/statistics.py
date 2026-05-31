@@ -2279,6 +2279,62 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
+def get_anime_consumption_stats(user_media, start_date, end_date, minutes_per_type=None):
+    """Return aggregate metrics and chart data for anime (grouped episode-based + standalone)."""
+    import logging as _logging
+
+    anime_queryset = (user_media or {}).get(MediaTypes.ANIME.value)
+
+    # Episode-level datetimes from grouped anime (TV shows with library_media_type='anime')
+    episode_datetimes = _collect_episode_datetimes(anime_queryset, start_date, end_date)
+    _, episode_play_details = _collect_tv_play_data(anime_queryset, start_date, end_date)
+
+    # Show-level datetimes from standalone Anime model instances
+    standalone_datetimes = []
+    standalone_play_details = []
+    if anime_queryset is not None:
+        _logger = _logging.getLogger(__name__)
+        for media in _iter_media_list(anime_queryset):
+            if getattr(media, "seasons", None) is not None:
+                continue  # grouped anime — already counted via episodes above
+            activity_date = _get_activity_datetime(media)
+            if activity_date is None:
+                continue
+            if start_date and end_date:
+                if not (start_date <= activity_date <= end_date):
+                    continue
+            runtime = _get_media_runtime_from_cache(media, _logger, context="anime play data")
+            localized = _localize_datetime(activity_date)
+            standalone_datetimes.append(localized)
+            if runtime > 0:
+                standalone_play_details.append((media, localized, runtime))
+
+    all_datetimes = sorted(episode_datetimes + standalone_datetimes)
+    all_play_details = episode_play_details + standalone_play_details
+
+    if minutes_per_type is None:
+        minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
+
+    total_minutes = minutes_per_type.get(MediaTypes.ANIME.value, 0)
+    total_hours = total_minutes / 60 if total_minutes else 0
+    total_plays = len(all_datetimes)
+
+    hours_breakdown = _compute_metric_breakdown(total_hours, all_datetimes, start_date, end_date)
+    plays_breakdown = _compute_metric_breakdown(total_plays, all_datetimes, start_date, end_date)
+
+    color = config.get_stats_color(MediaTypes.ANIME.value)
+    charts = _build_media_charts(all_datetimes, color, "Anime Plays")
+    top_genres = _compute_movie_tv_top_genres(all_play_details, limit=STATISTICS_TOP_N)
+
+    return {
+        "hours": hours_breakdown,
+        "plays": plays_breakdown,
+        "charts": charts,
+        "has_data": total_plays > 0,
+        "top_genres": top_genres,
+    }
+
+
 def _build_completed_length_distribution_chart(values, unit_name, color):
     """Build chart showing distribution of completed item lengths."""
     empty_chart = {"labels": [], "datasets": []}
