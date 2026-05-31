@@ -5,7 +5,7 @@ import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, date
+from datetime import UTC, date, datetime
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
 
 from django.conf import settings
