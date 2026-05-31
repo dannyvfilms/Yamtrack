@@ -6,6 +6,7 @@ import logging
 import math
 from datetime import timedelta
 
+from django.conf import settings
 from django.core.cache import cache
 from django.db import OperationalError
 from django.utils import timezone
@@ -52,6 +53,7 @@ from app.discover.artwork import (
     _hydrate_provider_ranked_artwork,
     _hydrate_trakt_ranked_artwork,
     _row_ttl_seconds,
+    _supports_provider_artwork_hydration,
     hydrate_visible_row_artwork,
 )
 from app.discover.entry_candidates import (

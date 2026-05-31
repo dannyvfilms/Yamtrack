@@ -195,6 +195,7 @@ class YamtrackImporter:
     def _process_media_row(self, row):
         """Process a single media row from the CSV file."""
         media_type = (row.get("media_type") or "").strip().lower()
+        library_media_type = (row.get("library_media_type") or "").strip().lower()
         row["media_type"] = media_type
         row["source"] = (row.get("source") or "").strip().lower()
         normalized_status = _normalize_status(row.get("status"))
@@ -246,6 +247,7 @@ class YamtrackImporter:
                 defaults={
                     "title": row["title"],
                     "image": row["image"],
+                    **({"library_media_type": library_media_type} if library_media_type else {}),
                 },
             ),
         )
