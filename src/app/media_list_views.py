@@ -1051,7 +1051,7 @@ def media_list(request, media_type):
 
     # Convert to list for filtering (rating and collection filters work on lists)
     media_list = list(media_queryset)
-    if media_type == MediaTypes.TV.value and not include_grouped_anime_in_tv:
+    if media_type in {MediaTypes.TV.value, MediaTypes.SEASON.value} and not include_grouped_anime_in_tv:
         media_list = [
             media
             for media in media_list
