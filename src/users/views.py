@@ -47,6 +47,7 @@ from users.models import (
     ActivityHistoryViewChoices,
     AnimeLibraryModeChoices,
     DateFormatChoices,
+    DurationFormatChoices,
     GameLoggingStyleChoices,
     ImportFrequencyChoices,
     ImportModeChoices,
@@ -668,10 +669,12 @@ def preferences(request):
         quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
         book_comic_manga_progress_percentage = request.POST.get("book_comic_manga_progress_percentage") == "1"
 
+        duration_format = request.POST.get("duration_format")
         fields_to_update = []
         rating_scale_changed = False
         top_talent_sort_changed = False
         week_start_day_changed = False
+        duration_format_changed = False
 
         # Backwards-compatible handling for older clients/tests that still submit
         # media library checkboxes to the preferences endpoint.
@@ -708,6 +711,12 @@ def preferences(request):
             if request.user.activity_history_view != activity_history_view:
                 request.user.activity_history_view = activity_history_view
                 fields_to_update.append("activity_history_view")
+
+        if duration_format and duration_format in DurationFormatChoices.values:
+            if request.user.duration_format != duration_format:
+                request.user.duration_format = duration_format
+                fields_to_update.append("duration_format")
+                duration_format_changed = True
 
         if (
             game_logging_style
@@ -848,7 +857,7 @@ def preferences(request):
                     force=True,
                     logging_styles=("sessions", "repeats"),
                 )
-            if rating_scale_changed or top_talent_sort_changed or week_start_day_changed:
+            if rating_scale_changed or top_talent_sort_changed or week_start_day_changed or duration_format_changed:
                 statistics_cache.invalidate_statistics_cache(request.user.id)
                 statistics_cache.schedule_all_ranges_refresh(
                     request.user.id,

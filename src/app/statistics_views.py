@@ -207,11 +207,11 @@ def _get_statistics_minutes_by_type(statistics_data):
     }
 
 
-def _format_statistics_total_for_media_type(media_type, total):
+def _format_statistics_total_for_media_type(media_type, total, duration_format="hours_minutes"):
     if media_type == MediaTypes.BOARDGAME.value:
         rounded_total = int(round(total or 0))
         return f"{rounded_total} play{'s' if rounded_total != 1 else ''}"
-    return stats._format_hours_minutes(total or 0)
+    return stats._format_hours_minutes(total or 0, duration_format)
 
 
 def _format_statistics_percent_change(delta_percent):
@@ -226,6 +226,7 @@ def _build_hours_per_media_type_comparison(
     comparison_suffix,
     current_period_label,
     comparison_period_label,
+    duration_format="hours_minutes",
 ):
     if compare_mode == STATISTICS_COMPARE_NONE:
         return {
@@ -249,9 +250,9 @@ def _build_hours_per_media_type_comparison(
         if current_total <= 0:
             continue
 
-        current_display = _format_statistics_total_for_media_type(media_type, current_total)
+        current_display = _format_statistics_total_for_media_type(media_type, current_total, duration_format)
         previous_total = float(comparison_minutes_by_type.get(media_type, 0) or 0)
-        previous_display = _format_statistics_total_for_media_type(media_type, previous_total)
+        previous_display = _format_statistics_total_for_media_type(media_type, previous_total, duration_format)
         tooltip = {
             "current_label": current_period_label,
             "current_total": current_display,
@@ -427,6 +428,7 @@ def statistics(request):
             comparison_card_suffix,
             current_tooltip_label,
             comparison_tooltip_label,
+            duration_format=getattr(request.user, "duration_format", "hours_minutes"),
         )
 
         top_rated_by_type = statistics_data.get("top_rated_by_type", {})

@@ -1326,18 +1326,43 @@ def _is_media_in_date_range(media, start_date, end_date):
 
 
 
-def _format_hours_minutes(total_minutes):
-    """Format total minutes into hours and minutes string."""
+def _format_long_units(total_minutes):
+    """Format minutes using the largest applicable units (mo/d/h/min)."""
+    total_minutes = int(total_minutes)
+    if total_minutes < 60:
+        return f"{total_minutes}min"
+    if total_minutes < 1440:  # < 24 h
+        hours, mins = divmod(total_minutes, 60)
+        return f"{hours}h {mins}min"
+    MONTH = 43800  # 30 × 24 × 60
+    DAY = 1440
+    HOUR = 60
+    months, r = divmod(total_minutes, MONTH)
+    days, r = divmod(r, DAY)
+    hours, mins = divmod(r, HOUR)
+    parts = []
+    if months:
+        parts.append(f"{months}mo")
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if mins or not parts:
+        parts.append(f"{mins}min")
+    return " ".join(parts)
+
+
+def _format_hours_minutes(total_minutes, duration_format="hours_minutes"):
+    """Format total minutes into a duration string."""
     if total_minutes > 0:
         try:
             total_minutes = int(total_minutes)
         except (TypeError, ValueError):
             return "0h 0min"
-        hours = total_minutes // 60
-        remaining_minutes = total_minutes % 60
-
-        # Always show both hours and minutes for consistency
-        return f"{hours}h {remaining_minutes}min"
+        if duration_format == "long_units":
+            return _format_long_units(total_minutes)
+        hours, mins = divmod(total_minutes, 60)
+        return f"{hours}h {mins}min"
     return "0h 0min"
 
 
@@ -1516,7 +1541,7 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date, user=None
     return minutes_per_type
 
 
-def get_hours_per_media_type(user_media, start_date, end_date, minutes_per_type=None):
+def get_hours_per_media_type(user_media, start_date, end_date, minutes_per_type=None, duration_format="hours_minutes"):
     """Calculate total hours watched per media type within the date range."""
     if minutes_per_type is None:
         minutes_per_type = calculate_minutes_per_media_type(user_media, start_date, end_date)
@@ -1525,7 +1550,7 @@ def get_hours_per_media_type(user_media, start_date, end_date, minutes_per_type=
         if media_type == MediaTypes.BOARDGAME.value:
             hours[media_type] = f"{total_minutes} play{'s' if total_minutes != 1 else ''}"
         else:
-            hours[media_type] = _format_hours_minutes(total_minutes)
+            hours[media_type] = _format_hours_minutes(total_minutes, duration_format)
     return hours
 
 

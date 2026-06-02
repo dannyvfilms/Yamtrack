@@ -42,7 +42,7 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_VERSION = 13
+STATISTICS_CACHE_VERSION = 14
 STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 STATISTICS_STALE_AFTER = timedelta(minutes=15)
@@ -457,6 +457,7 @@ def build_statistics_data(user, start_date, end_date):
         start_date,
         end_date,
         minutes_per_media_type,
+        duration_format=user.duration_format,
     )
     tv_consumption = stats.get_tv_consumption_stats(
         user_media,
@@ -2886,7 +2887,7 @@ def get_person_talent_totals(user, person_source, person_id, start_date=None, en
             "bucket": bucket,
             "plays": int(bucket_plays.get(bucket, 0)),
             "watched_minutes": watched_minutes,
-            "watched_time": stats._format_hours_minutes(watched_minutes),
+            "watched_time": stats._format_hours_minutes(watched_minutes, user.duration_format),
             "unique_movies": unique_movies,
             "unique_shows": unique_shows,
             "unique_titles": unique_movies + unique_shows,
@@ -3261,7 +3262,7 @@ def _aggregate_top_talent(user, start_date, end_date, limit=STATISTICS_TOP_N, sc
                     "person_id": person.source_person_id,
                     "plays": int(plays),
                     "watched_minutes": watched_minutes,
-                    "watched_time": stats._format_hours_minutes(watched_minutes),
+                    "watched_time": stats._format_hours_minutes(watched_minutes, user.duration_format),
                     "unique_movies": unique_movies,
                     "unique_shows": unique_shows,
                     "unique_titles": unique_movies + unique_shows,
@@ -3297,7 +3298,7 @@ def _aggregate_top_talent(user, start_date, end_date, limit=STATISTICS_TOP_N, sc
                     "studio_id": studio.source_studio_id,
                     "plays": int(plays),
                     "watched_minutes": watched_minutes,
-                    "watched_time": stats._format_hours_minutes(watched_minutes),
+                    "watched_time": stats._format_hours_minutes(watched_minutes, user.duration_format),
                     "unique_movies": unique_movies,
                     "unique_shows": unique_shows,
                     "unique_titles": unique_movies + unique_shows,
@@ -3872,7 +3873,7 @@ def _aggregate_statistics_from_days(
         if media_type == MediaTypes.BOARDGAME.value:
             hours_per_media_type[media_type] = f"{int(total_minutes)} play{'s' if int(total_minutes) != 1 else ''}"
         else:
-            hours_per_media_type[media_type] = stats._format_hours_minutes(total_minutes)
+            hours_per_media_type[media_type] = stats._format_hours_minutes(total_minutes, user.duration_format)
 
     if start_date is None and end_date is None and day_list:
         start_date = _day_boundary_datetime(day_list[0])

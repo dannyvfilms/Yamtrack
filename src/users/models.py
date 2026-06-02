@@ -163,6 +163,13 @@ class ActivityHistoryViewChoices(models.TextChoices):
     STACKED = "stacked", "Stacked Bar Chart"
 
 
+class DurationFormatChoices(models.TextChoices):
+    """Choices for how long durations are displayed."""
+
+    HOURS_MINUTES = "hours_minutes", "Hours and minutes (500h 30min)"
+    LONG_UNITS = "long_units", "Days and hours (20d 20h 30min)"
+
+
 class StatisticsRangeChoices(models.TextChoices):
     """Choices for predefined statistics date ranges."""
 
@@ -849,6 +856,12 @@ class User(AbstractUser):
         choices=ActivityHistoryViewChoices.choices,
         help_text="Which activity history visualization to show on the Statistics page",
     )
+    duration_format = models.CharField(
+        max_length=20,
+        default=DurationFormatChoices.HOURS_MINUTES,
+        choices=DurationFormatChoices.choices,
+        help_text="How long durations are displayed on the Statistics page",
+    )
     mobile_grid_layout = models.CharField(
         max_length=20,
         default=MobileGridLayoutChoices.COMPACT,
@@ -1044,6 +1057,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="activity_history_view_valid",
                 condition=models.Q(activity_history_view__in=ActivityHistoryViewChoices.values),
+            ),
+            models.CheckConstraint(
+                name="duration_format_valid",
+                condition=models.Q(duration_format__in=DurationFormatChoices.values),
             ),
             models.CheckConstraint(
                 name="media_card_subtitle_display_valid",
