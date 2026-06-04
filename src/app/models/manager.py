@@ -1,5 +1,6 @@
 import logging
 from collections import defaultdict
+from datetime import timedelta
 
 from django.apps import apps
 from django.db import connection, models

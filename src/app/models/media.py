@@ -1,6 +1,7 @@
 import logging
 from datetime import timedelta
 
+from django.apps import apps
 from django.conf import settings
 from django.core.validators import (
     DecimalValidator,
@@ -15,6 +16,7 @@ from requests import RequestException
 from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
+import app
 import events
 import users
 from app import cache_utils, providers
