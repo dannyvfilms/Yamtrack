@@ -18,7 +18,7 @@ from app.providers import services, tmdb
 logger = logging.getLogger(__name__)
 
 base_url = "https://api4.thetvdb.com/v4"
-TVDB_CACHE_NAMESPACE = f"{Sources.TVDB.value}_v3"
+TVDB_CACHE_NAMESPACE = f"{Sources.TVDB.value}_v4"
 TOKEN_CACHE_KEY = f"{TVDB_CACHE_NAMESPACE}_access_token"
 TOKEN_CACHE_TIMEOUT = 60 * 60 * 12
 PREFERRED_TRANSLATION_CODES = ("eng", "en", "eng-us", "en-us")
