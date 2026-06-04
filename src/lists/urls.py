@@ -1,6 +1,6 @@
 from django.urls import path
 
-from lists import feeds, views
+from lists import feeds, views, views_add_reorder, views_recommendations, views_trakt
 
 urlpatterns = [
     path("user/<str:username>", views.user_profile, name="user_profile"),
@@ -43,75 +43,75 @@ urlpatterns = [
     ),
     path(
         "list/<int:list_id>/reorder",
-        views.reorder_list_item,
+        views_add_reorder.reorder_list_item,
         name="list_reorder_item",
     ),
     path(
         "list/<int:list_id>/reorder-all",
-        views.reorder_list_items_all,
+        views_add_reorder.reorder_list_items_all,
         name="list_reorder_all",
     ),
     path(
         "list/<int:list_id>/add",
-        views.add_list_item_page,
+        views_add_reorder.add_list_item_page,
         name="list_add_item",
     ),
     path(
         "list/<int:list_id>/add/search",
-        views.add_list_item_search,
+        views_add_reorder.add_list_item_search,
         name="list_add_item_search",
     ),
     path(
         "list/<int:list_id>/add/submit",
-        views.add_list_item_submit,
+        views_add_reorder.add_list_item_submit,
         name="list_add_item_submit",
     ),
     path(
         "lists/import/trakt/credentials",
-        views.trakt_lists_credentials,
+        views_trakt.trakt_lists_credentials,
         name="trakt_lists_credentials",
     ),
-    path("lists/import/trakt", views.trakt_lists_oauth, name="trakt_lists_oauth"),
+    path("lists/import/trakt", views_trakt.trakt_lists_oauth, name="trakt_lists_oauth"),
     path(
         "lists/import/trakt/callback",
-        views.trakt_lists_callback,
+        views_trakt.trakt_lists_callback,
         name="trakt_lists_callback",
     ),
     path("list_item_toggle", views.list_item_toggle, name="list_item_toggle"),
     # Recommendation URLs
     path(
         "list/<int:list_id>/recommend",
-        views.recommend_item_page,
+        views_recommendations.recommend_item_page,
         name="recommend_item",
     ),
     path(
         "list/<int:list_id>/recommend/search",
-        views.recommend_search,
+        views_recommendations.recommend_search,
         name="recommend_search",
     ),
     path(
         "list/<int:list_id>/recommend/submit",
-        views.submit_recommendation,
+        views_recommendations.submit_recommendation,
         name="submit_recommendation",
     ),
     path(
         "list/<int:list_id>/recommendations",
-        views.list_recommendations,
+        views_recommendations.list_recommendations,
         name="list_recommendations",
     ),
     path(
         "list/<int:list_id>/activity",
-        views.list_activity,
+        views_recommendations.list_activity,
         name="list_activity",
     ),
     path(
         "list/<int:list_id>/recommendations/<int:recommendation_id>/approve",
-        views.approve_recommendation,
+        views_recommendations.approve_recommendation,
         name="approve_recommendation",
     ),
     path(
         "list/<int:list_id>/recommendations/<int:recommendation_id>/deny",
-        views.deny_recommendation,
+        views_recommendations.deny_recommendation,
         name="deny_recommendation",
     ),
     path(
