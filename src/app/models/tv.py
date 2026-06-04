@@ -1056,6 +1056,7 @@ class Episode(models.Model):
         related_name="episodes",
     )
     end_date = models.DateTimeField(null=True, blank=True)
+    dropped = models.BooleanField(default=False)
     score = models.DecimalField(
         null=True,
         blank=True,

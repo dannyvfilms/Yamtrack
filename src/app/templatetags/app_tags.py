@@ -206,6 +206,14 @@ def rating_scale_max(user):
 
 
 @register.filter
+def watched_count(history):
+    """Return the count of non-dropped watch entries from an episode history list."""
+    if not history:
+        return 0
+    return sum(1 for entry in history if not getattr(entry, "dropped", False))
+
+
+@register.filter
 def score_display(score, user):
     """Format a score using the user's rating scale."""
     if score is None:

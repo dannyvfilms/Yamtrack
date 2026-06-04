@@ -10,7 +10,7 @@ from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
-from app import helpers
+from app import cache_utils, helpers
 from app.activity_builders import _build_detail_activity_state
 from app.discover import tab_cache as discover_tab_cache
 from app.forms import EpisodeForm, get_form_class
@@ -491,6 +491,157 @@ def episode_save(request):
 
     return helpers.redirect_back(request)
 
+
+@require_POST
+def episode_drop(request):
+    """Mark an episode as dropped — advances progress without adding to watch history."""
+    from django.template.loader import render_to_string
+
+    media_id = request.POST["media_id"]
+    season_number = int(request.POST["season_number"])
+    episode_number = int(request.POST["episode_number"])
+    source = request.POST["source"]
+    library_media_type = (request.POST.get("library_media_type") or "").strip()
+
+    next_path = request.GET.get("next") or ""
+    if source == Sources.TMDB.value and next_path:
+        parsed_next_path = urlparse(next_path).path
+        path_parts = [segment for segment in parsed_next_path.split("/") if segment]
+        if len(path_parts) >= 2 and path_parts[0] == "details":
+            route_source = path_parts[1]
+            if route_source in {choice[0] for choice in Sources.choices}:
+                source = route_source
+
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.TV.value,
+    )
+
+    try:
+        related_season = Season.objects.get(
+            item__media_id=media_id,
+            item__source=source,
+            item__season_number=season_number,
+            item__episode_number=None,
+            user=request.user,
+        )
+    except Season.DoesNotExist:
+        tv_with_seasons_metadata = services.get_media_metadata(
+            "tv_with_seasons",
+            media_id,
+            source,
+            [season_number],
+        )
+        season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
+        season_image = season_metadata.get("image") or tv_with_seasons_metadata.get("image")
+
+        item, _ = Item.objects.get_or_create(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=season_number,
+            defaults={
+                **Item.title_fields_from_metadata(tv_with_seasons_metadata),
+                "library_media_type": library_media_type,
+                "image": season_image,
+            },
+        )
+        if library_media_type and item.library_media_type != library_media_type:
+            item.library_media_type = library_media_type
+            item.save(update_fields=["library_media_type"])
+        related_season = Season.objects.create(
+            item=item,
+            user=request.user,
+            score=None,
+            status=Status.IN_PROGRESS.value,
+            notes="",
+        )
+        logger.info("%s did not exist, it was created successfully.", related_season)
+
+    if library_media_type and related_season.item.library_media_type != library_media_type:
+        related_season.item.library_media_type = library_media_type
+        related_season.item.save(update_fields=["library_media_type"])
+    if (
+        library_media_type
+        and related_season.related_tv.item.library_media_type != library_media_type
+    ):
+        related_season.related_tv.item.library_media_type = library_media_type
+        related_season.related_tv.item.save(update_fields=["library_media_type"])
+
+    item = related_season.get_episode_item(episode_number)
+    episode_record = Episode.objects.create(
+        related_season=related_season,
+        item=item,
+        end_date=None,
+        dropped=True,
+    )
+    logger.info("%s dropped successfully.", episode_record)
+    cache_utils.clear_time_left_cache_for_user(request.user.id)
+
+    if request.headers.get("HX-Request"):
+        episode_history = list(
+            Episode.objects.filter(
+                related_season=related_season,
+                item__media_id=media_id,
+                item__source=source,
+                item__episode_number=episode_number,
+            )
+            .select_related("item", "related_season")
+            .order_by("-end_date", "-created_at")
+        )
+        if not episode_history:
+            return HttpResponse("Episode not found", status=404)
+
+        episode = episode_history[0]
+        episode.history = episode_history
+        episode.collection_entry = CollectionEntry.objects.filter(
+            item=episode.item,
+            user=request.user,
+        ).select_related("item").first()
+
+        response = HttpResponse()
+        response.write(
+            render_to_string(
+                "app/components/detail_episode_track_button.html",
+                {
+                    "episode": episode,
+                    "track_button_oob": True,
+                },
+                request=request,
+            ),
+        )
+        response.write(
+            render_to_string(
+                "app/components/detail_episode_history_line.html",
+                {
+                    "episode": episode,
+                    "user": request.user,
+                    "history_oob": True,
+                },
+                request=request,
+            ),
+        )
+        response.write(
+            f'<span id="season-progress-mobile-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+        )
+        response.write(
+            f'<span id="season-progress-desktop-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+        )
+        response["HX-Trigger"] = json.dumps(
+            {
+                "closeModal": {},
+                "showToast": {
+                    "message": f"Dropped episode {episode_number}.",
+                    "type": "success",
+                },
+            },
+        )
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
+
+    return helpers.redirect_back(request)
 
 
 @require_POST

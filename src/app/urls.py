@@ -115,6 +115,7 @@ urlpatterns = [
     path("media_save", views.media_save, name="media_save"),
     path("media_delete", views.media_delete, name="media_delete"),
     path("episode_save", views.episode_save, name="episode_save"),
+    path("episode_drop", views.episode_drop, name="episode_drop"),
     path("episode_bulk_save", views.episode_bulk_save, name="episode_bulk_save"),
     path(
         "history_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>/<int:episode_number>",

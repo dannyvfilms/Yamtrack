@@ -27,15 +27,17 @@
           <div>
             <h3 class="text-lg font-semibold mb-1 line-clamp-1">{{ episode_title }}</h3>
             <p class="text-sm text-gray-400">Episode {{ episode.display_episode_number|default:episode.episode_number }}</p>
-            {% if episode.history %}
-              {% if episode.history|length == 1 %}
+            {% with watched_count=episode.history|watched_count %}
+              {% if watched_count == 1 %}
                 <p class="text-sm text-gray-400 mt-1">Watched once</p>
+              {% elif watched_count > 1 %}
+                <p class="text-sm text-gray-400 mt-1">Watched {{ watched_count }} times</p>
+              {% elif episode.history %}
+                <p class="text-sm text-gray-400 mt-1">Dropped</p>
               {% else %}
-                <p class="text-sm text-gray-400 mt-1">Watched {{ episode.history|length }} times</p>
+                <p class="text-sm text-gray-400 mt-1">Not watched yet</p>
               {% endif %}
-            {% else %}
-              <p class="text-sm text-gray-400 mt-1">Not watched yet</p>
-            {% endif %}
+            {% endwith %}
           </div>
         </div>
       </div>
@@ -51,7 +53,9 @@
               {% for entry in episode.history %}
                 <div class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
                   <div class="text-sm text-white">
-                    {% if entry.end_date %}
+                    {% if entry.dropped %}
+                      <span class="text-amber-400 italic">Dropped</span>
+                    {% elif entry.end_date %}
                       {{ entry.end_date|user_date_format:user }}
                     {% else %}
                       No date provided
@@ -74,7 +78,9 @@
           <div class="border-t border-gray-600 my-6"></div>
         {% endif %}
 
-        <form method="post"
+        {# Watch form (date input) #}
+        <form id="episode-watch-{{ media.season_number }}-{{ episode.episode_number }}"
+              method="post"
               action="{% url 'episode_save' %}?next={{ request.path }}"
               hx-post="{% url 'episode_save' %}?next={{ request.path }}"
               hx-swap="none"
@@ -123,14 +129,42 @@
             </div>
           </div>
           {# djlint:on #}
-
-          <div class="flex justify-end-safe gap-3 mt-6">
-            <button type="submit"
-                    class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer">
-              Add watch
-            </button>
-          </div>
         </form>
+
+        {# Drop form (no date input) #}
+        <form id="episode-drop-{{ media.season_number }}-{{ episode.episode_number }}"
+              method="post"
+              action="{% url 'episode_drop' %}?next={{ request.path }}"
+              hx-post="{% url 'episode_drop' %}?next={{ request.path }}"
+              hx-swap="none"
+              @submit="closeTrackModal($el)">
+          {% csrf_token %}
+          <input type="hidden" name="media_id" value="{{ media.media_id }}">
+          <input type="hidden" name="season_number" value="{{ media.season_number }}">
+          <input type="hidden" name="source" value="{{ media.source }}">
+          {% if media.library_media_type %}
+            <input type="hidden"
+                   name="library_media_type"
+                   value="{{ media.library_media_type }}">
+          {% endif %}
+          <input type="hidden"
+                 name="episode_number"
+                 value="{{ episode.episode_number }}">
+        </form>
+
+        {# Shared button row #}
+        <div class="flex justify-end-safe gap-3 mt-6">
+          <button type="submit"
+                  form="episode-drop-{{ media.season_number }}-{{ episode.episode_number }}"
+                  class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-500 transition-colors cursor-pointer">
+            Drop
+          </button>
+          <button type="submit"
+                  form="episode-watch-{{ media.season_number }}-{{ episode.episode_number }}"
+                  class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer">
+            Add watch
+          </button>
+        </div>
       </div>
     </div>
   </div>
