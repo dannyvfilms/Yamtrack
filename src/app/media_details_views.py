@@ -415,7 +415,7 @@ def media_details(
 
             # Get all episodes for this show, ordered by published date (newest first)
             # Use Coalesce to handle None published dates (put them at the end)
-            from datetime import datetime
+            from datetime import datetime, timezone as dt_timezone
 
             from django.db.models import DateTimeField, Value
             from django.db.models.functions import Coalesce
@@ -423,7 +423,7 @@ def media_details(
             episodes = PodcastEpisode.objects.filter(show=show).annotate(
                 published_or_old=Coalesce(
                     "published",
-                    Value(datetime(1970, 1, 1, tzinfo=timezone.utc),
+                    Value(datetime(1970, 1, 1, tzinfo=dt_timezone.utc),
                           output_field=DateTimeField()),
                 ),
             ).order_by("-published_or_old", "-episode_number")
