@@ -17,6 +17,12 @@ repos:
         entry: django-upgrade
         language: system
         types: [python]
+      - id: pyflakes
+        name: pyflakes
+        entry: python -m pyflakes
+        language: system
+        types: [python]
+        require_serial: true
       - id: ruff
         name: ruff
         entry: ruff check --fix

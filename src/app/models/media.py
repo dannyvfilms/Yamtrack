@@ -1,5 +1,4 @@
 import logging
-from datetime import timedelta
 
 from django.apps import apps
 from django.conf import settings
@@ -14,12 +13,9 @@ from model_utils import FieldTracker
 from model_utils.fields import MonitorField
 from requests import RequestException
 from simple_history.models import HistoricalRecords
-from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 
 import app
-import events
-import users
-from app import cache_utils, providers
+from app import providers
 from app.models.choices import MediaTypes, Status
 from app.models.item import Item
 from app.models.manager import MediaManager

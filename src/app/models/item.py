@@ -14,7 +14,7 @@ import app
 import events
 from app import providers
 from app.mixins import CalendarTriggerMixin
-from app.models.choices import MediaTypes, ProviderMetadataStatus, Sources
+from app.models.choices import MediaTypes, Sources
 
 logger = logging.getLogger(__name__)
 

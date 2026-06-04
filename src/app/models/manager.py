@@ -15,12 +15,10 @@ from django.db.models import (
     Window,
 )
 from django.db.models.functions import RowNumber
-from django.utils import timezone, translation
-from unidecode import unidecode
+from django.utils import timezone
 
 import events
 import users
-from app import cache_utils
 from app.models.choices import MediaTypes, Sources, Status
 from app.models.item import Item
 
@@ -355,9 +353,6 @@ class MediaManager(models.Manager):
 
     def _aggregate_item_data(self, display_media, all_media_entries):
         """Aggregate data from multiple media entries for the same item."""
-        # Sort by created_at to get chronological order
-        sorted_entries = sorted(all_media_entries, key=lambda x: x.created_at)
-
         # Aggregate progress:
         # - Movies: count completed entries as plays (legacy rows may have progress=0)
         # - Other media: sum raw progress values
@@ -1620,7 +1615,7 @@ class MediaManager(models.Manager):
             Sources.TMDB.value,
             Sources.TVDB.value,
         }:
-            model = TV
+            model = apps.get_model("app", "TV")
         else:
             model = apps.get_model(app_label="app", model_name=media_type)
         params = self._filter_media_params(
