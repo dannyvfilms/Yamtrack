@@ -753,6 +753,7 @@ def _normalize_episode_rows(season_data: dict | None):
     for episode in _coerce_list((season_data or {}).get("episodes")):
         if not isinstance(episode, dict):
             continue
+        episode = _with_preferred_translation(episode, "episodes")
         air_date = (
             _parse_date(episode.get("aired"))
             or _parse_date(episode.get("firstAired"))

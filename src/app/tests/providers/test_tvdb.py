@@ -240,19 +240,15 @@ class TVDBProviderTests(TestCase):
                     "type": {"name": "Aired Order"},
                     "episodes": [
                         {
+                            "id": 7001,
                             "number": 1,
                             "name": "二千年後の君へ -シガンシナ陥落①-",
-                            "translations": {
-                                "name": [
-                                    {"language": "jpn", "name": "二千年後の君へ -シガンシナ陥落①-"},
-                                    {"language": "eng", "name": "To You, in 2000 Years"},
-                                ],
-                            },
                         },
                     ],
                 },
             },
             {"data": {}},
+            {"data": {"name": "To You, in 2000 Years", "overview": "English episode overview."}},
         ]
 
         result = tvdb.tv_with_seasons("120089", [1], routed_media_type=MediaTypes.ANIME.value)
