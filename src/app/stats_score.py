@@ -1,0 +1,348 @@
+"""stats_score.py — Score distribution and top-rated media aggregation.
+
+Extracted from statistics.py.  Self-contained: only depends on the ORM,
+heapq, and stats_utils helpers.
+"""
+import heapq
+import itertools
+from collections import defaultdict
+
+from django.apps import apps
+
+from app import config
+from app.models import MediaManager, MediaTypes
+from app.statistics_cache import STATISTICS_TOP_N, STATISTICS_TOP_RATED_OVERALL
+from app.templatetags import app_tags
+from app.stats_utils import _CombinedMediaBucket, _infer_user_from_user_media
+
+
+def get_score_distribution(user_media):
+    """Get score distribution for each media type within date range."""
+    distribution = {}
+    total_scored = 0
+    total_score_sum = 0
+
+    # Global top rated (for backward compatibility with existing "ALL MEDIA" section)
+    top_rated = []
+    top_rated_count = STATISTICS_TOP_RATED_OVERALL
+    # Per-media-type top rated (for the new compact cards)
+    top_rated_by_type = {}
+    top_rated_per_type_count = STATISTICS_TOP_N
+
+    counter = itertools.count()  # Ensures stable sorting for equal scores
+
+    # Infer user from user_media for fetching all entries
+    user = _infer_user_from_user_media(user_media)
+    score_scale_max = user.rating_scale_max if user else 10
+    score_range = range(score_scale_max + 1)
+
+    for media_type, media_list in user_media.items():
+        score_counts = dict.fromkeys(score_range, 0)
+        # _all_qs: list of individual querysets; handles combined anime bucket (flat + grouped TV)
+        _all_qs = (
+            list(media_list._querysets)
+            if isinstance(media_list, _CombinedMediaBucket)
+            else [media_list]
+        )
+
+        # Group media by item to identify which items appear in the date range
+        media_by_item = defaultdict(list)
+        for _qs in _all_qs:
+            for media in _qs.select_related("item"):
+                item = getattr(media, "item", None)
+                key = item.id if item else media.id
+                media_by_item[key].append(media)
+
+        # For each item that appears in the date range, fetch ALL entries (not just date-filtered)
+        # to find the aggregated score, even if the score was set outside the date range
+        deduped_scored = {}
+        if user:
+            # Derive model class(es) from actual queryset(s); handles grouped anime (TV) in anime bucket
+            _model_classes_by_item_id = {}
+            for _qs in _all_qs:
+                for entry in _qs.select_related("item"):
+                    item = getattr(entry, "item", None)
+                    if item:
+                        _model_classes_by_item_id[item.id] = type(entry)
+
+            # Get all unique item IDs from items that appear in the date range
+            item_ids_in_range = set()
+            item_id_to_key_map = {}  # Map item.id -> key used in media_by_item
+            for key, entries in media_by_item.items():
+                for entry in entries:
+                    item = getattr(entry, "item", None)
+                    if item:
+                        item_ids_in_range.add(item.id)
+                        item_id_to_key_map[item.id] = key
+
+            # Fetch ALL entries for these items (not just date-filtered ones),
+            # querying each model class separately in case the bucket is mixed (flat + grouped anime)
+            if item_ids_in_range:
+                _ids_by_model = defaultdict(set)
+                for item_id, model_cls in _model_classes_by_item_id.items():
+                    if item_id in item_ids_in_range:
+                        _ids_by_model[model_cls].add(item_id)
+
+                all_entries_by_item_id: dict = defaultdict(list)
+                for model_cls, item_ids_for_model in _ids_by_model.items():
+                    _entries_q = model_cls.objects.filter(
+                        user=user,
+                        item_id__in=item_ids_for_model,
+                    ).select_related("item").order_by("-created_at")
+                    for entry in _entries_q:
+                        _item = getattr(entry, "item", None)
+                        if _item:
+                            all_entries_by_item_id[_item.id].append(entry)
+
+                # Now aggregate scores from ALL entries (not just date-filtered ones)
+                for item_id in item_ids_in_range:
+                    # Get the key used in media_by_item for this item
+                    key = item_id_to_key_map.get(item_id)
+                    if key is None:
+                        continue
+
+                    # Use entries from date range as display media (for activity date calculation)
+                    display_entries = media_by_item.get(key, [])
+                    if not display_entries:
+                        continue
+
+                    # Use ALL entries to find aggregated score
+                    all_entries = all_entries_by_item_id.get(item_id, [])
+                    if not all_entries:
+                        continue
+
+                    display_media = display_entries[0]  # Use first entry from date range as display
+
+                    # Aggregate score from ALL entries (regardless of date)
+                    latest_rating = None
+                    latest_activity = None
+
+                    for entry in all_entries:
+                        if entry.score is not None:
+                            # Determine the most recent activity for this entry
+                            entry_activity = None
+                            if entry.end_date:
+                                entry_activity = entry.end_date
+                            elif entry.progressed_at:
+                                entry_activity = entry.progressed_at
+                            else:
+                                entry_activity = entry.created_at
+
+                            # If this entry has more recent activity, use its rating
+                            if latest_activity is None or entry_activity > latest_activity:
+                                latest_activity = entry_activity
+                                latest_rating = entry.score
+
+                    score_to_use = latest_rating
+                    # Set aggregated_score for consistency with other code paths
+                    if score_to_use is not None:
+                        display_media.aggregated_score = score_to_use
+
+                    # Only include if there's a score
+                    if score_to_use is not None:
+                        dates = [d for d in (display_media.end_date, display_media.start_date) if d]
+                        activity_date = max(dates) if dates else display_media.created_at
+                        deduped_scored[key] = {
+                            "media": display_media,
+                            "activity_date": activity_date,
+                            "score": score_to_use,
+                        }
+            else:
+                # Fallback: no items with item_id, use original logic
+                for item_id, entries in media_by_item.items():
+                    if len(entries) == 1:
+                        # Single entry - use it directly
+                        media = entries[0]
+                        score_to_use = media.score
+                        display_media = media
+                    else:
+                        # Multiple entries - aggregate to find most recent score
+                        display_media = entries[0]  # Use first entry as display
+                        latest_rating = None
+                        latest_activity = None
+
+                        for entry in entries:
+                            if entry.score is not None:
+                                # Determine the most recent activity for this entry
+                                entry_activity = None
+                                if entry.end_date:
+                                    entry_activity = entry.end_date
+                                elif entry.progressed_at:
+                                    entry_activity = entry.progressed_at
+                                else:
+                                    entry_activity = entry.created_at
+
+                                # If this entry has more recent activity, use its rating
+                                if latest_activity is None or entry_activity > latest_activity:
+                                    latest_activity = entry_activity
+                                    latest_rating = entry.score
+
+                        score_to_use = latest_rating
+                        # Set aggregated_score for consistency with other code paths
+                        if score_to_use is not None:
+                            display_media.aggregated_score = score_to_use
+
+                    # Only include if there's a score
+                    if score_to_use is not None:
+                        dates = [d for d in (display_media.end_date, display_media.start_date) if d]
+                        activity_date = max(dates) if dates else display_media.created_at
+                        deduped_scored[item_id] = {
+                            "media": display_media,
+                            "activity_date": activity_date,
+                            "score": score_to_use,
+                        }
+        else:
+            # Fallback: no user available, use original logic
+            for item_id, entries in media_by_item.items():
+                if len(entries) == 1:
+                    # Single entry - use it directly
+                    media = entries[0]
+                    score_to_use = media.score
+                    display_media = media
+                else:
+                    # Multiple entries - aggregate to find most recent score
+                    display_media = entries[0]  # Use first entry as display
+                    latest_rating = None
+                    latest_activity = None
+
+                    for entry in entries:
+                        if entry.score is not None:
+                            # Determine the most recent activity for this entry
+                            entry_activity = None
+                            if entry.end_date:
+                                entry_activity = entry.end_date
+                            elif entry.progressed_at:
+                                entry_activity = entry.progressed_at
+                            else:
+                                entry_activity = entry.created_at
+
+                            # If this entry has more recent activity, use its rating
+                            if latest_activity is None or entry_activity > latest_activity:
+                                latest_activity = entry_activity
+                                latest_rating = entry.score
+
+                    score_to_use = latest_rating
+                    # Set aggregated_score for consistency with other code paths
+                    if score_to_use is not None:
+                        display_media.aggregated_score = score_to_use
+
+                # Only include if there's a score
+                if score_to_use is not None:
+                    dates = [d for d in (display_media.end_date, display_media.start_date) if d]
+                    activity_date = max(dates) if dates else display_media.created_at
+                    deduped_scored[item_id] = {
+                        "media": display_media,
+                        "activity_date": activity_date,
+                        "score": score_to_use,
+                    }
+
+        deduped_media = [entry["media"] for entry in deduped_scored.values()]  # noqa: F841 (kept for symmetry)
+
+        # Initialize per-type heap for this media type
+        type_top_rated = []
+        type_counter = itertools.count()
+
+        for entry_data in deduped_scored.values():
+            media = entry_data["media"]
+            score_value = entry_data["score"]
+            score_value_scaled = float(score_value)
+            if score_scale_max == 5:
+                score_value_scaled = score_value_scaled / 2
+
+            # Add to global top rated (for backward compatibility)
+            if len(top_rated) < top_rated_count:
+                heapq.heappush(
+                    top_rated,
+                    (float(score_value), next(counter), media),
+                )
+            else:
+                heapq.heappushpop(
+                    top_rated,
+                    (float(score_value), next(counter), media),
+                )
+
+            # Add to per-type top rated
+            if len(type_top_rated) < top_rated_per_type_count:
+                heapq.heappush(
+                    type_top_rated,
+                    (float(score_value), next(type_counter), media),
+                )
+            else:
+                heapq.heappushpop(
+                    type_top_rated,
+                    (float(score_value), next(type_counter), media),
+                )
+
+            binned_score = int(score_value_scaled)
+            if binned_score > score_scale_max:
+                binned_score = score_scale_max
+            score_counts[binned_score] += 1
+            total_scored += 1
+            total_score_sum += score_value_scaled
+
+        distribution[media_type] = score_counts
+
+        # Sort and annotate per-type top rated
+        type_top_rated_sorted = [
+            media for _, _, media in sorted(type_top_rated, key=lambda x: (-x[0], x[1]))
+        ]
+        top_rated_by_type[media_type] = _annotate_top_rated_media(type_top_rated_sorted)
+
+    average_score = (
+        round(total_score_sum / total_scored, 2) if total_scored > 0 else None
+    )
+
+    top_rated_media = [
+        media for _, _, media in sorted(top_rated, key=lambda x: (-x[0], x[1]))
+    ]
+
+    top_rated_media = _annotate_top_rated_media(top_rated_media)
+
+    return {
+        "labels": [str(score) for score in score_range],
+        "datasets": [
+            {
+                "label": app_tags.media_type_readable(media_type),
+                "data": [distribution[media_type][score] for score in score_range],
+                "background_color": config.get_stats_color(media_type),
+            }
+            for media_type in distribution
+        ],
+        "average_score": average_score,
+        "total_scored": total_scored,
+        "scale_max": score_scale_max,
+    }, top_rated_media, top_rated_by_type
+
+
+def _annotate_top_rated_media(top_rated_media):
+    """Apply prefetch_related and annotate max_progress for top rated media."""
+    if not top_rated_media:
+        return top_rated_media
+
+    # Group by media type to batch database operations
+    media_by_type = {}
+    for media in top_rated_media:
+        media_type = media.item.media_type
+        if media_type not in media_by_type:
+            media_by_type[media_type] = []
+        media_by_type[media_type].append(media)
+
+    media_manager = MediaManager()
+
+    for media_type, media_list in media_by_type.items():
+        model = apps.get_model(app_label="app", model_name=media_type)
+        media_ids = [media.id for media in media_list]
+
+        # Fetch fresh instances with proper relationships and annotations
+        queryset = model.objects.filter(id__in=media_ids)
+        queryset = media_manager._apply_prefetch_related(queryset, media_type)
+        media_manager.annotate_max_progress(queryset, media_type)
+
+        prefetched_media_map = {media.id: media for media in queryset}
+
+        # Replace original instances with enhanced ones
+        for i, media in enumerate(top_rated_media):
+            if media.item.media_type == media_type:
+                top_rated_media[i] = prefetched_media_map[media.id]
+
+    return top_rated_media
