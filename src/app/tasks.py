@@ -53,6 +53,7 @@ from app.tasks_trakt import (  # noqa: E402
     TRAKT_POPULARITY_BACKFILL_ITEMS_SCHEDULED_KEY,
     TRAKT_POPULARITY_BACKFILL_QUEUE_TTL,
     enqueue_trakt_popularity_backfill_items,
+    populate_trakt_episode_ratings_for_season,
     populate_trakt_popularity_backfill_queue,
     populate_trakt_popularity_data_for_items,
     reconcile_trakt_popularity,

@@ -36,7 +36,11 @@ from app.db_retry import run_retryable_db_operation
 from app.detail_builders import (
     _apply_cached_hltb_link,
     _build_detail_link_sections,
+    _build_episode_graph_from_season_cache,
     _build_game_lengths_context,
+    _build_season_scores_graph,
+    _build_series_graph_data,
+    _build_stored_season_scores_graph,
     _build_trakt_popularity_context,
 )
 from app.log_safety import exception_summary
@@ -1780,6 +1784,30 @@ def media_details(
         ),
         "display_provider": display_provider,
         "identity_provider": identity_provider,
+        "provider_series_graph_data": (
+            # Priority: episode-level DB data → full grid from season cache → season averages
+            _build_series_graph_data(display_provider, media_id)
+            or _build_episode_graph_from_season_cache(
+                display_provider,
+                media_id,
+                (media_metadata.get("related") or {}).get("seasons"),
+            )
+            or _build_season_scores_graph(
+                (media_metadata.get("related") or {}).get("seasons"),
+                display_provider,
+            )
+            if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
+            and display_provider in {Sources.TMDB.value, Sources.TVDB.value}
+            else None
+        ),
+        "trakt_series_graph_data": (
+            _build_series_graph_data(display_provider, media_id, use_trakt=True)
+            or _build_stored_season_scores_graph(
+                display_provider, media_id, use_trakt=True
+            )
+            if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
+            else None
+        ),
         "metadata_provider_options": metadata_provider_options,
         "metadata_provider_mapping_status": (
             metadata_resolution_result.mapping_status

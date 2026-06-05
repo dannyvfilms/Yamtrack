@@ -212,54 +212,80 @@
       {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}
         <div class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap">
           {% if media.score_count is not None %}
-            <div class="inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
-              <span class="sr-only">{{ display_provider|source_readable }} score</span>
-              <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14 sm:h-8 sm:w-8">
-                {% if display_provider == Sources.TMDB.value %}
-                  <img src="{% static 'img/tmdb-logo.png' %}"
-                       alt=""
-                       aria-hidden="true"
-                       class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
-                {% elif display_provider == Sources.MAL.value %}
-                  <img src="{% static 'img/myanimelist-logo.svg' %}"
-                       alt=""
-                       aria-hidden="true"
-                       class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
-                {% elif display_provider == Sources.IGDB.value %}
-                  <img src="{% static 'img/igdb-logo.png' %}"
-                       alt=""
-                       aria-hidden="true"
-                       class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
+            <div class="relative"
+                 x-data="{ graphOpen: false }"
+                 @mouseenter="graphOpen = true"
+                 @mouseleave="graphOpen = false"
+                 @click.outside="graphOpen = false">
+              <button type="button"
+                      class="inline-flex h-[1.875rem] min-w-0 cursor-help items-center gap-0.5 overflow-hidden rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm"
+                      title="{{ display_provider|source_readable }} series ratings"
+                      :aria-expanded="graphOpen.toString()"
+                      aria-haspopup="true">
+                <span class="sr-only">{{ display_provider|source_readable }} score</span>
+                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14 sm:h-8 sm:w-8">
+                  {% if display_provider == Sources.TMDB.value %}
+                    <img src="{% static 'img/tmdb-logo.png' %}"
+                         alt=""
+                         aria-hidden="true"
+                         class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
+                  {% elif display_provider == Sources.MAL.value %}
+                    <img src="{% static 'img/myanimelist-logo.svg' %}"
+                         alt=""
+                         aria-hidden="true"
+                         class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
+                  {% elif display_provider == Sources.IGDB.value %}
+                    <img src="{% static 'img/igdb-logo.png' %}"
+                         alt=""
+                         aria-hidden="true"
+                         class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
+                  {% else %}
+                    <span class="text-[9px] font-black tracking-[0.12em] text-cyan-100">{{ display_provider|upper|slice:":4" }}</span>
+                  {% endif %}
+                </span>
+                {% if media.score is not None %}
+                  <span class="text-[12px] font-semibold text-white sm:text-sm">{{ media.score }}</span>
                 {% else %}
-                  <span class="text-[9px] font-black tracking-[0.12em] text-cyan-100">{{ display_provider|upper|slice:":4" }}</span>
+                  <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
                 {% endif %}
-              </span>
-              {% if media.score is not None %}
-                <span class="text-[12px] font-semibold text-white sm:text-sm">{{ media.score }}</span>
-              {% else %}
-                <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
+                <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
+                <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}</span>
+              </button>
+              {% if provider_series_graph_data %}
+                {% include "app/components/series_graph_tooltip.html" with graph_data=provider_series_graph_data provider_label=display_provider only %}
               {% endif %}
-              <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
-              <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}</span>
             </div>
           {% endif %}
 
           {% if trakt_score %}
-            <div class="inline-flex h-[1.875rem] min-w-0 items-center gap-0.5 overflow-hidden rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
-              <span class="sr-only">Trakt score</span>
-              <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14 sm:h-8 sm:w-8">
-                <img src="{% static 'img/trakt-logo.svg' %}"
-                     alt=""
-                     aria-hidden="true"
-                     class="h-3.5 w-3.5 object-contain sm:h-4 sm:w-4">
-              </span>
-              {% if trakt_score.rating is not None %}
-                <span class="text-[12px] font-semibold text-white sm:text-sm">{{ trakt_score.rating }}</span>
-              {% else %}
-                <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
+            <div class="relative"
+                 x-data="{ graphOpen: false }"
+                 @mouseenter="graphOpen = true"
+                 @mouseleave="graphOpen = false"
+                 @click.outside="graphOpen = false">
+              <button type="button"
+                      class="inline-flex h-[1.875rem] min-w-0 cursor-help items-center gap-0.5 overflow-hidden rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm"
+                      title="Trakt series ratings"
+                      :aria-expanded="graphOpen.toString()"
+                      aria-haspopup="true">
+                <span class="sr-only">Trakt score</span>
+                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14 sm:h-8 sm:w-8">
+                  <img src="{% static 'img/trakt-logo.svg' %}"
+                       alt=""
+                       aria-hidden="true"
+                       class="h-3.5 w-3.5 object-contain sm:h-4 sm:w-4">
+                </span>
+                {% if trakt_score.rating is not None %}
+                  <span class="text-[12px] font-semibold text-white sm:text-sm">{{ trakt_score.rating }}</span>
+                {% else %}
+                  <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
+                {% endif %}
+                <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
+                <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
+              </button>
+              {% if trakt_series_graph_data %}
+                {% include "app/components/series_graph_tooltip.html" with graph_data=trakt_series_graph_data provider_label="Trakt" only %}
               {% endif %}
-              <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
-              <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
             </div>
           {% endif %}
 

@@ -1,0 +1,54 @@
+{% load humanize %}
+{% comment %}
+Series graph tooltip — color-coded episode/season rating grid.
+
+Variables:
+  graph_data  — dict with: seasons, episode_rows, row_label
+  provider_label — kept for include compat, unused here
+{% endcomment %}
+<div x-show="graphOpen"
+     x-cloak
+     x-transition:enter="transition ease-out duration-150"
+     x-transition:enter-start="opacity-0 -translate-y-1"
+     x-transition:enter-end="opacity-100 translate-y-0"
+     x-transition:leave="transition ease-in duration-100"
+     x-transition:leave-start="opacity-100 translate-y-0"
+     x-transition:leave-end="opacity-0 -translate-y-1"
+     class="absolute left-0 top-full z-20 mt-2 rounded-2xl border border-white/10 bg-[#20252b]/95 p-3 shadow-2xl backdrop-blur-sm"
+     style="min-width: max-content;">
+
+  <div class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">Series Graph</div>
+
+  <div class="overflow-x-auto">
+    {# CSS grid — column template built from season count so every row aligns perfectly #}
+    <div class="grid gap-2"
+         style="grid-template-columns: auto {% for _ in graph_data.seasons %}3rem {% endfor %};">
+
+      {# Season column headers — first cell is the row-label spacer #}
+      <div></div>
+      {% for season in graph_data.seasons %}
+        <div class="text-center text-[11px] font-semibold text-gray-400">{{ season.label }}</div>
+      {% endfor %}
+
+      {# One row per episode #}
+      {% for ep_row in graph_data.episode_rows %}
+        <div class="flex items-center justify-end pr-1 text-[11px] text-gray-500 select-none">
+          {% if ep_row.ep %}{{ graph_data.row_label|default:"E" }}{{ ep_row.ep }}{% endif %}
+        </div>
+        {% for cell in ep_row.cells %}
+          {% if cell.color %}
+            <div class="rounded-lg py-3 text-center text-[13px] font-bold leading-none cursor-default"
+                 title="{{ cell.score }} · {{ cell.votes|intcomma }} vote{{ cell.votes|pluralize }}"
+                 style="background-color: {{ cell.color }}; color: {% if cell.score >= 6.0 and cell.score < 8.0 %}rgba(0,0,0,0.8){% else %}#ffffff{% endif %};">
+              {{ cell.score }}
+            </div>
+          {% else %}
+            <div class="rounded-lg py-3 text-center text-[12px] leading-none select-none"
+                 style="background-color: rgba(255,255,255,0.05); color: rgba(255,255,255,0.15);">—</div>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+
+    </div>
+  </div>
+</div>

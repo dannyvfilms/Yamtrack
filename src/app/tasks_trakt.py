@@ -163,6 +163,91 @@ def populate_trakt_popularity_backfill_queue(
     )
 
 
+@shared_task(name="app.tasks.populate_trakt_episode_ratings_for_season")
+def populate_trakt_episode_ratings_for_season(
+    media_id: str,
+    source: str,
+    season_number: int,
+    delay_seconds: float = 0.5,
+):
+    """Fetch and store Trakt aggregate ratings for all episodes in a season."""
+    from app.models import Item, MediaTypes  # noqa: PLC0415
+    from app.providers import trakt as trakt_provider  # noqa: PLC0415
+    from app.services import trakt_popularity as trakt_pop  # noqa: PLC0415
+
+    if not trakt_provider.is_configured():
+        return {"updated": 0, "message": "Trakt not configured"}
+
+    episode_items = list(
+        Item.objects.filter(
+            media_id=str(media_id),
+            source=source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=season_number,
+            trakt_rating__isnull=True,
+        ).order_by("episode_number")
+    )
+    if not episode_items:
+        return {"updated": 0, "message": "No episodes need Trakt ratings"}
+
+    # Resolve Trakt show ID via the show or season Item
+    anchor = (
+        Item.objects.filter(
+            media_id=str(media_id),
+            source=source,
+            media_type=MediaTypes.TV.value,
+        ).first()
+        or Item.objects.filter(
+            media_id=str(media_id),
+            source=source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=season_number,
+        ).first()
+    )
+    if not anchor:
+        return {"updated": 0, "message": "No show/season Item found for Trakt ID resolution"}
+
+    show_lookup = trakt_pop.lookup_item_summary(anchor, route_media_type=MediaTypes.TV.value)
+    if not show_lookup:
+        return {"updated": 0, "message": "Could not resolve Trakt show ID"}
+
+    episode_numbers = [ep.episode_number for ep in episode_items if ep.episode_number is not None]
+    try:
+        ratings = trakt_provider.fetch_episode_ratings_for_season(
+            show_lookup,
+            season_number,
+            episode_numbers,
+            delay_seconds=delay_seconds,
+        )
+    except Exception as exc:
+        logger.warning(
+            "trakt_episode_ratings_error media_id=%s season=%s error=%s",
+            media_id,
+            season_number,
+            exception_summary(exc),
+        )
+        return {"updated": 0, "message": f"API error: {exception_summary(exc)}"}
+
+    updated_items = []
+    for ep in episode_items:
+        ep_data = ratings.get(ep.episode_number)
+        if ep_data is not None:
+            ep.trakt_rating = ep_data["rating"]
+            ep.trakt_rating_count = ep_data["votes"]
+            updated_items.append(ep)
+
+    if updated_items:
+        Item.objects.bulk_update(updated_items, ["trakt_rating", "trakt_rating_count"], batch_size=100)
+
+    logger.info(
+        "trakt_episode_ratings_complete media_id=%s season=%s updated=%d",
+        media_id,
+        season_number,
+        len(updated_items),
+    )
+    return {"updated": len(updated_items), "message": f"Updated {len(updated_items)} episodes"}
+
+
 @shared_task(name="app.tasks.reconcile_trakt_popularity")
 def reconcile_trakt_popularity(score_version: int | None = None):
     """Reconcile Trakt popularity data for all tracked items on startup.

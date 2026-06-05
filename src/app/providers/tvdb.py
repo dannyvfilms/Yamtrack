@@ -768,6 +768,8 @@ def _normalize_episode_rows(season_data: dict | None):
                 "name": _find_translation(episode, "name") or _get_name(episode),
                 "overview": _get_synopsis(episode),
                 "runtime": episode.get("runtime") or episode.get("airsAfterSeason"),
+                "score": _get_score(episode),
+                "score_count": _get_score_count(episode),
             },
         )
     normalized.sort(

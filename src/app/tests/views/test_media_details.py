@@ -1422,7 +1422,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "123,456 ratings")
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2"',
+            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
             html=False,
         )
 
@@ -1490,11 +1490,66 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "tmdb-logo.png")
         self.assertContains(response, "7.6")
         self.assertContains(response, "42,000 votes")
+        self.assertContains(response, "series-graph-trigger", html=False)
+        self.assertContains(response, "series-graph-score-chip", html=False)
         self.assertContains(
             response,
-            'class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2"',
+            'class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap"',
             html=False,
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_trakt_season_graph_from_stored_season_scores(
+        self, mock_get_metadata
+    ):
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/image.jpg",
+            trakt_rating=7.24742,
+            trakt_rating_count=291,
+            trakt_popularity_fetched_at=timezone.now(),
+        )
+        for season_number, rating, votes in ((1, 7.28, 150), (2, 7.55, 69)):
+            Item.objects.create(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title=f"Season {season_number}",
+                image="http://example.com/season.jpg",
+                season_number=season_number,
+                trakt_rating=rating,
+                trakt_rating_count=votes,
+            )
+        mock_get_metadata.return_value = {
+            "media_id": "1668",
+            "title": "Test TV Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Trakt Season Ratings")
+        self.assertContains(response, "S1")
+        self.assertContains(response, "7.3")
+        self.assertContains(response, "150 votes")
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_source_score_chip_with_mal_logo(self, mock_get_metadata):

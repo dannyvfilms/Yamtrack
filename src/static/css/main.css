@@ -4709,6 +4709,13 @@
 .media-card-poster {
   object-fit: cover;
 }
+.series-graph-trigger:hover .series-graph-tooltip, .series-graph-trigger:focus-within .series-graph-tooltip {
+  visibility: visible;
+  opacity: 1;
+}
+.series-graph-trigger:hover .series-graph-score-chip, .series-graph-trigger:focus-within .series-graph-score-chip {
+  filter: brightness(1.08);
+}
 .clip-half {
   clip-path: inset(0 50% 0 0);
 }

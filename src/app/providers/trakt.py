@@ -146,6 +146,51 @@ def _lookup_season_by_show_id(
     }
 
 
+def fetch_episode_ratings_for_season(
+    show_lookup: dict[str, Any],
+    season_number: int,
+    episode_numbers: list[int],
+    *,
+    delay_seconds: float = 0.5,
+) -> dict[int, dict]:
+    """Return aggregate Trakt ratings for multiple episodes in a season.
+
+    Returns {episode_number: {"rating": float | None, "votes": int}}.
+    Episodes that 404 or have no data are omitted from the result.
+    """
+    trakt_ids = show_lookup.get("trakt_ids") or {}
+    show_id = trakt_ids.get("trakt") or trakt_ids.get("slug")
+    if not show_id:
+        return {}
+
+    import time  # noqa: PLC0415
+
+    results: dict[int, dict] = {}
+    for episode_number in episode_numbers:
+        try:
+            response = services.api_request(
+                TRAKT_API_PROVIDER,
+                "GET",
+                f"{TRAKT_BASE_URL}/shows/{show_id}/seasons/{season_number}/episodes/{episode_number}/ratings",
+                headers=_headers(),
+            )
+        except services.ProviderAPIError as exc:
+            if exc.status_code in {400, 404}:
+                continue
+            raise
+        if not isinstance(response, dict):
+            continue
+        rating = response.get("rating")
+        votes = response.get("votes")
+        results[episode_number] = {
+            "rating": round(float(rating), 1) if rating is not None else None,
+            "votes": int(votes) if votes is not None else 0,
+        }
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+    return results
+
+
 def lookup_by_external_id(
     external_id_type: str,
     external_id: str | int,

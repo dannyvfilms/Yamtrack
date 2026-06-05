@@ -196,6 +196,363 @@ def _build_game_lengths_context(detail_item):
     return None
 
 
+_SERIES_GRAPH_LEGEND = [
+    {"label": "Awesome", "color": "#1d6e3e"},
+    {"label": "Great", "color": "#2d9e5f"},
+    {"label": "Good", "color": "#c9970a"},
+    {"label": "Regular", "color": "#c47c1a"},
+    {"label": "Bad", "color": "#c0392b"},
+    {"label": "Garbage", "color": "#7b2fbe"},
+]
+
+
+def _score_to_color(score):
+    """Return background hex color for an episode score value."""
+    if score is None:
+        return None
+    if score >= 9.0:
+        return "#1d6e3e"
+    if score >= 8.0:
+        return "#2d9e5f"
+    if score >= 7.0:
+        return "#c9970a"
+    if score >= 6.0:
+        return "#c47c1a"
+    if score >= 5.0:
+        return "#c0392b"
+    return "#7b2fbe"
+
+
+def _build_series_graph_from_raw(season_number, raw_episodes, source):
+    """Build series graph data from raw in-memory provider episode dicts.
+
+    Used during the shell render where raw TMDB/TVDB episode data is already
+    in season_metadata["episodes"] but no DB Items have been written yet.
+    raw_episodes is the list from TMDB/TVDB before process_episodes() runs.
+    """
+    ep_scores = []
+    for ep in raw_episodes or []:
+        ep_num = ep.get("episode_number")
+        if ep_num is None:
+            continue
+        if source == Sources.TMDB.value:
+            vote_avg = ep.get("vote_average")
+            vote_cnt = ep.get("vote_count", 0)
+            score = round(float(vote_avg), 1) if vote_avg else None
+            votes = int(vote_cnt) if vote_cnt else 0
+        elif source == Sources.TVDB.value:
+            score = ep.get("score")
+            votes = int(ep.get("score_count") or 0)
+        else:
+            continue
+        if score:
+            ep_scores.append({"ep": ep_num, "score": score, "votes": votes})
+
+    if not ep_scores:
+        return None
+
+    ep_scores.sort(key=lambda e: e["ep"])
+    season_eps = {e["ep"]: e for e in ep_scores}
+    all_ep_numbers = sorted(season_eps)
+    season_label = f"S{season_number}"
+
+    episode_rows = [
+        {
+            "ep": en,
+            "cells": [
+                {
+                    "score": season_eps[en]["score"],
+                    "votes": season_eps[en]["votes"],
+                    "color": _score_to_color(season_eps[en]["score"]),
+                }
+            ],
+        }
+        for en in all_ep_numbers
+    ]
+
+    return {
+        "seasons": [{"label": season_label, "episodes": ep_scores}],
+        "episode_rows": episode_rows,
+        "legend": _SERIES_GRAPH_LEGEND,
+        "row_label": "E",
+        "title": "Episode Ratings",
+    }
+
+
+def _build_series_graph_data(source, media_id, season_number=None, *, use_trakt=False):
+    """Query stored episode ratings and return series graph data dict or None.
+
+    On season pages pass season_number to get a single-season grid.
+    On show pages omit it to get all seasons.
+
+    Returns a dict with:
+      seasons: list of {label, episodes}
+      episode_rows: list of {ep, cells} where cells align with seasons columns
+      legend: list of {label, color}
+    """
+    from app.models import Item, MediaTypes  # noqa: PLC0415
+
+    filters = {
+        "media_id": str(media_id),
+        "source": source,
+        "media_type": MediaTypes.EPISODE.value,
+    }
+    if season_number is not None:
+        filters["season_number"] = season_number
+
+    rating_field = "trakt_rating" if use_trakt else "provider_rating"
+    count_field = "trakt_rating_count" if use_trakt else "provider_rating_count"
+
+    episodes = list(
+        Item.objects.filter(**filters)
+        .exclude(**{f"{rating_field}__isnull": True})
+        .order_by("season_number", "episode_number")
+        .values("season_number", "episode_number", rating_field, count_field)
+    )
+
+    if not episodes:
+        return None
+
+    # Build per-season episode lookup: {season_num: {ep_num: {score, votes}}}
+    seasons_map: dict = {}
+    for ep in episodes:
+        sn = ep["season_number"]
+        en = ep["episode_number"]
+        if sn not in seasons_map:
+            seasons_map[sn] = {}
+        seasons_map[sn][en] = {
+            "score": ep[rating_field],
+            "votes": ep[count_field] or 0,
+        }
+
+    sorted_seasons = sorted(seasons_map.keys())
+    all_ep_numbers = sorted(
+        {en for sn in sorted_seasons for en in seasons_map[sn]}
+    )
+
+    seasons = [
+        {
+            "label": f"S{sn}",
+            "episodes": [
+                {
+                    "ep": en,
+                    "score": seasons_map[sn].get(en, {}).get("score"),
+                    "votes": seasons_map[sn].get(en, {}).get("votes", 0),
+                }
+                for en in all_ep_numbers
+                if en in seasons_map[sn]
+            ],
+        }
+        for sn in sorted_seasons
+    ]
+
+    # Build row-major structure for the template grid
+    episode_rows = [
+        {
+            "ep": en,
+            "cells": [
+                {
+                    "score": seasons_map[sn].get(en, {}).get("score"),
+                    "votes": seasons_map[sn].get(en, {}).get("votes", 0),
+                    "color": _score_to_color(seasons_map[sn].get(en, {}).get("score")),
+                }
+                for sn in sorted_seasons
+            ],
+        }
+        for en in all_ep_numbers
+    ]
+
+    return {
+        "seasons": seasons,
+        "episode_rows": episode_rows,
+        "legend": _SERIES_GRAPH_LEGEND,
+        "row_label": "E",
+        "title": "Episode Ratings",
+    }
+
+
+def _build_episode_graph_from_season_cache(source, media_id, related_seasons):
+    """Build a full S×E episode graph by reading per-season TMDB cache entries.
+
+    The TMDB season cache (keyed per season_number) already holds the raw
+    episode list with vote_average/vote_count — no API call needed.
+    Returns None if none of the seasons are cached yet.
+    """
+    from django.core.cache import cache as django_cache  # noqa: PLC0415
+
+    from app.models import Sources  # noqa: PLC0415
+
+    if source != Sources.TMDB.value:
+        return None
+
+    from app.providers.tmdb import (  # noqa: PLC0415
+        TMDB_SEASON_CACHE_VERSION,
+        _season_cache_key,
+    )
+
+    season_numbers = sorted(
+        {
+            s.get("season_number")
+            for s in (related_seasons or [])
+            if s.get("season_number") is not None and s.get("season_number") > 0
+        }
+    )
+    if not season_numbers:
+        return None
+
+    seasons_map: dict = {}
+    for sn in season_numbers:
+        season_data = django_cache.get(_season_cache_key(media_id, sn))
+        if not isinstance(season_data, dict):
+            continue
+        for ep in season_data.get("episodes") or []:
+            ep_num = ep.get("episode_number")
+            vote_avg = ep.get("vote_average")
+            if ep_num is None or not vote_avg:
+                continue
+            if sn not in seasons_map:
+                seasons_map[sn] = {}
+            seasons_map[sn][ep_num] = {
+                "score": round(float(vote_avg), 1),
+                "votes": int(ep.get("vote_count") or 0),
+            }
+
+    if not seasons_map:
+        return None
+
+    sorted_seasons = sorted(seasons_map.keys())
+    all_ep_numbers = sorted({en for sn in sorted_seasons for en in seasons_map[sn]})
+    if not all_ep_numbers:
+        return None
+
+    seasons = [
+        {
+            "label": f"S{sn}",
+            "episodes": [
+                {
+                    "ep": en,
+                    "score": seasons_map[sn].get(en, {}).get("score"),
+                    "votes": seasons_map[sn].get(en, {}).get("votes", 0),
+                }
+                for en in all_ep_numbers
+                if en in seasons_map[sn]
+            ],
+        }
+        for sn in sorted_seasons
+    ]
+
+    episode_rows = [
+        {
+            "ep": en,
+            "cells": [
+                {
+                    "score": seasons_map[sn].get(en, {}).get("score"),
+                    "votes": seasons_map[sn].get(en, {}).get("votes", 0),
+                    "color": _score_to_color(seasons_map[sn].get(en, {}).get("score")),
+                }
+                for sn in sorted_seasons
+            ],
+        }
+        for en in all_ep_numbers
+    ]
+
+    return {
+        "seasons": seasons,
+        "episode_rows": episode_rows,
+        "legend": _SERIES_GRAPH_LEGEND,
+        "row_label": "E",
+        "title": "Episode Ratings",
+    }
+
+
+def _build_season_scores_graph(related_seasons, source):
+    """Build a season-summary graph from related.seasons data on a TV show page.
+
+    Produces the same structure as _build_series_graph_from_raw() but rows are
+    seasons (labelled S1, S2...) rather than episodes.  Used when per-episode
+    data is not yet available in the shell render.
+    """
+    if not related_seasons:
+        return None
+
+    cells = []
+    for season in sorted(related_seasons, key=lambda s: s.get("season_number") or 0):
+        sn = season.get("season_number")
+        score = season.get("score")
+        if sn is None or not score:
+            continue
+        cells.append(
+            {
+                "ep": sn,
+                "score": score,
+                "votes": season.get("score_count") or 0,
+                "color": _score_to_color(score),
+            }
+        )
+
+    if not cells:
+        return None
+
+    return {
+        "seasons": [{"label": "Rating", "episodes": cells}],
+        "episode_rows": [
+            {"ep": cell["ep"], "cells": [cell]}
+            for cell in cells
+        ],
+        "legend": _SERIES_GRAPH_LEGEND,
+        "row_label": "S",
+        "title": "Season Ratings",
+    }
+
+
+def _build_stored_season_scores_graph(source, media_id, *, use_trakt=False):
+    """Build a season-summary graph from stored season rating fields."""
+    from app.models import Item, MediaTypes  # noqa: PLC0415
+
+    rating_field = "trakt_rating" if use_trakt else "provider_rating"
+    count_field = "trakt_rating_count" if use_trakt else "provider_rating_count"
+
+    seasons = list(
+        Item.objects.filter(
+            media_id=str(media_id),
+            source=source,
+            media_type=MediaTypes.SEASON.value,
+        )
+        .exclude(**{f"{rating_field}__isnull": True})
+        .order_by("season_number")
+        .values("season_number", rating_field, count_field)
+    )
+
+    cells = []
+    for season in seasons:
+        season_number = season["season_number"]
+        score = season[rating_field]
+        if season_number is None or score is None:
+            continue
+        cells.append(
+            {
+                "ep": season_number,
+                "score": round(float(score), 1),
+                "votes": season[count_field] or 0,
+                "color": _score_to_color(score),
+            }
+        )
+
+    if not cells:
+        return None
+
+    return {
+        "seasons": [{"label": "Rating", "episodes": cells}],
+        "episode_rows": [
+            {"ep": cell["ep"], "cells": [cell]}
+            for cell in cells
+        ],
+        "legend": _SERIES_GRAPH_LEGEND,
+        "row_label": "S",
+        "title": "Season Ratings",
+    }
+
+
 def _build_trakt_popularity_context(detail_item, route_media_type):
     """Return template-ready stored Trakt popularity metadata for a detail item."""
     if (

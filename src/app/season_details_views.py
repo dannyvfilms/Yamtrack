@@ -16,6 +16,8 @@ from app.activity_builders import (
 )
 from app.detail_builders import (
     _build_detail_link_sections,
+    _build_series_graph_data,
+    _build_series_graph_from_raw,
     _build_trakt_popularity_context,
 )
 from app.log_safety import exception_summary
@@ -296,6 +298,15 @@ def season_details(
             ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
         )
 
+    # Capture raw episode data for series graph before process_episodes() overwrites it.
+    # This must run before the render_secondary_only block because that block overwrites
+    # season_metadata["episodes"] with processed data that drops vote_average/score.
+    _raw_graph_episodes = (
+        list(season_metadata.get("episodes") or [])
+        if not season_metadata_missing and source in {Sources.TMDB.value, Sources.TVDB.value}
+        else []
+    )
+
     # Save episode runtimes from raw metadata before processing for display
     # This ensures runtime data is persisted when viewing the season page
     if (
@@ -366,15 +377,39 @@ def season_details(
                 except (ValueError, TypeError):
                     pass
 
-            # Only update if runtime is actually new (not just saving the same value)
-            if episode_item.runtime_minutes != runtime_minutes:
+            # Extract provider rating from raw episode data (already in memory, no extra API call)
+            score = None
+            score_count = None
+            if source == Sources.TMDB.value:
+                vote_average = episode.get("vote_average")
+                vote_count = episode.get("vote_count")
+                if vote_average:
+                    score = round(float(vote_average), 1)
+                if vote_count is not None:
+                    score_count = int(vote_count)
+            elif source == Sources.TVDB.value:
+                score = episode.get("score")
+                score_count = episode.get("score_count")
+
+            runtime_changed = episode_item.runtime_minutes != runtime_minutes
+            rating_changed = (
+                episode_item.provider_rating != score
+                or episode_item.provider_rating_count != score_count
+            )
+
+            if runtime_changed:
                 episode_item.runtime_minutes = runtime_minutes
+            if rating_changed:
+                episode_item.provider_rating = score
+                episode_item.provider_rating_count = score_count
+
+            if runtime_changed or rating_changed:
                 episodes_to_update.append(episode_item)
 
         if episodes_to_update:
             Item.objects.bulk_update(
                 episodes_to_update,
-                ["runtime_minutes"],
+                ["runtime_minutes", "provider_rating", "provider_rating_count"],
                 batch_size=100,
             )
             # Invalidate time_left cache for all users (runtime affects time calculations)
@@ -387,6 +422,24 @@ def season_details(
             ).values_list("user_id", flat=True).distinct()
             for user_id in tracking_users:
                 clear_time_left_cache_for_user(user_id)
+
+        # Trigger background Trakt episode ratings fetch if not yet populated
+        from app.providers import trakt as _trakt_provider  # noqa: PLC0415
+        if (
+            source in {Sources.TMDB.value, Sources.TVDB.value}
+            and _trakt_provider.is_configured()
+            and Item.objects.filter(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=season_number,
+                trakt_rating__isnull=True,
+            ).exists()
+        ):
+            from app.tasks_trakt import populate_trakt_episode_ratings_for_season  # noqa: PLC0415
+            populate_trakt_episode_ratings_for_season.delay(
+                str(media_id), source, season_number
+            )
 
     if render_secondary_only and not season_metadata_missing:
         if source == Sources.MANUAL.value:
@@ -709,6 +762,12 @@ def season_details(
         "display_provider": source,
         "identity_provider": source,
         "episode_load_more": episode_load_more,
+        "provider_series_graph_data": _build_series_graph_from_raw(
+            season_number, _raw_graph_episodes, source
+        ),
+        "trakt_series_graph_data": _build_series_graph_data(
+            source, media_id, season_number, use_trakt=True
+        ),
         "season_provider_metadata_status": season_provider_metadata_status,
         "season_provider_metadata_banner": LOCAL_ONLY_MISSING_SEASON_BANNER,
         "season_provider_metadata_is_local_only": (

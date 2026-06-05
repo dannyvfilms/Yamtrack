@@ -942,6 +942,16 @@ def tv(media_id):
     cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
     data = cache.get(cache_key)
 
+    # Invalidate stale cache entries that predate the season score field being added
+    # to get_related(). A missing "score" key on the first season signals old format.
+    if data is not None:
+        first_season = next(
+            iter((data.get("related") or {}).get("seasons") or []), None
+        )
+        if first_season is not None and "score" not in first_season:
+            cache.delete(cache_key)
+            data = None
+
     if data is None:
         url = f"{base_url}/tv/{media_id}"
         params = {
@@ -1565,6 +1575,8 @@ def get_related(related_medias, media_type, parent_response=None, tv_media_id=No
             data["last_air_date"] = None
             data["max_progress"] = episode_count
             data["episode_count"] = episode_count
+            data["score"] = get_score(media.get("vote_average"))
+            data["score_count"] = media.get("vote_count")
             data["details"] = {
                 "episodes": episode_count,
             }
