@@ -279,7 +279,14 @@ def _build_series_graph_from_raw(season_number, raw_episodes, source):
     }
 
 
-def _build_series_graph_data(source, media_id, season_number=None, *, use_trakt=False):
+def _build_series_graph_data(
+    source,
+    media_id,
+    season_number=None,
+    *,
+    use_trakt=False,
+    include_unrated=False,
+):
     """Query stored episode ratings and return series graph data dict or None.
 
     On season pages pass season_number to get a single-season grid.
@@ -299,13 +306,18 @@ def _build_series_graph_data(source, media_id, season_number=None, *, use_trakt=
     }
     if season_number is not None:
         filters["season_number"] = season_number
+    else:
+        filters["season_number__gt"] = 0
 
     rating_field = "trakt_rating" if use_trakt else "provider_rating"
     count_field = "trakt_rating_count" if use_trakt else "provider_rating_count"
 
+    episode_query = Item.objects.filter(**filters)
+    if not include_unrated:
+        episode_query = episode_query.exclude(**{f"{rating_field}__isnull": True})
+
     episodes = list(
-        Item.objects.filter(**filters)
-        .exclude(**{f"{rating_field}__isnull": True})
+        episode_query
         .order_by("season_number", "episode_number")
         .values("season_number", "episode_number", rating_field, count_field)
     )
@@ -318,6 +330,8 @@ def _build_series_graph_data(source, media_id, season_number=None, *, use_trakt=
     for ep in episodes:
         sn = ep["season_number"]
         en = ep["episode_number"]
+        if sn is None or en is None:
+            continue
         if sn not in seasons_map:
             seasons_map[sn] = {}
         seasons_map[sn][en] = {
@@ -479,7 +493,7 @@ def _build_season_scores_graph(related_seasons, source):
     for season in sorted(related_seasons, key=lambda s: s.get("season_number") or 0):
         sn = season.get("season_number")
         score = season.get("score")
-        if sn is None or not score:
+        if sn is None or sn <= 0 or not score:
             continue
         cells.append(
             {
@@ -517,6 +531,7 @@ def _build_stored_season_scores_graph(source, media_id, *, use_trakt=False):
             media_id=str(media_id),
             source=source,
             media_type=MediaTypes.SEASON.value,
+            season_number__gt=0,
         )
         .exclude(**{f"{rating_field}__isnull": True})
         .order_by("season_number")

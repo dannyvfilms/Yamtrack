@@ -283,7 +283,37 @@
                 <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
                 <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
               </button>
-              {% if trakt_series_graph_data %}
+              {% if media_type == MediaTypes.TV.value or media_type == MediaTypes.SEASON.value or media_type == MediaTypes.ANIME.value %}
+                {# Always render tooltip shell; inner content polls /api/trakt-series-graph/ live #}
+                <div x-show="graphOpen"
+                     x-cloak
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0 -translate-y-1"
+                     x-transition:enter-end="opacity-100 translate-y-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100 translate-y-0"
+                     x-transition:leave-end="opacity-0 -translate-y-1"
+                     class="absolute left-0 top-full z-20 mt-2 rounded-2xl border border-white/10 bg-[#20252b]/95 p-3 shadow-2xl backdrop-blur-sm"
+                     style="min-width: max-content;">
+                  <div id="trakt-series-graph-{{ display_provider }}-{{ media.media_id }}"
+                       hx-get="{% url 'trakt_series_graph_fragment' source=display_provider media_id=media.media_id %}"
+                       hx-trigger="load delay:300ms, every 5s"
+                       hx-target="this"
+                       hx-swap="outerHTML">
+                    <div class="mb-2 flex items-center justify-between gap-3">
+                      <div class="text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">Series Graph</div>
+                    </div>
+                    <div class="flex items-center gap-2 py-5 px-1 text-xs text-gray-500">
+                      <span class="flex gap-1">
+                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:0ms"></span>
+                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:150ms"></span>
+                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:300ms"></span>
+                      </span>
+                      Building series graph…
+                    </div>
+                  </div>
+                </div>
+              {% elif trakt_series_graph_data %}
                 {% include "app/components/series_graph_tooltip.html" with graph_data=trakt_series_graph_data provider_label="Trakt" only %}
               {% endif %}
             </div>

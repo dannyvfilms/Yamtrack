@@ -432,6 +432,42 @@ def home(request):
         return render(request, "app/home.html", context)
 
 
+def trakt_series_graph_fragment(request, source, media_id):
+    """HTMX polling fragment for the Trakt episode ratings series graph.
+
+    Returns the inner grid content (or skeleton) and drops hx-trigger once
+    all episode Items have trakt_rating, so polling stops automatically.
+    """
+    from app.detail_builders import _build_series_graph_data  # noqa: PLC0415
+    from app.models import Item, MediaTypes  # noqa: PLC0415
+
+    graph_data = _build_series_graph_data(
+        source,
+        str(media_id),
+        use_trakt=True,
+        include_unrated=True,
+    )
+
+    poll_for_graph = Item.objects.filter(
+        media_id=str(media_id),
+        source=source,
+        media_type=MediaTypes.EPISODE.value,
+        season_number__gt=0,
+        trakt_rating__isnull=True,
+    ).exists()
+
+    return render(
+        request,
+        "app/components/trakt_series_graph_fragment.html",
+        {
+            "graph_data": graph_data,
+            "poll_for_graph": poll_for_graph,
+            "source": source,
+            "media_id": media_id,
+        },
+    )
+
+
 def active_playback_fragment(request):
     """HTMX fragment: return the active playback card or empty response."""
     card = live_playback.build_home_playback_card(request.user)

@@ -1344,6 +1344,31 @@ def media_details(
                     if not season_image or season_image == settings.IMG_NONE:
                         season["image"] = tv_poster
 
+            # Proactively kick off Trakt episode rating fetch for any seasons
+            # that already have episode Items but are missing trakt_rating.
+            # This primes the cache so the Trakt series graph tooltip has data
+            # ready before the user hovers.
+            from app.providers import trakt as _trakt  # noqa: PLC0415
+            if _trakt.is_configured() and source in {Sources.TMDB.value, Sources.TVDB.value}:
+                from app.models import Item as _Item  # noqa: PLC0415
+                from app.tasks_trakt import (  # noqa: PLC0415
+                    populate_trakt_episode_ratings_for_season,
+                )
+                pending_seasons = (
+                    _Item.objects.filter(
+                        media_id=str(media_id),
+                        source=source,
+                        media_type=MediaTypes.EPISODE.value,
+                        trakt_rating__isnull=True,
+                    )
+                    .values_list("season_number", flat=True)
+                    .distinct()
+                )
+                for sn in pending_seasons:
+                    populate_trakt_episode_ratings_for_season.delay(
+                        str(media_id), source, sn
+                    )
+
     # For public views, we don't need user media data
     if public_view:
         user_medias = []

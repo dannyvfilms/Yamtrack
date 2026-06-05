@@ -21,8 +21,8 @@ Variables:
 
   <div class="overflow-x-auto">
     {# CSS grid — column template built from season count so every row aligns perfectly #}
-    <div class="grid gap-2"
-         style="grid-template-columns: auto {% for _ in graph_data.seasons %}3rem {% endfor %};">
+    <div class="grid justify-start gap-2"
+         style="grid-template-columns: max-content {% for _ in graph_data.seasons %}3rem {% endfor %};">
 
       {# Season column headers — first cell is the row-label spacer #}
       <div></div>
