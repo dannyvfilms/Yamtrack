@@ -159,7 +159,7 @@ class HistoryMonthCacheTests(TestCase):
             ),
         )
 
-    @patch("app.history_cache.schedule_history_refresh", return_value=True)
+    @patch("app.history_cache_lifecycle.schedule_history_refresh", return_value=True)
     def test_invalidate_history_days_keeps_existing_payload_until_refresh_overwrites_it(
         self,
         mock_schedule_history_refresh,
