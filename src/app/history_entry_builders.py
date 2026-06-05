@@ -6,14 +6,13 @@ from django.conf import settings
 from django.utils import formats
 
 from app import helpers
-from app.models import MediaTypes
-
 from app.history_cache_utils import (
     _coerce_genre_list,
     _localize_datetime,
     _resolve_genres,
     _resolve_music_genres,
 )
+from app.models import MediaTypes
 
 logger = logging.getLogger(__name__)
 

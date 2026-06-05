@@ -6,7 +6,6 @@ from django.utils import timezone
 
 from app import config
 from app.models import MediaTypes
-from app.templatetags import app_tags
 from app.stats_podcast import _collect_podcast_play_data, _get_podcast_history_data
 from app.stats_time import (
     _calculate_episode_time_from_cache,
@@ -21,6 +20,7 @@ from app.stats_utils import (
     _iter_media_list,
     _localize_datetime,
 )
+from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 

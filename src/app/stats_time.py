@@ -79,7 +79,7 @@ def _get_season_metadata(media, season, season_metadata_cache, logger):
             )
             season_metadata_cache[season.item.season_number] = season_metadata
         except Exception as e:
-            logger.warning(f"Failed to get season {season.item.season_number} metadata for {media.item.title}: {e}")
+            logger.warning("Failed to get season %s metadata for %s: %s", season.item.season_number, media.item.title, e)
             season_metadata_cache[season.item.season_number] = None
 
     return season_metadata_cache[season.item.season_number]
@@ -97,7 +97,7 @@ def _get_season_metadata_with_episodes(media, season, logger):
         )
 
         if not season_metadata:
-            logger.error(f"No season metadata available for {media.item.title} S{season.item.season_number}")
+            logger.error("No season metadata available for %s S%s", media.item.title, season.item.season_number)
             return None
 
         # Get episodes from database for this season
@@ -113,7 +113,7 @@ def _get_season_metadata_with_episodes(media, season, logger):
         return season_metadata
 
     except Exception as e:
-        logger.error(f"Failed to get season metadata with episodes for {media.item.title} S{season.item.season_number}: {e}")
+        logger.error("Failed to get season metadata with episodes for %s S%s: %s", media.item.title, season.item.season_number, e)
         return None
 
 
@@ -135,7 +135,7 @@ def _calculate_episode_time_from_cache(episode, logger):
     """Calculate episode time from cached runtime data."""
     runtime_minutes = getattr(getattr(episode, "item", None), "runtime_minutes", None)
     if not runtime_minutes:
-        logger.warning(f"Runtime data missing for episode {episode.item.episode_number if episode.item else 'unknown'}, skipping")
+        logger.warning("Runtime data missing for episode %s, skipping", episode.item.episode_number if episode.item else "unknown")
         return 0  # Skip this episode instead of failing
 
     if runtime_minutes >= 999998:
@@ -184,7 +184,7 @@ def _calculate_tv_time(media, start_date, end_date, logger):
                 episode_count += 1
                 total_time_minutes += _calculate_episode_time_from_cache(episode, logger)
             except ValueError as e:
-                logger.warning(f"Skipping episode due to missing runtime: {e}")
+                logger.warning("Skipping episode due to missing runtime: %s", e)
                 # Continue processing other episodes instead of failing completely
                 continue
 
@@ -212,14 +212,14 @@ def _calculate_anime_time(media, start_date, end_date, logger):
 def _get_anime_runtime_from_cache(media, episode_count, logger, context=""):
     """Get anime runtime in minutes from cached runtime data."""
     if not hasattr(media, "item") or not media.item:
-        logger.warning(f"Runtime data missing for anime (no item) {context}, skipping")
+        logger.warning("Runtime data missing for anime (no item) %s, skipping", context)
         return 0  # Skip this anime instead of failing
 
     if not media.item.runtime_minutes:
-        logger.warning(f"Runtime data missing for anime '{media.item.title}' {context}, skipping")
+        logger.warning("Runtime data missing for anime '%s' %s, skipping", media.item.title, context)
         return 0  # Skip this anime instead of failing
 
-    logger.debug(f"Anime '{media.item.title}' {context}: using cached runtime {media.item.runtime_minutes} minutes per episode")
+    logger.debug("Anime '%s' %s: using cached runtime %s minutes per episode", media.item.title, context, media.item.runtime_minutes)
     return episode_count * media.item.runtime_minutes
 
 
@@ -244,15 +244,13 @@ def _get_media_metadata_for_statistics(media):
 def _get_media_runtime_from_cache(media, logger, context=""):
     """Get media runtime in minutes from cached runtime data."""
     if not hasattr(media, "item") or not media.item:
-        logger.warning(f"Runtime data missing for media (no item) {context}, skipping")
+        logger.warning("Runtime data missing for media (no item) %s, skipping", context)
         return 0  # Skip this media instead of failing
 
     runtime_minutes = getattr(media.item, "runtime_minutes", None)
     # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
     if runtime_minutes and runtime_minutes < 999998:
-        logger.debug(
-            f"Media '{media.item.title}' {context}: using cached runtime {runtime_minutes} minutes",
-        )
+        logger.debug("Media '%s' %s: using cached runtime %s minutes", media.item.title, context, runtime_minutes)
         return runtime_minutes
 
     # Check database directly to see if another task just saved runtime
@@ -261,9 +259,7 @@ def _get_media_runtime_from_cache(media, logger, context=""):
     db_runtime = Item.objects.filter(id=media.item.id).values_list("runtime_minutes", flat=True).first()
     # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
     if db_runtime and db_runtime < 999998:
-        logger.debug(
-            f"Media '{media.item.title}' {context}: using database runtime {db_runtime} minutes (saved by another task)",
-        )
+        logger.debug("Media '%s' %s: using database runtime %s minutes (saved by another task)", media.item.title, context, db_runtime)
         # Update in-memory object to reflect database state
         media.item.runtime_minutes = db_runtime
         return db_runtime
@@ -299,9 +295,7 @@ def _get_media_runtime_from_cache(media, logger, context=""):
 
     # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
     if metadata_runtime and metadata_runtime < 999998:
-        logger.debug(
-            f"Media '{media.item.title}' {context}: fetched runtime {metadata_runtime} minutes",
-        )
+        logger.debug("Media '%s' %s: fetched runtime %s minutes", media.item.title, context, metadata_runtime)
         if hasattr(media.item, "runtime_minutes"):
             try:
                 with transaction.atomic():
@@ -309,14 +303,14 @@ def _get_media_runtime_from_cache(media, logger, context=""):
                     media.item.save(update_fields=["runtime_minutes"])
                     media.item.refresh_from_db()  # Ensure consistency
             except Exception as exc:
-                logger.warning(
-                    f"Failed to save runtime for '{media.item.title}' {context}: {exc}",
-                )
+                logger.warning("Failed to save runtime for '%s' %s: %s", media.item.title, context, exc)
                 # Continue with metadata_runtime value even if save fails
         return metadata_runtime
 
     logger.warning(
-        f"Runtime data missing for media '{getattr(media.item, 'title', 'unknown')}' {context}, skipping",
+        "Runtime data missing for media '%s' %s, skipping",
+        getattr(media.item, "title", "unknown"),
+        context,
     )
     return 0  # Skip this media instead of failing
 
@@ -469,7 +463,10 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date, user=None
 
         if media_type == MediaTypes.PODCAST.value:
             # Podcast: sum runtime from completed plays in history records
-            from app.stats_podcast import _collect_podcast_play_data, _get_podcast_history_data  # noqa: PLC0415
+            from app.stats_podcast import (  # noqa: PLC0415
+                _collect_podcast_play_data,
+                _get_podcast_history_data,
+            )
             podcast_user = user or _infer_user_from_user_media(user_media)
             podcast_history_records, podcasts_lookup = _get_podcast_history_data(
                 podcast_user,

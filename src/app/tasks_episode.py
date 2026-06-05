@@ -14,7 +14,6 @@ from django.db.models import Q
 
 from app.log_safety import exception_summary
 from app.models import MetadataBackfillField
-from app.providers import services
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +57,8 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
     # Deferred to avoid circular import: tasks.py re-exports this module.
     from app.tasks import (  # noqa: PLC0415
-        _normalize_season_keys,
         _episode_runtime_items_queryset,
+        _normalize_season_keys,
         _record_backfill_failure,
         _record_backfill_success,
         _schedule_metadata_statistics_refresh,
@@ -279,7 +278,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             error_count += 1
             continue
 
-    logger.info(f"Episode runtime population completed: {updated_count} episodes updated, {error_count} errors")
+    logger.info("Episode runtime population completed: %s episodes updated, %s errors", updated_count, error_count)
 
     if updated_items:
         _schedule_metadata_statistics_refresh(

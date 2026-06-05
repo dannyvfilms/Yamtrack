@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import UniqueConstraint
 
-from app.models import Item
+from app.models.item import Item
 
 
 class CollectionEntry(models.Model):

@@ -12,7 +12,13 @@ from django.db.models import Q
 from django.utils import timezone
 
 from app import history_cache
-from app.models import CREDITS_BACKFILL_VERSION, Item, MediaTypes, MetadataBackfillField, MetadataBackfillState
+from app.models import (
+    CREDITS_BACKFILL_VERSION,
+    Item,
+    MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +155,15 @@ def _add_user_day_key(user_day_keys, user_id, day_key):
 
 
 def _collect_backfill_day_keys(items, field: str):
-    from app.models import Anime, Book, Comic, Episode, Game, Manga, Movie  # noqa: PLC0415
+    from app.models import (  # noqa: PLC0415
+        Anime,
+        Book,
+        Comic,
+        Episode,
+        Game,
+        Manga,
+        Movie,
+    )
 
     user_day_keys = defaultdict(set)
     if not items:

@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Iterable
 
 from django.conf import settings
 from django.db import models

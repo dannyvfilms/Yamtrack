@@ -24,9 +24,9 @@ BACKGROUND_TASK_PRIORITY = getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 
 @shared_task(name="Refresh Discover Rows")
 def refresh_discover_rows(user_id: int, media_type: str, row_keys: list[str], show_more: bool = False):
     """Refresh selected Discover rows for a user."""
+    from app.discover import tab_cache as discover_tab_cache
     from app.discover.service import refresh_rows_for_user
     from app.discover.tab_cache import refresh_tab_cache
-    from app.discover import tab_cache as discover_tab_cache
 
     user_model = get_user_model()
     user = user_model.objects.filter(id=user_id).first()
@@ -76,8 +76,8 @@ def refresh_discover_tab_cache(
     clear_provider_cache: bool = False,
 ):
     """Refresh the Redis-backed Discover tab cache for a user/media type."""
-    from app.discover.tab_cache import refresh_tab_cache
     from app.discover import tab_cache as discover_tab_cache
+    from app.discover.tab_cache import refresh_tab_cache
 
     user_model = get_user_model()
     user = user_model.objects.filter(id=user_id).first()
@@ -214,8 +214,8 @@ def warm_discover_api_cache():
             "failed": 0,
         }
 
-    from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
     from app.discover.providers.tmdb_adapter import TMDbDiscoverAdapter
+    from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 
     adapter = TMDbDiscoverAdapter()
     trakt_adapter = TraktDiscoverAdapter()

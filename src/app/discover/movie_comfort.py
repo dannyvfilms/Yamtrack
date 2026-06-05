@@ -22,7 +22,11 @@ from app.discover.feature_metadata import (
 )
 from app.discover.provider_candidates import _iso_date
 from app.discover.schemas import CandidateItem
-from app.discover.scoring import blended_world_quality, cosine_similarity, normalize_values
+from app.discover.scoring import (
+    blended_world_quality,
+    cosine_similarity,
+    normalize_values,
+)
 from app.discover.service_helpers import (
     BEHAVIOR_FIRST_MEDIA_TYPES,
     COMFORT_MEDIUM_PHASE_SUPERIORITY_MARGIN,

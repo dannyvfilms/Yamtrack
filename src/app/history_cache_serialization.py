@@ -4,7 +4,11 @@ from datetime import datetime
 
 from django.utils import timezone
 
-from app.history_entry_builders import _serialize_album, _serialize_item, _serialize_show
+from app.history_entry_builders import (
+    _serialize_album,
+    _serialize_item,
+    _serialize_show,
+)
 
 
 def _serialize_history_entry(entry):

@@ -10,10 +10,22 @@ from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from app.discover.feature_metadata import is_director_credit, normalize_person_name, normalize_studio
+from app.discover.feature_metadata import (
+    is_director_credit,
+    normalize_person_name,
+    normalize_studio,
+)
 from app.discover.profile import MODEL_BY_MEDIA_TYPE
 from app.discover.schemas import CandidateItem
-from app.models import CreditRoleType, Episode, ItemPersonCredit, ItemStudioCredit, ItemTag, MediaTypes, Status
+from app.models import (
+    CreditRoleType,
+    Episode,
+    ItemPersonCredit,
+    ItemStudioCredit,
+    ItemTag,
+    MediaTypes,
+    Status,
+)
 
 MAX_ITEMS_PER_ROW = 12
 

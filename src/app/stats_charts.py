@@ -9,7 +9,6 @@ from collections import Counter, defaultdict
 
 from app.stats_utils import _localize_datetime
 
-
 # ---------------------------------------------------------------------------
 # Metric breakdown (rates over time)
 # ---------------------------------------------------------------------------

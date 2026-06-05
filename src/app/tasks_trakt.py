@@ -25,7 +25,10 @@ TRAKT_POPULARITY_BACKFILL_ITEMS_SCHEDULED_KEY = "trakt_popularity_backfill_items
 def enqueue_trakt_popularity_backfill_items(item_ids, countdown=10, *, force=False):
     """Queue item IDs for Trakt popularity backfill via the cache-based queue."""
     # Deferred to avoid circular import: tasks.py re-exports this module.
-    from app.tasks import _filter_backfill_item_ids, _normalize_item_ids  # noqa: PLC0415
+    from app.tasks import (  # noqa: PLC0415
+        _filter_backfill_item_ids,
+        _normalize_item_ids,
+    )
 
     normalized = _normalize_item_ids(item_ids)
     normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.TRAKT_POPULARITY)

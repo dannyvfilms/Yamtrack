@@ -10,10 +10,10 @@ from collections import defaultdict
 from django.apps import apps
 
 from app import config
-from app.models import MediaManager, MediaTypes
+from app.models import MediaManager
 from app.statistics_cache import STATISTICS_TOP_N, STATISTICS_TOP_RATED_OVERALL
-from app.templatetags import app_tags
 from app.stats_utils import _CombinedMediaBucket, _infer_user_from_user_media
+from app.templatetags import app_tags
 
 
 def get_score_distribution(user_media):

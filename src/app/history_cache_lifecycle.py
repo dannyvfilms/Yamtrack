@@ -7,7 +7,6 @@ from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
 
-from app.log_safety import stable_hmac
 from app.history_cache_utils import (
     HISTORY_COVERAGE_REPAIR_LOCK_TTL,
     HISTORY_REFRESH_LOCK_MAX_AGE,
@@ -18,6 +17,7 @@ from app.history_cache_utils import (
     _normalize_logging_style,
     _refresh_lock_key,
 )
+from app.log_safety import stable_hmac
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +251,9 @@ def schedule_history_refresh(
             user_id,
             exc,
         )
-        from app.history_cache import refresh_history_cache  # deferred to avoid circular import
+        from app.history_cache import (
+            refresh_history_cache,  # deferred to avoid circular import
+        )
         refresh_history_cache(user_id, logging_style=logging_style, warm_days=warm_days)
         return False
 

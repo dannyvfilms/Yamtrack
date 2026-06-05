@@ -1,7 +1,11 @@
 import logging
 
 from django.conf import settings
-from django.core.validators import DecimalValidator, MaxValueValidator, MinValueValidator
+from django.core.validators import (
+    DecimalValidator,
+    MaxValueValidator,
+    MinValueValidator,
+)
 from django.db import models
 from django.db.models import Max
 from django.utils import timezone
@@ -12,7 +16,9 @@ from simple_history.utils import bulk_create_with_history, bulk_update_with_hist
 
 import events
 from app import cache_utils, providers
-from app.models import Item, Media, MediaTypes, Sources, Status
+from app.models.choices import MediaTypes, Sources, Status
+from app.models.item import Item
+from app.models.media import Media
 
 logger = logging.getLogger(__name__)
 

@@ -1,12 +1,14 @@
 from django.conf import settings
-from django.core.validators import DecimalValidator, MaxValueValidator, MinValueValidator
+from django.core.validators import (
+    DecimalValidator,
+    MaxValueValidator,
+    MinValueValidator,
+)
 from django.db import models
 from model_utils import FieldTracker
 
-# Media and Status are imported from the parent package. This works because
-# __init__.py defines them before it executes `from app.models.music import ...`,
-# so the partial module object already contains both names when this file loads.
-from app.models import Media, Status
+from app.models.choices import Status
+from app.models.media import Media
 
 
 class Artist(models.Model):

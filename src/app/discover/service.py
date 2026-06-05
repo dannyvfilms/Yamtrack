@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from datetime import timedelta
 
 from django.conf import settings
@@ -12,41 +11,6 @@ from django.db import OperationalError
 from django.utils import timezone
 
 from app.discover import cache_repo, tab_cache
-from app.discover.provider_candidates import _provider_row_candidates
-from app.discover.filters import (
-    dedupe_candidates,
-    exclude_tracked_items,
-    get_feedback_keys_by_media_type,
-    get_tracked_keys_by_media_type,
-)
-from app.discover.movie_comfort import (
-    _candidate_release_status,
-    _entry_phase_evidence,
-    _phase_affinity_maps,
-)
-from app.discover.comfort_scoring import (
-    COMFORT_DEBUG_TOP_N,
-    _apply_comfort_confidence,
-    _build_comfort_debug_payload,
-)
-from app.discover.match_signals import (
-    _row_match_signal,
-    _row_match_signal_with_details,
-    _wildcard_genres,
-)
-from app.discover.trakt_candidates import (
-    ADAPTIVE_PULL_TARGET_META_KEY,
-    ROW_CACHE_SCHEMA_META_KEY,
-    _genre_discovery_candidates,
-    _merge_unique_candidates,
-    _related_candidates_for_anchors,
-    _related_row_candidates,
-    _select_recent_anchors,
-    _top_profile_genres,
-    _trakt_anticipated_candidates,
-    _trakt_canon_candidates,
-)
-from app.discover.profile import MODEL_BY_MEDIA_TYPE, get_or_compute_taste_profile
 from app.discover.adapters import TMDB_ADAPTER
 from app.discover.artwork import (
     PROVIDER_ARTWORK_HYDRATION_ROW_KEYS,
@@ -54,7 +18,11 @@ from app.discover.artwork import (
     _hydrate_trakt_ranked_artwork,
     _row_ttl_seconds,
     _supports_provider_artwork_hydration,
-    hydrate_visible_row_artwork,
+)
+from app.discover.comfort_scoring import (
+    COMFORT_DEBUG_TOP_N,
+    _apply_comfort_confidence,
+    _build_comfort_debug_payload,
 )
 from app.discover.entry_candidates import (
     _clear_out_next_entries,
@@ -63,6 +31,25 @@ from app.discover.entry_candidates import (
     _in_progress_candidates,
     _planning_candidates,
 )
+from app.discover.filters import (
+    dedupe_candidates,
+    exclude_tracked_items,
+    get_feedback_keys_by_media_type,
+    get_tracked_keys_by_media_type,
+)
+from app.discover.match_signals import (
+    _row_match_signal,
+    _row_match_signal_with_details,
+    _wildcard_genres,
+)
+from app.discover.movie_comfort import (
+    _candidate_release_status,
+    _entry_phase_evidence,
+    _phase_affinity_maps,
+)
+from app.discover.profile import get_or_compute_taste_profile
+from app.discover.provider_candidates import _provider_row_candidates
+from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
 from app.discover.row_cache_schema import (
     ROW_CACHE_ACTIVITY_VERSION_META_KEY,
     _apply_row_definition_metadata,
@@ -71,7 +58,13 @@ from app.discover.row_cache_schema import (
     _row_cache_matches_activity_version,
     _row_requires_artwork_rebuild,
 )
-from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
+from app.discover.schemas import (
+    CandidateItem,
+    DiscoverPayload,
+    RowDefinition,
+    RowResult,
+)
+from app.discover.scoring import score_candidates
 from app.discover.service_helpers import (
     BEHAVIOR_FIRST_MEDIA_TYPES,
     COMFORT_PHASE_EVIDENCE_THRESHOLD,
@@ -88,8 +81,17 @@ from app.discover.service_helpers import (
     _model_has_field,
     _rewatch_counts,
 )
-from app.discover.schemas import CandidateItem, DiscoverPayload, RowDefinition, RowResult
-from app.discover.scoring import score_candidates
+from app.discover.trakt_candidates import (
+    ROW_CACHE_SCHEMA_META_KEY,
+    _genre_discovery_candidates,
+    _merge_unique_candidates,
+    _related_candidates_for_anchors,
+    _related_row_candidates,
+    _select_recent_anchors,
+    _top_profile_genres,
+    _trakt_anticipated_candidates,
+    _trakt_canon_candidates,
+)
 from app.models import (
     Item,
     MediaTypes,
@@ -651,7 +653,7 @@ def _queue_stale_refresh(user_id: int, media_type: str, row_key: str, show_more:
         return
 
     try:
-        from app.tasks import refresh_discover_rows
+        from app.tasks import refresh_discover_rows  # noqa: PLC0415
 
         refresh_discover_rows.delay(user_id, media_type, [row_key], show_more=show_more)
     except Exception as error:  # noqa: BLE001

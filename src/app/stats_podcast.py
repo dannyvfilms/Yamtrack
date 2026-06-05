@@ -8,7 +8,6 @@ from app import config
 from app.models import MediaTypes
 from app.statistics_cache import STATISTICS_TOP_N
 
-
 logger = logging.getLogger(__name__)
 
 

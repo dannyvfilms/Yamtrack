@@ -14,7 +14,7 @@ from django.apps import apps
 from django.utils import timezone
 
 from app.models import BasicMedia, MediaTypes
-from app.stats_utils import _iter_media_list, _localize_datetime
+from app.stats_utils import _iter_media_list
 from users.models import WeekStartDayChoices
 
 logger = logging.getLogger(__name__)

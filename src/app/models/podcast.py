@@ -1,10 +1,15 @@
 from django.apps import apps
 from django.conf import settings
-from django.core.validators import DecimalValidator, MaxValueValidator, MinValueValidator
+from django.core.validators import (
+    DecimalValidator,
+    MaxValueValidator,
+    MinValueValidator,
+)
 from django.db import models
 from model_utils import FieldTracker
 
-from app.models import Media, Status
+from app.models.choices import Status
+from app.models.media import Media
 
 
 class PodcastShow(models.Model):

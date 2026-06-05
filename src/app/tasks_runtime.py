@@ -183,7 +183,9 @@ def enqueue_episode_runtime_backfill(season_keys, countdown=10):
         cache.set(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY, queue, timeout=RUNTIME_BACKFILL_QUEUE_TTL)
         if cache.add(RUNTIME_BACKFILL_EPISODES_SCHEDULED_KEY, True, timeout=30):
             # Deferred to avoid circular import: tasks_episode.py re-exports from app.tasks.
-            from app.tasks_episode import populate_episode_runtime_queue  # noqa: PLC0415
+            from app.tasks_episode import (
+                populate_episode_runtime_queue,  # noqa: PLC0415
+            )
             populate_episode_runtime_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
         logger.debug("Episode runtime backfill queue unavailable: %s", exception_summary(exc))
@@ -301,7 +303,7 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
     remaining_items = _runtime_items_queryset().count()
 
     if remaining_items > 0:
-        logger.info(f"Found {remaining_items} remaining items. Scheduling next batch...")
+        logger.info("Found %s remaining items. Scheduling next batch...", remaining_items)
         # Schedule the next batch with a small delay
         populate_runtime_data_batch.apply_async(
             kwargs={"batch_size": batch_size, "delay_seconds": delay_seconds},
@@ -385,7 +387,7 @@ def populate_runtime_data_continuous():
         ).exclude(runtime_minutes=999999).count()
 
         if episodes_needing_runtime > 0:
-            logger.info(f"Runtime population completed for movies/TV/anime, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...")
+            logger.info("Runtime population completed for movies/TV/anime, but %s episodes still need runtime data. Starting episode population...", episodes_needing_runtime)
             # Clear the cache and continue with episode population
             cache.delete(cache_key)
         else:
@@ -404,7 +406,7 @@ def populate_runtime_data_continuous():
         ).exclude(runtime_minutes=999999).count()
 
         if episodes_needing_runtime > 0:
-            logger.info(f"No movies/TV/anime need runtime data, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...")
+            logger.info("No movies/TV/anime need runtime data, but %s episodes still need runtime data. Starting episode population...", episodes_needing_runtime)
             # Start episode population
             episode_result = populate_episode_runtime_data.delay()
             return {
@@ -417,7 +419,7 @@ def populate_runtime_data_continuous():
         cache.set(cache_key, True, timeout=3600)
         return {"total_items": 0, "batches_scheduled": 0, "message": "All up to date - marked as completed"}
 
-    logger.info(f"Found {total_items} items that need runtime data. Starting comprehensive population...")
+    logger.info("Found %s items that need runtime data. Starting comprehensive population...", total_items)
 
     # Start the first batch - it will chain itself if more items remain
     first_batch = populate_runtime_data_batch.delay(batch_size=20, delay_seconds=1.0)

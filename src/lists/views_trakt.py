@@ -69,7 +69,7 @@ def trakt_lists_oauth(request):
     # Build query string manually to match the working trakt_oauth pattern
     # This ensures the redirect_uri is sent exactly as registered
     url = "https://trakt.tv/oauth/authorize"
-    logger.debug(f"Trakt OAuth redirect URI: {redirect_uri}")
+    logger.debug("Trakt OAuth redirect URI: %s", redirect_uri)
 
     return redirect(
         f"{url}?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&state={state_token}",
@@ -90,7 +90,7 @@ def trakt_lists_callback(request):
     state_data = request.session.pop(state_token, None)
 
     if not state_data:
-        logger.error(f"Trakt OAuth callback: state token '{state_token}' not found in session")
+        logger.error("Trakt OAuth callback: state token '%s' not found in session", state_token)
         messages.error(
             request,
             "Invalid or expired Trakt authorization request. Please try again - make sure to complete the authorization process without closing your browser.",

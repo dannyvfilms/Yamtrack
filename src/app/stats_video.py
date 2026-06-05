@@ -219,7 +219,7 @@ def _compute_movie_tv_top_genres(play_details, limit=STATISTICS_TOP_N):
             except (ValueError, TypeError, KeyError, AttributeError) as e:
                 import logging  # noqa: PLC0415
                 _g_logger = logging.getLogger(__name__)
-                _g_logger.debug(f"Skipping genre calculation for {getattr(media_to_use.item, 'title', 'unknown')}: {e}")
+                _g_logger.debug("Skipping genre calculation for %s: %s", getattr(media_to_use.item, "title", "unknown"), e)
                 continue
 
         for genre in genres:
