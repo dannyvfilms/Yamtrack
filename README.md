@@ -8,70 +8,69 @@ Credentials for Demo:
 - Username: `demo`
 - Password: `demodemo`
 
-## Why choose this fork?
-
-Upstream Yamtrack is the foundation. This fork is the stronger pick if you want a more opinionated, Trakt-like day-to-day experience instead of a mostly stock Yamtrack install.
-
-- Trakt-style **Time Left / Progress** workflow with runtime-aware TV sorting, dropped-show fixes, and time-watched views
-- Unified **History** page with month navigation, media-type and genre filters, cached refreshes, and inline cleanup for duplicate or extra plays
-- Rich **statistics** with all-time and custom ranges, Top Played, media-hours cards, reading stats, music and podcast stats, person pages, and comparison tooling
-- Better **lists** with public profiles, recommendations, smart lists, list tags, drag-and-drop ordering, release-date sorting, completion indicators, RSS/JSON feeds, and backup export/import
-- More complete **media coverage** with music, podcasts, board games, percentage-based reading progress, game lengths, author pages, person credits, localized titles, and TVDB-backed grouped anime handling
-- **Collection and owned-media** support with filters, season rollups, track/episode collection state, background metadata fetching, and richer detail pages
-- More useful **discover** recommendations with caching, personalization, feedback, better TV/anime planning, and Trakt popularity signals
-- Broader **integrations** across Trakt, Plex, Jellyfin, Jellyseerr, Pocket Casts, Last.fm, Audiobookshelf, TVDB, Steam, and more
-- Stronger **mobile and PWA** behavior with compact/comfortable grids, quick season updates, iOS fixes, better touch handling, and more readable cards/details
-- Better **daily performance and reliability** for large libraries via runtime caching, history/stat cache layers, SQLite lock hardening, startup guards, and large-query optimizations
-
 ## What this fork adds
 
-- **Progress and history**: Time Left sorting, time-watched sorting, live Now Playing card, episode ratings, filtered history, delete flows, duplicate-play cleanup, and better subtitle/context on media details.
-- **Statistics and insight**: cached refreshable stats, Top Played, hours-by-media cards, reading stats, music/podcast stats, person and actor pages, rating-scale-aware averages, and comparison tooltips.
-- **Lists and sharing**: public/private lists, public profiles, smart list builder, list tags, list recommendations, release-date sort, drag-and-drop ordering, completion indicators, RSS/JSON feeds, and list export/import in scheduled backups.
-- **Media depth**: collection metadata, localized and alternate titles, author profiles, person credits, runtime chips, game lengths, watch-provider region preference, and direct provider-ID search.
-- **Integrations and imports**: Trakt watch history and lists, Trakt watchlist import, Plex watchlist sync, Plex ratings sync, Pocket Casts sync, Last.fm history/scrobbling, Audiobookshelf imports, Jellyfin webhooks, Jellyseerr auto-add, TVDB metadata, and safer Steam updates.
-- **Daily-use polish**: mobile grid preferences, quick season update button, subtitle display preference, date/time formatting, rating scale preference, built-in demo account, large-library speedups, better cache refresh UX, and iOS/SQLite resiliency.
+The fork is built around the workflows Trakt used to cover well: Time Left progress, a unified history feed, recap-style stats, public list sharing, and all-in-one tracking. The sections below show what has been added to get there.
 
-## Built for former Trakt users
+### Major additions
 
-If you left Trakt because the daily workflow got worse, this fork is built around the workflows people keep asking for instead of treating them as minor extras.
+- **Music**: artist and album pages, track-level history and scoring, play-count and listening-time statistics, bulk save and mark-all-listened; MusicBrainz-backed metadata with discography sync and cover art; fully native in history, search, home rows, and collection, not a thin importer.
+- **Podcasts**: dedicated show and episode pages, episode-level tracking, mark-all-played; Pocket Casts account sync as a live integration, not a one-shot file import; podcast listening appears naturally in history, runtime stats, and search.
+- **Collections / owned media**: track what you physically or digitally own with copy-level detail: source, resolution, HDR, format, codec, and bitrate; filtered collection views, per-item collection status tied into detail pages and list/smart-list rules; supports Plex collection sync.
+- **Discover**: personalized recommendation rows that improve with use: genre, studio, cast, and tag affinity built from your library; not-interested and hide feedback that sticks; background refresh so rows stay current, individually refreshable from the UI, not a static recommendations page.
+- **History and statistics**: history rebuilt as a filterable feed with month navigation, media-type and genre filters, inline duplicate-play cleanup, and a delete flow; statistics rebuilt with explicit refresh, compare mode, custom date ranges, top-talent breakdowns, and per-type splits covering TV, film, music, podcasts, and reading with pages read, top authors, reading streaks, and listening time.
+- **Lists: public, social, and smart**: public and private lists, custom slugs, public profile pages; RSS and JSON feeds per list; smart-list rules for collection status, release state, platform, origin, author, and tags; recommendations with approval flow; list completion percentages and media-type breakdowns in the index; Trakt list and watchlist import; sort by rating, progress, release date, last watched, or custom manual order.
+- **Integration coverage**: Plex full library import, watchlist sync, and ratings sync; Pocket Casts account sync; Last.fm history import and live poll; Audiobookshelf account import; Radarr and Sonarr scheduled library sync; Jellyseerr webhook auto-add, each with dedicated settings and status display.
 
-- **Better progress workflow**: a Trakt-style Progress view with Time Left, runtime-aware sorting, and smarter handling for in-progress, planning, completed, and dropped shows.
-- **Better history browsing**: a single history feed across watches and listens, with month-based navigation, filters, extra-play cleanup, and detail-page shortcuts.
-- **Better recap-style stats**: cached year-in-review and all-time views with media hours, top played, streaks, comparisons, and per-media breakdowns that are actually fun to browse.
-- **Better list sharing and exports**: shareable public lists, public profiles, recommendations, RSS/JSON feeds, backup exports, and Trakt list/watchlist import support.
-- **Better all-in-one tracking**: keep movies, TV, anime, music, podcasts, books, comics, manga, games, and board games in one app instead of splitting your tracking across multiple tools.
-- **Better daily polish than upstream for this use case**: more preferences, better mobile behavior, stronger large-library performance, and more opinionated UX for people who use the app every day.
+### Minor additions
 
-## What's different in practice
+- **Richer metadata and title control**: localized and original titles switchable per user preference; critic ratings and popularity scores displayed; game-length data; manual metadata overrides; metadata-provider preference; image refresh flows.
+- **People, studios, and credit browsing**: actor, director, author, and studio pages with filmographies and top works; person credits visible from detail pages rather than hidden as tooltip data; author pages with top-read breakdowns.
+- **Better anime handling**: proper separation of anime and TV library concerns so mixed libraries stay organized; anime-specific season and episode navigation; grouped-anime routing for franchise-spanning series.
+- **Richer episode and book workflows**: episode detail pages with individual scoring; bulk episode save; drop an episode without logging it to history; book-specific: barcode and ISBN scanning from a photo, percentage-based reading progress, top-authors stats, and more resilient import flows.
+- **Configurable home screen**: choose what rows appear and in what order; rows from library queries, custom lists, smart lists, or recently played but not rated; direction and media-type filters stored per user.
+- **Configurable table columns**: choose and reorder visible columns per view, with media tables and list-detail tables configured independently; available columns include critic rating, episodes left, time left, time to beat, runtime, time watched, last watched, next air date, date added, popularity, and more.
+- **Scheduled backups and richer export management**: recurring export scheduling with media-type and list inclusion options; export history and backup destination visible in settings.
+- **Account security**: TOTP authenticator setup and management; recovery codes; password recovery via authenticator or recovery code; session duration as a per-user preference.
+
+### Quality-of-life changes
+
+- **Much deeper preferences**: sort modes for critic rating, popularity, runtime, time to beat, plays, time watched, release date, last watched, next air date, and time left; display preferences for duration format, rating scale, stats default range, compare mode, mobile grid density, subtitle visibility on cards, localized vs. original title display, progress-bar visibility, planned-item home visibility, and obfuscating unseen episode titles.
+- **Livelier UI**: a now-playing card showing what is actively playing via Plex, Jellyfin, or Emby webhook; explicit stale and refreshing indicators on history and stats with one-click refresh; lazy-loaded covers and asynchronous fragments throughout.
+- **Better search and add flows**: music-native search that creates artist and album entries from search results; improved anime and localized-title search results.
+- **Deeper filters**: rated and unrated, collected and not collected, caught-up and not-caught-up, no-status, language, country, platform, origin, format, author, tag inclusion, and tag exclusion; smart-list rules use the same expanded vocabulary, making them meaningfully programmable.
+- **More reliable under load**: WAL mode and timeout configuration for SQLite; retry logic for lock and I/O failures; prioritized background task queues for a smoother experience with large libraries.
+- **Integration settings and import UX**: import history and status visible per integration in settings; watchlist-only and collection-update-only import modes; Jellyseerr allowed usernames and defaults persisted as preferences; per-user Plex webhook library selection.
+
+## Screenshots
 
 ### Time Left / Progress
 
-Trakt-style Progress is one of the biggest reasons to pick this fork: it mixes active and planned shows more usefully, uses real runtime data, and makes backlog decisions faster.
+The Progress view is built to make active shows, backlog triage, and planning visible at a glance.
 
 <img alt="Time Left progress view" src="https://github.com/user-attachments/assets/ab5594ea-6ddc-4512-9837-87b68ec874c2" />
 
 ### History
 
-The History page is built to answer "what did I actually watch or listen to?" without bouncing across detail pages or separate media-type views.
+History keeps watches and listens in one place so recent activity is easy to scan.
 
 <img alt="History page" src="https://github.com/user-attachments/assets/18927954-dd57-40ba-86ef-11ae986cf9ee" />
 
 ### Statistics
 
-This fork leans hard into recap-style browsing with cached, range-based statistics that feel closer to the way former Trakt users evaluate their media habits.
+Statistics are designed for recap-style browsing across time ranges and media types.
 
 <img alt="Statistics dashboard" src="https://github.com/user-attachments/assets/be9da320-d745-45aa-8c6a-23efa66d0c6c" />
 
 ### Shareable Lists
 
-Lists are more than personal bookmarks here: you can share them publicly, recommend from them, expose them on profiles, and build smarter list workflows around them.
+Lists can be shared publicly, surfaced on profiles, and used as more than a private backlog.
 
 <img alt="Shareable lists" src="https://github.com/user-attachments/assets/ef13eff1-dc14-4ab6-b5d0-39598a1264ec" />
 
 ### Collections / Owned Media
 
-Collection support adds owned-media context, richer detail views, format metadata, and season-level rollups so the app tracks what you have as well as what you watched.
+Collections add ownership context alongside tracking, with room for copy-level detail.
 
 <table>
   <tr>
@@ -86,7 +85,7 @@ Collection support adds owned-media context, richer detail views, format metadat
 
 ### Music and Podcasts
 
-This fork expands Yamtrack into a more complete all-in-one tracker with artist, album, track, podcast show, and podcast episode workflows instead of leaving those to separate apps.
+Music and podcasts are treated as first-class parts of the same tracker, not side imports.
 
 <img alt="Music and podcasts" src="https://github.com/user-attachments/assets/0c6da813-d73e-4f7c-9d2b-ba42d65221a7" />
 
@@ -102,15 +101,6 @@ This fork builds on Yamtrack's foundation instead of replacing it. You still kee
 - Import/export flows for Trakt, Simkl, MyAnimeList, AniList, Kitsu, Yamtrack CSV, and more
 - Docker deployment with SQLite or PostgreSQL
 - CSV export/import and self-hosted control over your data
-
-## More features you'll actually notice day to day
-
-- **Media details feel richer**: action popovers, better subtitles, provider branding, score chips, runtime chips, localized titles, notes previews, and cleaner mobile layouts.
-- **Filters are much stronger**: remembered filters, combined rating/collection filters, tag filters, release-state filters, media-type filters, genre filters, and better toolbars.
-- **Lists behave better on mobile and desktop**: smarter chips, faster pages, backdrop covers, count fixes, clearer completion visibility, and cleaner public views.
-- **Books and reading are less second-class**: barcode scanning, percentage progress, top authors, author pages, and harder-to-break imports.
-- **Imports and webhooks are less fragile**: safer dedupe logic, fallback ID handling, better logging, and fixes for edge cases across Trakt, Plex, Pocket Casts, Jellyfin, Audiobookshelf, and Steam.
-- **The app feels better under load**: faster large-library lists, cached history/stat refreshes, local runtime backfills, and better handling for SQLite-specific failure modes.
 
 ## Quick Start
 
