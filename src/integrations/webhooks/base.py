@@ -601,17 +601,24 @@ class BaseWebhookProcessor:
         else:
             logger.warning("No TMDB or IMDB ID found for movie, skipping processing")
 
-    def _find_tv_media_id(self, ids):
-        """Find TV media ID from external IDs."""
-        # Prioritize TVDB/IMDB lookups as they can properly resolve episode IDs via TMDB's find API
-        # Plex often provides episode-level TMDB IDs which cannot be used directly as show IDs
+    def _find_tv_media_id(self, ids, series_title=None, allow_title_fallback=False):
+        """Find TV media ID from external IDs, with optional title search fallback.
+
+        Args:
+            ids: Dict of external IDs (tmdb_id, tvdb_id, imdb_id, anidb_id).
+            series_title: Show title used for title-search fallback.
+            allow_title_fallback: Enable title-search when all ID lookups fail.
+
+        Returns:
+            tuple: (media_id, season_number, episode_number)
+        """
+        # Prioritize TVDB/IMDB — TMDB find API resolves episode-level IDs to show IDs
         for ext_id, ext_type in [
             (ids["tvdb_id"], "tvdb_id"),
             (ids["imdb_id"], "imdb_id"),
         ]:
             if ext_id:
                 response = app.providers.tmdb.find(ext_id, ext_type)
-                # Check for episode-level results first
                 if response.get("tv_episode_results"):
                     result = response["tv_episode_results"][0]
                     return (
@@ -619,22 +626,47 @@ class BaseWebhookProcessor:
                         result.get("season_number"),
                         result.get("episode_number"),
                     )
-                # Fall back to show-level results if episode-level not available
                 if response.get("tv_results"):
                     result = response["tv_results"][0]
-                    # Return show ID only, season/episode should come from payload
                     return result.get("id"), None, None
 
-        # Fall back to direct TMDB ID usage if TVDB/IMDB are not available
-        # Note: This may fail if the TMDB ID is actually an episode ID, but the fallback
-        # logic in _process_tv will handle it via title search
+        # Direct TMDB ID fallback (may be episode-level; _process_tv handles that case)
         if ids["tmdb_id"]:
             try:
-                media_id = int(ids["tmdb_id"])
-                # We'll return None for season/episode to indicate they should come from payload
-                return media_id, None, None
+                return str(ids["tmdb_id"]), None, None
             except (ValueError, TypeError):
                 logger.debug("Invalid TMDB ID format: %s", ids["tmdb_id"])
+
+        if not allow_title_fallback or not series_title:
+            return None, None, None
+
+        # Title search fallback when all ID-based resolution fails
+        logger.debug("TV ID missing; attempting title fallback search for: %s", series_title)
+        try:
+            search_results = app.providers.tmdb.search(
+                MediaTypes.TV.value, series_title, page=1,
+            )
+            results = (search_results or {}).get("results") or []
+            if results:
+                found_id = results[0].get("media_id")
+                logger.info("Resolved TV entry via title search")
+                return str(found_id), None, None
+
+            # Retry with year stripped from titles like "Show (YYYY)"
+            clean_title = re.sub(r"\s*\(\d{4}\)$", "", series_title[:500])
+            if clean_title != series_title:
+                search_results = app.providers.tmdb.search(
+                    MediaTypes.TV.value, clean_title, page=1,
+                )
+                results = (search_results or {}).get("results") or []
+                if results:
+                    found_id = results[0].get("media_id")
+                    logger.info("Resolved TV entry via normalized title search")
+                    return str(found_id), None, None
+        except Exception as exc:
+            logger.warning(
+                "Title search failed during TV resolution: %s", exception_summary(exc),
+            )
 
         return None, None, None
 

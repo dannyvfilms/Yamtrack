@@ -253,20 +253,22 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
         # Verify objects were created
-        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="85987")
+        # TVDB-first resolution maps tvdb://303821 → show TMDB ID 1668 (Friends).
+        # The episode-level tmdb://85987 from Plex GUIDs is bypassed correctly.
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="1668")
         self.assertEqual(tv_item.title, "Friends")
 
         tv = TV.objects.get(item=tv_item, user=self.user)
         self.assertEqual(tv.status, Status.IN_PROGRESS.value)
 
         season = Season.objects.get(
-            item__media_id="85987",
+            item__media_id="1668",
             item__season_number=1,
         )
         self.assertEqual(season.status, Status.IN_PROGRESS.value)
 
         episode = Episode.objects.get(
-            item__media_id="85987",
+            item__media_id="1668",
             item__season_number=1,
             item__episode_number=1,
         )
@@ -585,12 +587,13 @@ class PlexWebhookTests(TestCase):
             stopped_state["status"],
             live_playback.PLAYBACK_STATUS_STOPPED,
         )
+        # TVDB-first resolution → show tracked under correct show TMDB ID 1668.
         self.assertTrue(
-            TV.objects.filter(item__media_id="85987", user=self.user).exists(),
+            TV.objects.filter(item__media_id="1668", user=self.user).exists(),
         )
         self.assertTrue(
             Season.objects.filter(
-                item__media_id="85987",
+                item__media_id="1668",
                 item__season_number=1,
                 user=self.user,
             ).exists(),
@@ -970,8 +973,9 @@ class PlexWebhookTests(TestCase):
         )
         self.assertIsNotNone(episode.end_date)
 
-        self.assertEqual(str(mock_tv_with_seasons.call_args_list[0].args[0]), "1515183")
-        self.assertEqual(str(mock_tv_with_seasons.call_args_list[1].args[0]), "73586")
+        # TVDB-first resolution skips the episode-level tmdb://1515183 and resolves
+        # the show ID directly via TVDB: fake_find returns show_id=73586 for tvdb_id.
+        self.assertEqual(str(mock_tv_with_seasons.call_args_list[0].args[0]), "73586")
         mock_find.assert_called()
         mock_tmdb_search.assert_not_called()
 
@@ -1067,8 +1071,9 @@ class PlexWebhookTests(TestCase):
                 item__episode_number=1,
             ).exists(),
         )
-        self.assertEqual(str(mock_tv_with_seasons.call_args_list[0].args[0]), "62085")
-        self.assertEqual(str(mock_tv_with_seasons.call_args_list[1].args[0]), "1396")
+        # TVDB-first resolution: fake_find maps tvdb://349232 → show_id=1396 directly.
+        # The collision TMDB ID 62085 is never attempted as a show lookup.
+        self.assertEqual(str(mock_tv_with_seasons.call_args_list[0].args[0]), "1396")
 
     def test_movie_mark_played(self):
         """Test webhook handles movie mark played event."""
@@ -1971,14 +1976,16 @@ class PlexWebhookTests(TestCase):
         season page rather than the TV season page."""
         # Pre-create a Season Item with library_media_type='anime' to simulate the user
         # having previously tracked this show via the anime URL pathway.
+        # TVDB-first resolution maps tvdb://303821 → show TMDB ID 1668 (Friends),
+        # so pre-created items must use 1668 to be found by the scrobble handler.
         show_item, _ = Item.objects.get_or_create(
-            media_id="85987",
+            media_id="1668",
             source="tmdb",
             media_type=MediaTypes.TV.value,
             defaults={"title": "Friends", "image": ""},
         )
         Item.objects.get_or_create(
-            media_id="85987",
+            media_id="1668",
             source="tmdb",
             media_type=MediaTypes.SEASON.value,
             season_number=1,
@@ -2010,7 +2017,7 @@ class PlexWebhookTests(TestCase):
         # TV-typed one.
         self.assertEqual(
             Item.objects.filter(
-                media_id="85987",
+                media_id="1668",
                 source="tmdb",
                 media_type=MediaTypes.SEASON.value,
                 season_number=1,
@@ -2020,7 +2027,7 @@ class PlexWebhookTests(TestCase):
         )
         self.assertEqual(
             Item.objects.filter(
-                media_id="85987",
+                media_id="1668",
                 source="tmdb",
                 media_type=MediaTypes.SEASON.value,
                 season_number=1,
@@ -2031,7 +2038,7 @@ class PlexWebhookTests(TestCase):
 
         # Episode should be recorded under the anime-typed season.
         episode = Episode.objects.get(
-            item__media_id="85987",
+            item__media_id="1668",
             item__season_number=1,
             item__episode_number=1,
         )
@@ -2043,14 +2050,15 @@ class PlexWebhookTests(TestCase):
         """When a show has both TV-typed and anime-typed Season Items (user tracked
         it via both pathways), a scrobble must not raise MultipleObjectsReturned and
         should land in the anime bucket since anime Items exist."""
+        # TVDB-first resolution → show tracked under correct show TMDB ID 1668.
         Item.objects.get_or_create(
-            media_id="85987",
+            media_id="1668",
             source="tmdb",
             media_type=MediaTypes.TV.value,
             defaults={"title": "Friends", "image": ""},
         )
         Item.objects.get_or_create(
-            media_id="85987",
+            media_id="1668",
             source="tmdb",
             media_type=MediaTypes.SEASON.value,
             season_number=1,
@@ -2058,7 +2066,7 @@ class PlexWebhookTests(TestCase):
             defaults={"title": "Friends", "image": ""},
         )
         Item.objects.get_or_create(
-            media_id="85987",
+            media_id="1668",
             source="tmdb",
             media_type=MediaTypes.SEASON.value,
             season_number=1,
@@ -2089,7 +2097,7 @@ class PlexWebhookTests(TestCase):
 
         # Anime-typed Season Items exist, so the scrobble lands in the anime bucket.
         episode = Episode.objects.get(
-            item__media_id="85987",
+            item__media_id="1668",
             item__season_number=1,
             item__episode_number=2,
         )
