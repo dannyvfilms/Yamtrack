@@ -1125,6 +1125,14 @@ class Episode(models.Model):
     def max_progress(self, value):
         self._max_progress_override = value
 
+    @property
+    def start_date(self):
+        return None
+
+    @property
+    def progressed_at(self):
+        return None
+
     def save(self, *args, **kwargs):
         """Save the episode instance."""
         super().save(*args, **kwargs)
