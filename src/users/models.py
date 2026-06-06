@@ -229,6 +229,15 @@ class MobileGridLayoutChoices(models.TextChoices):
     COMPACT = "compact", "Compact (3 columns)"
 
 
+class QuickSeasonUpdateChoices(models.TextChoices):
+    """Controls quick season update buttons and the next-episode pill on home cards."""
+
+    NONE = "none", "None"
+    SEASON_UPDATE = "season_update", "Quick Season Update buttons only"
+    NEXT_EPISODE = "next_episode", "Next Episode button only"
+    BOTH = "both", "Both"
+
+
 class MediaCardSubtitleDisplayChoices(models.TextChoices):
     """Choices for media card subtitle visibility."""
 
@@ -868,9 +877,11 @@ class User(AbstractUser):
         choices=MobileGridLayoutChoices.choices,
         help_text="Number of columns to show on mobile layouts",
     )
-    quick_season_update_mobile = models.BooleanField(
-        default=False,
-        help_text="Show the quick season update button on mobile episode lists",
+    quick_season_update_mobile = models.CharField(
+        max_length=20,
+        default=QuickSeasonUpdateChoices.NONE,
+        choices=QuickSeasonUpdateChoices.choices,
+        help_text="Controls quick season update buttons and next-episode pill on home screen cards",
     )
     show_planned_on_home = models.CharField(
         max_length=20,

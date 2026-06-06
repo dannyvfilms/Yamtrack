@@ -847,10 +847,15 @@
         <!-- Quick Season Updates -->
         <div class="p-3 bg-[#39404b] rounded-md mb-4">
           <div class="flex items-center justify-between mb-2">
-            <label class="text-gray-200 text-sm font-medium">Quick Season Updates</label>
-            <span class="text-gray-400 text-xs">Show the quick season update button on mobile home screens.</span>
+            <label class="text-gray-200 text-sm font-medium">Home Screen Card Buttons</label>
+            <span class="text-gray-400 text-xs">Quick season update buttons and/or the next episode pill on home screen cards.</span>
           </div>
-          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.quick_season_update_mobile|yesno:'enabled,disabled' }}', selectedLabel: '{{ user.quick_season_update_mobile|yesno:"Enabled - recommended for comfortable grid layout,Disabled - recommended for compact grid layout" }}' }">
+          {% with qsu=user.quick_season_update_mobile %}
+          <div class="relative" x-data="{
+            open: false,
+            selectedValue: '{{ qsu|default:'none' }}',
+            selectedLabel: '{% if qsu == 'season_update' %}Quick Season Update buttons only{% elif qsu == 'next_episode' %}Next Episode button only{% elif qsu == 'both' %}Both{% else %}None{% endif %}'
+          }">
             <button type="button"
                     @click="open = !open"
                     @click.outside="open = false"
@@ -878,18 +883,29 @@
                  x-transition:leave-end="transform opacity-0 scale-95"
                  class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
               <button type="button"
-                      @click="selectedValue = 'enabled'; selectedLabel = 'Enabled - recommended for comfortable grid layout'; open = false"
+                      @click="selectedValue = 'none'; selectedLabel = 'None'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                Enabled - recommended for comfortable grid layout
+                None
               </button>
               <button type="button"
-                      @click="selectedValue = 'disabled'; selectedLabel = 'Disabled - recommended for compact grid layout'; open = false"
+                      @click="selectedValue = 'season_update'; selectedLabel = 'Quick Season Update buttons only'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                Disabled - recommended for compact grid layout
+                Quick Season Update buttons only
+              </button>
+              <button type="button"
+                      @click="selectedValue = 'next_episode'; selectedLabel = 'Next Episode button only'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Next Episode button only
+              </button>
+              <button type="button"
+                      @click="selectedValue = 'both'; selectedLabel = 'Both'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Both
               </button>
             </div>
-            <input type="hidden" name="quick_season_update_mobile" x-bind:value="selectedValue === 'enabled' ? '1' : '0'">
+            <input type="hidden" name="quick_season_update_mobile" x-bind:value="selectedValue">
           </div>
+          {% endwith %}
         </div>
 
         <!-- Game Logging Style -->

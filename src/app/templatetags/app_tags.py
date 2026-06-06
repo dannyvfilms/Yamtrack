@@ -869,6 +869,72 @@ def media_url(media):
 
 
 @register.simple_tag
+def next_episode_url(item, media):
+    """Return the episode detail URL for the next unwatched episode.
+
+    Supports both Season cards (item.media_type == 'season') and TV/Anime show
+    cards (item.media_type in ['tv', 'anime']).  For show cards the in-progress
+    season is found via the already-prefetched seasons queryset.
+    """
+    is_dict = isinstance(item, dict)
+    actual_media_type = item["media_type"] if is_dict else getattr(item, "media_type", None)
+
+    # ── Season card ──────────────────────────────────────────────────────────
+    if actual_media_type == MediaTypes.SEASON.value:
+        season_number = item["season_number"] if is_dict else getattr(item, "season_number", None)
+        if season_number is None:
+            return ""
+        title = item["title"] if is_dict else getattr(item, "title", "")
+        media_id = item["media_id"] if is_dict else getattr(item, "media_id", None)
+        source = item["source"] if is_dict else getattr(item, "source", None)
+        if not media_id or not source:
+            return ""
+        slug_title = slug(title) or slug(str(media_id)) or "item"
+        library_media_type = (
+            item.get("library_media_type", "") if is_dict else getattr(item, "library_media_type", "")
+        )
+        is_anime = library_media_type == MediaTypes.ANIME.value
+        url_name = "anime_episode_details" if is_anime else "episode_details"
+        progress = getattr(media, "progress", None) or 0
+        next_ep = int(progress) + 1
+        return reverse(url_name, kwargs={
+            "source": source,
+            "media_id": media_id,
+            "title": slug_title,
+            "season_number": season_number,
+            "episode_number": next_ep,
+        })
+
+    # ── TV / Anime show card ─────────────────────────────────────────────────
+    if actual_media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        if not media or not hasattr(media, "seasons"):
+            return ""
+        # Seasons are already prefetched for TV home cards — no extra query
+        in_progress = [
+            s for s in media.seasons.all()
+            if getattr(s, "status", None) == Status.IN_PROGRESS.value
+            and getattr(getattr(s, "item", None), "season_number", 0) != 0
+        ]
+        if not in_progress:
+            return ""
+        season = min(in_progress, key=lambda s: s.item.season_number)
+        season_item = season.item
+        slug_title = slug(season_item.title) or slug(str(season_item.media_id)) or "item"
+        is_anime = actual_media_type == MediaTypes.ANIME.value
+        url_name = "anime_episode_details" if is_anime else "episode_details"
+        next_ep = int(getattr(season, "progress", 0) or 0) + 1
+        return reverse(url_name, kwargs={
+            "source": season_item.source,
+            "media_id": season_item.media_id,
+            "title": slug_title,
+            "season_number": season_item.season_number,
+            "episode_number": next_ep,
+        })
+
+    return ""
+
+
+@register.simple_tag
 def media_view_url(view_name, media):
     """Return the modal URL for both metadata and model object cases."""
     is_dict = isinstance(media, dict)

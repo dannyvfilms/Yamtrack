@@ -291,6 +291,19 @@ def get_enabled_home_media_types(user) -> list[str]:
     return list(user.get_enabled_media_types())
 
 
+def get_home_configurable_media_types(user) -> list[str]:
+    """Return media types available for Home screen configuration.
+
+    Always includes MediaTypes.SEASON even when the user has it disabled as a
+    library type, so season rows (which surface the next-episode pill) can be
+    added to the home screen regardless of sidebar settings.
+    """
+    types = list(user.get_enabled_media_types())
+    if MediaTypes.SEASON.value not in types:
+        types.append(MediaTypes.SEASON.value)
+    return types
+
+
 def get_allowed_sort_choices(media_type: str, row_type: str) -> list[dict]:
     """Return sort options for a home row."""
     sort_choices: list[tuple[str, str]] = [
@@ -903,7 +916,7 @@ def serialize_settings_sections(user) -> list[dict]:
         rows_by_media_type[row.media_type].append(row)
 
     sections = []
-    for media_type in get_enabled_home_media_types(user):
+    for media_type in get_home_configurable_media_types(user):
         media_rows = rows_by_media_type.get(media_type, [])
         sections.append(
             {
@@ -1164,7 +1177,7 @@ def save_home_screen_configuration(user, raw_payload: str) -> None:
     if not isinstance(parsed_payload, list):
         raise HomeScreenValidationError("Home Screen settings payload must be a list.")
 
-    allowed_media_types = set(get_enabled_home_media_types(user))
+    allowed_media_types = set(get_home_configurable_media_types(user))
     replacement_rows: list[HomeScreenRow] = []
     seen_recent_rows: set[str] = set()
 
@@ -1811,7 +1824,7 @@ def build_home_page_groups(
 ) -> list[dict]:
     """Build grouped home sections from persisted Home rows."""
     rows = ensure_home_screen_rows(user)
-    enabled_media_types = get_enabled_home_media_types(user)
+    enabled_media_types = get_home_configurable_media_types(user)
     rows_by_media_type: dict[str, list[HomeScreenRow]] = defaultdict(list)
     for row in rows:
         if row.enabled:

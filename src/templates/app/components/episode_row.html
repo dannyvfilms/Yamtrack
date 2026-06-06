@@ -1,6 +1,7 @@
 {% load app_tags %}
 {% load user_tags %}
-<div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
+<div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg"
+     x-show="!$store.epLayout || $store.epLayout !== 'list'">
   <div class="flex flex-col md:flex-row">
     <div x-data="{
            revealed: false,
@@ -266,4 +267,32 @@
       {% include "app/components/detail_episode_history_line.html" with episode=episode user=user history_oob=False only %}
     </div>
   </div>
+</div>
+
+{# Compact list view row — shown when episode layout toggle is set to list #}
+<div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#2a2f35] hover:bg-[#2f353c] transition-colors"
+     x-show="$store.epLayout === 'list'"
+     style="display:none">
+  {# Episode number #}
+  <span class="shrink-0 w-9 text-center text-[11px] font-mono text-gray-500 tabular-nums">
+    {% if episode.display_episode_number|default:episode.episode_number %}E{{ episode.display_episode_number|default:episode.episode_number }}{% endif %}
+  </span>
+
+  {# Title + metadata #}
+  <div class="flex-1 min-w-0">
+    {% if ep_detail_url %}<a href="{{ ep_detail_url }}" class="group/ep-row block">{% endif %}
+    <p class="text-sm font-medium truncate {% if ep_detail_url %}group-hover/ep-row:text-indigo-400 transition-colors{% endif %}">{{ episode.title }}</p>
+    <p class="text-xs text-gray-400 truncate mt-0.5">
+      {{ episode.air_date|user_date_format:user|default_if_none:"" }}{% if episode.runtime %} · {{ episode.runtime }}{% endif %}{% if not public_view|default:False and episode.history %}{% with wc=episode.history|watched_count %}{% if wc %} · {% if wc == 1 %}Watched once{% else %}Watched {{ wc }} times{% endif %}{% endif %}{% endwith %}{% endif %}
+    </p>
+    {% if ep_detail_url %}</a>{% endif %}
+  </div>
+
+  {# Track button #}
+  {% if not public_view|default:False and episode.actions_enabled %}
+    <div class="shrink-0" x-data="{ trackOpen: false }">
+      {% include "app/components/detail_episode_track_button.html" with episode=episode track_button_oob=False only %}
+      {% include "app/components/fill_track_episode.html" with request=request media=episode episode=episode episode_title=episode.title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
+    </div>
+  {% endif %}
 </div>

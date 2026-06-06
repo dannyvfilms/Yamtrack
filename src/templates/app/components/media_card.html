@@ -169,6 +169,27 @@
             {% endif %}
 
             {# Repeat chip removed from poster grid cards to reduce crowding. #}
+
+            {# Next-episode quick-link — shown when preference includes "next_episode" or "both" #}
+            {% if not recommend_mode and not public_view|default:False and user.is_authenticated %}
+              {% if user.quick_season_update_mobile == 'next_episode' or user.quick_season_update_mobile == 'both' %}
+                {% if resolved_media_type == MediaTypes.SEASON.value or resolved_media_type == MediaTypes.TV.value or resolved_media_type == MediaTypes.ANIME.value %}
+                  {% with ep_status=media.aggregated_status|default:media.status %}
+                    {% if ep_status == Status.IN_PROGRESS.value %}
+                      {% next_episode_url item media as next_ep_href %}
+                      {% if next_ep_href %}
+                        <a href="{{ next_ep_href }}"
+                           class="absolute top-2 right-2 z-20 bg-gray-900/90 hover:bg-indigo-600 text-white text-[11px] font-medium px-2 py-1 rounded-md flex items-center gap-0.5 shadow-md transition-colors"
+                           title="Jump to next episode">
+                          {% include "app/icons/chevron-right.svg" with classes="w-3 h-3" %}
+                          <span>Next ep</span>
+                        </a>
+                      {% endif %}
+                    {% endif %}
+                  {% endwith %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
           {% endif %}
 
           {% if not recommend_mode and not public_view|default:False %}

@@ -666,7 +666,11 @@ def preferences(request):
         anime_library_mode = request.POST.get("anime_library_mode")
         hide_completed_recommendations_raw = request.POST.get("hide_completed_recommendations")
         hide_zero_rating_raw = request.POST.get("hide_zero_rating")
-        quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
+        _qsu_raw = request.POST.get("quick_season_update_mobile", "none")
+        from users.models import QuickSeasonUpdateChoices
+        quick_season_update_mobile = (
+            _qsu_raw if _qsu_raw in QuickSeasonUpdateChoices.values else QuickSeasonUpdateChoices.NONE
+        )
         book_comic_manga_progress_percentage = request.POST.get("book_comic_manga_progress_percentage") == "1"
 
         duration_format = request.POST.get("duration_format")
