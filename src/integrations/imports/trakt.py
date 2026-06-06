@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 
 TRAKT_API_BASE_URL = "https://api.trakt.tv"
 BULK_PAGE_SIZE = 1000
+TRAKT_UNKNOWN_DATE = "1970-01-01T00:00:00.000Z"
+
+
+def _parse_watched_at(watched_at: str):
+    if watched_at == TRAKT_UNKNOWN_DATE:
+        return None
+    return parse_datetime(watched_at)
 
 
 def handle_oauth_callback(
@@ -460,17 +467,18 @@ class TraktImporter:
 
         item = self._get_or_create_item(MediaTypes.MOVIE.value, tmdb_id, metadata)
         watched_at = entry["watched_at"]
+        watched_at_dt = _parse_watched_at(watched_at)
 
         key = f"{tmdb_id}"
 
         movie_obj = app.models.Movie(
             item=item,
             user=self.user,
-            end_date=watched_at,
+            end_date=watched_at_dt,
             status=Status.COMPLETED.value,
             progress=1,
         )
-        movie_obj._history_date = parse_datetime(watched_at)
+        movie_obj._history_date = watched_at_dt
 
         self.media_instances[MediaTypes.MOVIE.value][key].append(movie_obj)
         self.bulk_media[MediaTypes.MOVIE.value].append(movie_obj)
@@ -495,7 +503,7 @@ class TraktImporter:
         season_number = entry["episode"]["season"]
         episode_number = entry["episode"]["number"]
         watched_at = entry["watched_at"]
-        watched_at_dt = parse_datetime(watched_at)
+        watched_at_dt = _parse_watched_at(watched_at)
         episode_watch_key = (tmdb_id, season_number, episode_number, watched_at_dt)
 
         if episode_watch_key in self.existing_episode_watch_keys:
@@ -619,7 +627,7 @@ class TraktImporter:
         episode_obj = app.models.Episode(
             item=episode_item,
             related_season=season_obj,
-            end_date=watched_at,
+            end_date=watched_at_dt,
         )
         episode_obj._history_date = watched_at_dt
         self.media_instances[MediaTypes.EPISODE.value][ep_key].append(episode_obj)
