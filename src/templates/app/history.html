@@ -424,6 +424,292 @@
   {% endif %}
   </div>
 </div>
+
+{# History filter FAB + modal #}
+<div x-data="{
+  open: false,
+  startDate: '',
+  endDate: '',
+  mediaType: '',
+  mediaTypeLabel: 'All types',
+  mediaTypeOpen: false,
+  historyMode: '',
+  historyModeLabel: 'Activity (watched)',
+  historyModeOpen: false,
+  selectedGenres: [],
+  genreOpen: false,
+  genreSearch: '',
+  genresLoading: false,
+  availableGenres: [],
+  genreDropdownStyle: {},
+  mediaTypeOptions: [
+    { value: '', label: 'All types' },
+    { value: 'tv', label: 'TV Show' },
+    { value: 'movie', label: 'Movie' },
+    { value: 'anime', label: 'Anime' },
+    { value: 'game', label: 'Game' },
+    { value: 'music', label: 'Music' },
+    { value: 'book', label: 'Book' },
+    { value: 'manga', label: 'Manga' },
+    { value: 'comic', label: 'Comic' },
+    { value: 'podcast', label: 'Podcast' },
+    { value: 'boardgame', label: 'Board Game' },
+  ],
+  get activeCount() {
+    return [this.startDate, this.endDate, this.mediaType, this.historyMode === 'release', this.selectedGenres.length > 0].filter(Boolean).length;
+  },
+  init() {
+    const p = new URLSearchParams(window.location.search);
+    this.startDate = p.get('start-date') || '';
+    this.endDate   = p.get('end-date') || '';
+    this.mediaType = p.get('media_type') || '';
+    this.historyMode = p.get('history_mode') || '';
+    const genreParam = p.get('genre') || '';
+    this.selectedGenres = genreParam ? genreParam.split(',').map(g => g.trim()).filter(Boolean) : [];
+    const mt = this.mediaTypeOptions.find(o => o.value === this.mediaType);
+    if (mt) this.mediaTypeLabel = mt.label;
+    if (this.historyMode === 'release') this.historyModeLabel = 'Release dates';
+  },
+  apply() {
+    const p = new URLSearchParams(window.location.search);
+    ['start-date', 'end-date', 'media_type', 'history_mode', 'genre', 'page'].forEach(k => p.delete(k));
+    if (this.startDate) p.set('start-date', this.startDate);
+    if (this.endDate)   p.set('end-date', this.endDate);
+    if (this.mediaType) p.set('media_type', this.mediaType);
+    if (this.historyMode && this.historyMode !== 'activity') p.set('history_mode', this.historyMode);
+    if (this.selectedGenres.length) p.set('genre', this.selectedGenres.join(','));
+    const qs = p.toString();
+    window.location.href = '{% url 'history' %}' + (qs ? '?' + qs : '');
+  },
+  clear() {
+    const p = new URLSearchParams(window.location.search);
+    ['start-date', 'end-date', 'media_type', 'history_mode', 'genre', 'page'].forEach(k => p.delete(k));
+    const qs = p.toString();
+    window.location.href = '{% url 'history' %}' + (qs ? '?' + qs : '');
+  },
+  openGenreDropdown() {
+    this.genreOpen = !this.genreOpen;
+    if (this.genreOpen) {
+      const rect = this.$refs.genreTrigger.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom - 12;
+      this.genreDropdownStyle = {
+        position: 'fixed',
+        top: (rect.bottom + 4) + 'px',
+        left: rect.left + 'px',
+        width: rect.width + 'px',
+        maxHeight: Math.min(340, Math.max(160, spaceBelow)) + 'px',
+      };
+      if (this.availableGenres.length === 0 && !this.genresLoading) {
+        this.loadGenres();
+      }
+    }
+  },
+  async loadGenres() {
+    this.genresLoading = true;
+    try {
+      const resp = await fetch('{% url 'history_genres' %}');
+      const data = await resp.json();
+      this.availableGenres = data.genres || [];
+    } catch (e) {
+      this.availableGenres = [];
+    }
+    this.genresLoading = false;
+  },
+  toggleGenre(g) {
+    const idx = this.selectedGenres.indexOf(g);
+    if (idx >= 0) {
+      this.selectedGenres.splice(idx, 1);
+    } else {
+      this.selectedGenres.push(g);
+    }
+  },
+  filteredAvailableGenres() {
+    const term = this.genreSearch.toLowerCase();
+    if (!term) return this.availableGenres;
+    return this.availableGenres.filter(g => g.toLowerCase().includes(term));
+  }
+}">
+  {# FAB button #}
+  <button @click="open = true"
+          class="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg flex items-center justify-center cursor-pointer transition-colors"
+          title="Filter history"
+          aria-label="Filter history">
+    {% include "app/icons/funnel.svg" with classes="w-5 h-5" %}
+    <span x-show="activeCount > 0"
+          x-text="activeCount"
+          x-cloak
+          class="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-xs flex items-center justify-center font-bold pointer-events-none">
+    </span>
+  </button>
+
+  {# Modal overlay #}
+  <div x-show="open"
+       x-cloak
+       @keydown.escape.window="open = false"
+       class="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
+    <div class="w-full sm:w-[420px] relative z-60"
+         @click.outside="open = false">
+      <div class="bg-[#2a2f35] rounded-t-2xl sm:rounded-xl p-6 overflow-y-auto modal-max-height">
+        {# Header #}
+        <div class="flex items-center justify-between mb-5">
+          <h2 class="text-lg font-semibold text-white">Filter History</h2>
+          <button @click="open = false"
+                  class="text-gray-400 hover:text-white transition-colors cursor-pointer">
+            {% include "app/icons/x.svg" with classes="w-5 h-5" %}
+          </button>
+        </div>
+
+        <div class="space-y-4">
+          {# Date range #}
+          <div class="space-y-2">
+            <label class="block text-sm font-medium text-gray-300">Date range</label>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">From</label>
+                <input type="date"
+                       x-model="startDate"
+                       class="w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-400 mb-1">To</label>
+                <input type="date"
+                       x-model="endDate"
+                       class="w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              </div>
+            </div>
+          </div>
+
+          {# Media type #}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">Media type</label>
+            <div class="relative" @click.outside="mediaTypeOpen = false">
+              <button type="button"
+                      @click="mediaTypeOpen = !mediaTypeOpen"
+                      class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                <span x-text="mediaTypeLabel"></span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <div x-show="mediaTypeOpen"
+                   x-transition:enter="transition ease-out duration-100"
+                   x-transition:enter-start="transform opacity-0 scale-95"
+                   x-transition:enter-end="transform opacity-100 scale-100"
+                   x-transition:leave="transition ease-in duration-75"
+                   x-transition:leave-start="transform opacity-100 scale-100"
+                   x-transition:leave-end="transform opacity-0 scale-95"
+                   class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                <template x-for="opt in mediaTypeOptions" :key="opt.value">
+                  <button type="button"
+                          @click="mediaType = opt.value; mediaTypeLabel = opt.label; mediaTypeOpen = false"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white"
+                          :class="mediaType === opt.value ? 'text-white bg-[#39404b]' : ''"
+                          x-text="opt.label">
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          {# History mode #}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">View mode</label>
+            <div class="relative" @click.outside="historyModeOpen = false">
+              <button type="button"
+                      @click="historyModeOpen = !historyModeOpen"
+                      class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                <span x-text="historyModeLabel"></span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+              </button>
+              <div x-show="historyModeOpen"
+                   x-transition:enter="transition ease-out duration-100"
+                   x-transition:enter-start="transform opacity-0 scale-95"
+                   x-transition:enter-end="transform opacity-100 scale-100"
+                   x-transition:leave="transition ease-in duration-75"
+                   x-transition:leave-start="transform opacity-100 scale-100"
+                   x-transition:leave-end="transform opacity-0 scale-95"
+                   class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                <button type="button"
+                        @click="historyMode = ''; historyModeLabel = 'Activity (watched)'; historyModeOpen = false"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white"
+                        :class="historyMode === '' ? 'text-white bg-[#39404b]' : ''">
+                  Activity (watched)
+                </button>
+                <button type="button"
+                        @click="historyMode = 'release'; historyModeLabel = 'Release dates'; historyModeOpen = false"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white"
+                        :class="historyMode === 'release' ? 'text-white bg-[#39404b]' : ''">
+                  Release dates
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {# Genre multi-select #}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-1">Genre</label>
+            <button type="button"
+                    x-ref="genreTrigger"
+                    @click="openGenreDropdown()"
+                    @keydown.escape.window="genreOpen = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer text-left"
+                    :class="selectedGenres.length ? 'text-gray-200' : 'text-gray-500'">
+              <span class="truncate" x-text="selectedGenres.length ? selectedGenres.join(', ') : 'All genres'"></span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400 shrink-0 ml-2"><path d="m6 9 6 6 6-6"></path></svg>
+            </button>
+            <div x-show="genreOpen"
+                 x-cloak
+                 :style="genreDropdownStyle"
+                 @click.outside="genreOpen = false"
+                 @resize.window="genreOpen = false"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="z-[70] flex flex-col bg-[#272c31] rounded-md shadow-lg border border-gray-600">
+              <div class="px-2 pt-2 pb-1 shrink-0">
+                <input type="text"
+                       x-model="genreSearch"
+                       placeholder="Filter genres…"
+                       class="w-full px-3 py-1.5 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              </div>
+              <div class="overflow-y-auto flex-1 py-1">
+                <template x-if="genresLoading">
+                  <div class="px-4 py-3 text-sm text-gray-400 text-center">Loading…</div>
+                </template>
+                <template x-if="!genresLoading && filteredAvailableGenres().length === 0">
+                  <div class="px-4 py-3 text-sm text-gray-400 text-center">No genres found</div>
+                </template>
+                <template x-for="g in filteredAvailableGenres()" :key="g">
+                  <button type="button"
+                          @click="toggleGenre(g)"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white cursor-pointer">
+                    <span class="flex-1 min-w-0 truncate" x-text="g"></span>
+                    <span x-show="selectedGenres.includes(g)" class="ml-2 shrink-0">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {# Action buttons #}
+        <div class="flex gap-3 mt-6">
+          <button @click="clear()"
+                  class="flex-1 px-4 py-2 rounded-md border border-gray-600 text-gray-300 hover:text-white hover:border-gray-400 text-sm transition-colors cursor-pointer">
+            Clear filters
+          </button>
+          <button @click="apply()"
+                  class="flex-1 px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors cursor-pointer">
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock content %}
 
 {% block js %}

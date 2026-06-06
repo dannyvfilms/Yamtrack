@@ -114,6 +114,7 @@ from app.history_views import (
     _filter_history_by_enabled_media_types,
     delete_history_record,
     history,
+    history_genres,
     history_modal,
 )
 from app.music_views import (

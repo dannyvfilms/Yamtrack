@@ -414,6 +414,30 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         if media_type_filter == MediaTypes.BOARDGAME.value:
             boardgames = boardgames.filter(item__media_id=target_media_id, item__source=target_source)
 
+    # Apply date range filter to games
+    if start_date:
+        games = games.filter(
+            models.Q(end_date__gte=start_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__gte=start_date))
+        )
+    if end_date:
+        games = games.filter(
+            models.Q(end_date__lte=end_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__lte=end_date))
+        )
+
+    # Apply date range filter to boardgames
+    if start_date:
+        boardgames = boardgames.filter(
+            models.Q(end_date__gte=start_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__gte=start_date))
+        )
+    if end_date:
+        boardgames = boardgames.filter(
+            models.Q(end_date__lte=end_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__lte=end_date))
+        )
+
     try:
         games_count = games.count()
     except Exception:
@@ -536,12 +560,18 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     # Helper function to check if entry matches genre filter by checking metadata.
     # Uses a cache to avoid repeated metadata lookups for the same media item.
     genre_filter = filters.get("genre")
-    genre_filter_lower = genre_filter.lower() if genre_filter else None
+    # Support comma-separated genres — match if item has ANY selected genre (OR logic)
+    genre_filters = (
+        [g.strip().lower() for g in genre_filter.split(",") if g.strip()]
+        if genre_filter
+        else []
+    )
+    genre_filter_lower = genre_filters[0] if len(genre_filters) == 1 else None
     genre_cache = {}  # Cache: (media_type, media_id) -> bool (matches genre or None if not checked)
 
     def matches_genre(media_entry, media_type):
         """Check if media entry matches genre filter by checking metadata."""
-        if not genre_filter:
+        if not genre_filters:
             return True
 
         # For TV episodes, use the parent TV show for caching
@@ -592,9 +622,9 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 if genres_raw:
                     genres = _coerce_genre_list(genres_raw)
 
-            # Check if any genre matches (case-insensitive)
-            genre_filter_lower = genre_filter.lower()
-            matches = any(str(genre).lower() == genre_filter_lower for genre in genres)
+            # Check if any item genre matches any selected genre (case-insensitive OR)
+            item_genre_set = {str(g).lower() for g in genres}
+            matches = bool(item_genre_set & set(genre_filters))
 
             # Cache the result
             if cache_key:
@@ -609,10 +639,11 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
 
     def matches_item_genre(item):
         """Check if an item has a genre match using stored genres only."""
-        if not genre_filter_lower:
+        if not genre_filters:
             return True
         genres = _resolve_genres(item)
-        return any(str(genre).lower() == genre_filter_lower for genre in genres)
+        item_genre_set = {str(g).lower() for g in genres}
+        return bool(item_genre_set & set(genre_filters))
 
     # Build a lookup of episode titles from stored items to avoid provider calls
     # Only if we're processing episodes
@@ -659,7 +690,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
 
         for episode in episodes:
             # Apply genre filter if specified
-            if genre_filter and not matches_genre(episode, MediaTypes.EPISODE.value):
+            if genre_filters and not matches_genre(episode, MediaTypes.EPISODE.value):
                 continue
             entry = _build_episode_entry(episode, episode_title_map)
             if entry:
@@ -670,7 +701,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     if process_all or has_person_filter or media_type_filter == MediaTypes.MOVIE.value:
         for movie in movies:
             # Apply genre filter if specified
-            if genre_filter and not matches_genre(movie, MediaTypes.MOVIE.value):
+            if genre_filters and not matches_genre(movie, MediaTypes.MOVIE.value):
                 continue
             entry = _build_movie_entry(movie)
             if not entry:
@@ -744,7 +775,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 item = getattr(reading_entry, "item", None)
                 if not item:
                     continue
-                if genre_filter and not matches_item_genre(item):
+                if genre_filters and not matches_item_genre(item):
                     continue
                 played_at_local = _localize_datetime(
                     reading_entry.end_date
@@ -858,7 +889,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             album = album_lookup.get(album_id)
 
             # Apply genre filter if specified - check album or artist genres
-            if genre_filter and album:
+            if genre_filters and album:
                 from app.statistics import _coerce_genre_list
                 # Check album genres first, then artist genres
                 album_genres = _coerce_genre_list(album.genres) if album.genres else []
@@ -867,8 +898,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                     artist_genres = _coerce_genre_list(album.artist.genres)
 
                 all_genres = album_genres + artist_genres
-                genre_filter_lower = genre_filter.lower()
-                genre_match = any(str(g).lower() == genre_filter_lower for g in all_genres)
+                all_genres_lower = {str(g).lower() for g in all_genres}
+                genre_match = bool(all_genres_lower & set(genre_filters))
                 if not genre_match:
                     continue
 
@@ -993,7 +1024,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 for game in games:
                     if not (game.start_date or game.end_date):
                         continue
-                    if genre_filter and not matches_item_genre(game.item):
+                    if genre_filters and not matches_item_genre(game.item):
                         continue
 
                     activity_dt = game.end_date or game.start_date or game.created_at
@@ -1033,7 +1064,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 for boardgame in boardgames:
                     if not (boardgame.start_date or boardgame.end_date):
                         continue
-                    if genre_filter and not matches_item_genre(boardgame.item):
+                    if genre_filters and not matches_item_genre(boardgame.item):
                         continue
 
                     activity_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
@@ -1081,7 +1112,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 for game in games:
                     if not (game.start_date or game.end_date):
                         continue
-                    if genre_filter and not matches_item_genre(game.item):
+                    if genre_filters and not matches_item_genre(game.item):
                         continue
 
                     total_minutes = game.progress or 0
@@ -1140,7 +1171,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 for boardgame in boardgames:
                     if not (boardgame.start_date or boardgame.end_date):
                         continue
-                    if genre_filter and not matches_item_genre(boardgame.item):
+                    if genre_filters and not matches_item_genre(boardgame.item):
                         continue
 
                     total_plays = boardgame.progress or 0

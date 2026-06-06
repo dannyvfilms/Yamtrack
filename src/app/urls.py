@@ -157,6 +157,7 @@ urlpatterns = [
         name="update_top_talent_sort",
     ),
     path("history", views.history, name="history"),
+    path("api/history-genres/", views.history_genres, name="history_genres"),
     path(
         "person/<source:source>/<str:person_id>/<slug:name>",
         views.person_detail,

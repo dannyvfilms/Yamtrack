@@ -1,4 +1,4 @@
-const CACHE_NAME = "yamtrack-v4";
+const CACHE_NAME = "yamtrack-v5";
 const urlsToCache = [
   "/static/css/main.css",
   "/static/favicon/android-chrome-192x192.png",

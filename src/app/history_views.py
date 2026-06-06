@@ -435,7 +435,7 @@ def _build_anniversary_history_days(user, month, day, logging_style=None):
     return history_days
 
 
-def _build_release_history_days(user, month=None, day=None, date_filters=None):
+def _build_release_history_days(user, month=None, day=None, date_filters=None, filters=None):
     active_types = list(getattr(user, "get_active_media_types", list)())
     if not active_types:
         active_types = list(MediaTypes.values)
@@ -445,6 +445,21 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None):
         for media_type in active_types
         if media_type not in (MediaTypes.EPISODE.value, MediaTypes.PODCAST.value)
     ]
+
+    media_type_filter = (filters or {}).get("media_type")
+    include_episodes = True
+    if media_type_filter:
+        if media_type_filter in (MediaTypes.TV.value, MediaTypes.SEASON.value, MediaTypes.EPISODE.value):
+            active_types = []
+            include_podcasts = False
+        elif media_type_filter == MediaTypes.PODCAST.value:
+            active_types = []
+            include_podcasts = True
+            include_episodes = False
+        else:
+            active_types = [mt for mt in active_types if mt == media_type_filter]
+            include_podcasts = False
+            include_episodes = False
 
     start_date = None
     end_date = None
@@ -492,57 +507,58 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None):
             }
             release_days[release_date].append(entry)
 
-    Episode = apps.get_model("app", "Episode")
-    episode_qs = (
-        Episode.objects.filter(
-            related_season__user=user,
-            item__release_datetime__isnull=False,
+    if include_episodes:
+        Episode = apps.get_model("app", "Episode")
+        episode_qs = (
+            Episode.objects.filter(
+                related_season__user=user,
+                item__release_datetime__isnull=False,
+            )
+            .select_related(
+                "item",
+                "related_season__item",
+                "related_season__related_tv__item",
+            )
         )
-        .select_related(
-            "item",
-            "related_season__item",
-            "related_season__related_tv__item",
-        )
-    )
-    if month and day:
-        episode_qs = episode_qs.annotate(
-            release_month=ExtractMonth("item__release_datetime"),
-            release_day=ExtractDay("item__release_datetime"),
-        ).filter(release_month=month, release_day=day)
-    elif start_date or end_date:
-        if start_date:
-            episode_qs = episode_qs.filter(item__release_datetime__date__gte=start_date)
-        if end_date:
-            episode_qs = episode_qs.filter(item__release_datetime__date__lte=end_date)
+        if month and day:
+            episode_qs = episode_qs.annotate(
+                release_month=ExtractMonth("item__release_datetime"),
+                release_day=ExtractDay("item__release_datetime"),
+            ).filter(release_month=month, release_day=day)
+        elif start_date or end_date:
+            if start_date:
+                episode_qs = episode_qs.filter(item__release_datetime__date__gte=start_date)
+            if end_date:
+                episode_qs = episode_qs.filter(item__release_datetime__date__lte=end_date)
 
-    for episode in episode_qs:
-        episode_item = getattr(episode, "item", None)
-        if not episode_item or episode_item.id in seen_item_ids:
-            continue
-        seen_item_ids.add(episode_item.id)
-        release_dt = getattr(episode_item, "release_datetime", None)
-        localized = stats._localize_datetime(release_dt) if release_dt else None
-        if not localized:
-            continue
-        release_date = localized.date()
-        season_item = getattr(episode.related_season, "item", None)
-        tv_item = getattr(getattr(episode.related_season, "related_tv", None), "item", None)
-        title = (
-            episode_item.title
-            or (season_item.title if season_item else None)
-            or (tv_item.title if tv_item else "")
-        )
-        display_title = history_cache._get_episode_display_title(episode)
-        entry = {
-            "item": episode_item,
-            "media_type": MediaTypes.EPISODE.value,
-            "title": title,
-            "display_title": display_title or title,
-            "poster": history_cache._get_episode_poster(episode),
-            "played_at_local": localized,
-            "entry_key": f"release-episode-{episode.id}-{release_date.isoformat()}",
-        }
-        release_days[release_date].append(entry)
+        for episode in episode_qs:
+            episode_item = getattr(episode, "item", None)
+            if not episode_item or episode_item.id in seen_item_ids:
+                continue
+            seen_item_ids.add(episode_item.id)
+            release_dt = getattr(episode_item, "release_datetime", None)
+            localized = stats._localize_datetime(release_dt) if release_dt else None
+            if not localized:
+                continue
+            release_date = localized.date()
+            season_item = getattr(episode.related_season, "item", None)
+            tv_item = getattr(getattr(episode.related_season, "related_tv", None), "item", None)
+            title = (
+                episode_item.title
+                or (season_item.title if season_item else None)
+                or (tv_item.title if tv_item else "")
+            )
+            display_title = history_cache._get_episode_display_title(episode)
+            entry = {
+                "item": episode_item,
+                "media_type": MediaTypes.EPISODE.value,
+                "title": title,
+                "display_title": display_title or title,
+                "poster": history_cache._get_episode_poster(episode),
+                "played_at_local": localized,
+                "entry_key": f"release-episode-{episode.id}-{release_date.isoformat()}",
+            }
+            release_days[release_date].append(entry)
 
     if include_podcasts:
         Podcast = apps.get_model("app", "Podcast")
@@ -732,9 +748,10 @@ def _cached_history_entry_matches_filters(entry, filters):
 
     genre_filter = filters.get("genre")
     if genre_filter:
+        genre_filters = {g.strip().lower() for g in genre_filter.split(",") if g.strip()}
         genres = entry.get("genres") or item.get("genres") or []
-        lowered_genres = {str(genre).lower() for genre in genres}
-        if genre_filter.lower() not in lowered_genres:
+        item_genre_set = {str(g).lower() for g in genres}
+        if not (item_genre_set & genre_filters):
             return False
 
     album_filter = filters.get("album")
@@ -791,6 +808,37 @@ def _filter_cached_history_days(history_days, filters):
         filtered_days.append(filtered_day)
 
     return filtered_days
+
+
+@require_GET
+def history_genres(request):
+    """Return sorted list of unique genres from the user's tracked items."""
+    from django.http import JsonResponse
+
+    from app.models import Book, BoardGame, Comic, Episode, Game, Manga, Movie, Music, Podcast
+
+    def _is_valid_genre(value) -> bool:
+        s = str(value).strip()
+        return bool(s) and not s.lstrip("-").isdigit()
+
+    genres: set[str] = set()
+    # Book, Comic, and Manga use Library of Congress subject headings in their genres
+    # field rather than real genre names, so exclude them from the genre list.
+    for ModelClass in [Movie, Game, Music, BoardGame, Podcast]:
+        for genres_list in ModelClass.objects.filter(user=request.user).values_list(
+            "item__genres", flat=True
+        ):
+            if genres_list:
+                genres.update(str(g).strip() for g in genres_list if _is_valid_genre(g))
+
+    for genres_list in Episode.objects.filter(
+        related_season__user=request.user
+    ).values_list("related_season__related_tv__item__genres", flat=True):
+        if genres_list:
+            genres.update(str(g).strip() for g in genres_list if _is_valid_genre(g))
+
+    genres.discard("")
+    return JsonResponse({"genres": sorted(genres, key=str.lower)})
 
 
 @require_GET
@@ -918,6 +966,7 @@ def history(request):
                     month=anniversary_month,
                     day=anniversary_day,
                     date_filters=date_filters,
+                    filters=filters,
                 )
                 history_refreshing = False
             elif anniversary_month and anniversary_day:
