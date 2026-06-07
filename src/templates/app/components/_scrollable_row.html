@@ -7,11 +7,17 @@
               card_width_class, grid_class, show_played_chip)
 
   Optional:
-    hx_url  — URL for HTMX load-more requests.
-              Defaults to the home endpoint with ?load_row=<row.row_id>.
-              Override for non-home contexts (recommendations, cast, etc.)
+    hx_url        — URL for HTMX load-more requests.
+                    Defaults to the home endpoint with ?load_row=<row.row_id>.
+                    Override for non-home contexts (recommendations, cast, etc.)
+    grid_template — Template path for rendering row items.
+                    Defaults to "app/components/home_grid.html".
+                    Override with "app/components/person_grid.html" for person cards.
+    hide_heading  — Set to True to suppress the built-in heading (use when the
+                    caller renders its own heading outside the component).
 {% endcomment %}
 <div>
+  {% if not hide_heading %}
   <div class="mb-2 flex items-start justify-between gap-3">
     <div class="min-w-0 flex-1">
       {% if row.summary_inline %}
@@ -57,6 +63,7 @@
       {% endif %}
     </div>
   </div>
+  {% endif %}
   <div id="media-grid-row-{{ row.row_id }}"
        class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden"
        data-home-row="true"
@@ -71,7 +78,7 @@
        hx-trigger="home-row-load-more"
        hx-target="this"
        hx-swap="beforeend">
-    {% include "app/components/home_grid.html" with media_list=row %}
+    {% include grid_template|default:"app/components/home_grid.html" with media_list=row %}
     <div data-home-row-sentinel="true"
          aria-hidden="true"
          class="shrink-0 w-px self-stretch opacity-0 pointer-events-none"></div>

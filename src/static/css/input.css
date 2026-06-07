@@ -464,6 +464,20 @@
   overflow: visible;
 }
 
+.home-row-scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  /* Keep hover rings inside the scrollport so card borders are not clipped. */
+  margin-left: -0.25rem;
+  margin-top: -0.25rem;
+  padding-left: 0.25rem;
+  padding-top: 0.25rem;
+}
+
+.home-row-scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 @media (max-width: 768px) {
   .media-card {
     background-color: transparent !important;

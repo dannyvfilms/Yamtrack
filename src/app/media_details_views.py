@@ -123,6 +123,47 @@ def _get_tv_runtime_display_fallback(detail_item, media_metadata):
     return None
 
 
+def _build_detail_person_rows(media_metadata):
+    """Build cast_row, crew_row, and recommendations_row dicts for _scrollable_row.html."""
+    if not isinstance(media_metadata, dict):
+        return {}
+    cast = media_metadata.get("cast") or []
+    crew = media_metadata.get("crew") or []
+    recommendations = (media_metadata.get("related") or {}).get("recommendations") or []
+    return {
+        "cast_row": {
+            "row_id": "cast",
+            "title": "Cast",
+            "items": cast[:20],
+            "total": len(cast),
+            "loaded_count": min(20, len(cast)),
+            "card_width_class": "w-32",
+            "summary_inline": None,
+            "show_played_chip": False,
+        },
+        "crew_row": {
+            "row_id": "crew",
+            "title": "Crew",
+            "items": crew[:20],
+            "total": len(crew),
+            "loaded_count": min(20, len(crew)),
+            "card_width_class": "w-32",
+            "summary_inline": None,
+            "show_played_chip": False,
+        },
+        "recommendations_row": {
+            "row_id": "recommendations",
+            "title": "Recommendations",
+            "items": recommendations,
+            "total": len(recommendations),
+            "loaded_count": len(recommendations),
+            "card_width_class": "w-36",
+            "summary_inline": None,
+            "show_played_chip": False,
+        },
+    }
+
+
 @login_not_required
 @require_GET
 def media_details(
@@ -1681,7 +1722,7 @@ def media_details(
         watch_providers = (
             tmdb.filter_providers(
                 watch_provider_payload,
-                request.user.watch_provider_region,
+                request.user.watch_provider_region if request.user.is_authenticated else None,
             )
             if watch_provider_payload is not None
             else None
@@ -1792,7 +1833,7 @@ def media_details(
         "fetching_collection_data": fetching_collection_data if not public_view else False,
         "item_id_for_polling": item_id_for_polling if not public_view else None,
         "watch_providers": watch_providers,
-        "watch_provider_region": request.user.watch_provider_region,
+        "watch_provider_region": request.user.watch_provider_region if request.user.is_authenticated else None,
         "detail_link_sections": _build_detail_link_sections(
             media_metadata,
             media_type,
@@ -1851,6 +1892,7 @@ def media_details(
         "detail_secondary_fragment_url": detail_secondary_fragment_url,
         "defer_detail_secondary": defer_detail_secondary,
         "render_secondary_only": render_secondary_only,
+        **_build_detail_person_rows(media_metadata),
     }
     logger.info(
         "detail_render_complete path=%s phase=%s media_type=%s source=%s duration_ms=%.2f",

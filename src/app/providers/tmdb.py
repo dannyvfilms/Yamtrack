@@ -457,6 +457,20 @@ def movie(media_id):
         collection_info = response.get("belongs_to_collection") or {}
         provider_certification = get_movie_certification(response.get("release_dates", {}))
         cast = response.get("credits", {}).get("cast", [])
+        movie_details = {
+            "format": "Movie",
+            "release_date": get_start_date(response.get("release_date")),
+            "status": response.get("status"),
+            "runtime": get_readable_duration(response.get("runtime")),
+            "studios": get_companies(response.get("production_companies", [])),
+            "country": get_country(response.get("production_countries", [])),
+            "languages": get_languages(response.get("spoken_languages", [])),
+            "certification": provider_certification,
+        }
+        if budget := format_currency(response.get("budget")):
+            movie_details["budget"] = budget
+        if revenue := format_currency(response.get("revenue")):
+            movie_details["revenue"] = revenue
         data = {
             "media_id": media_id,
             "source": Sources.TMDB.value,
@@ -472,16 +486,7 @@ def movie(media_id):
             "provider_popularity": response.get("popularity"),
             "provider_rating": get_score(response.get("vote_average")),
             "provider_rating_count": response.get("vote_count"),
-            "details": {
-                "format": "Movie",
-                "release_date": get_start_date(response.get("release_date")),
-                "status": response.get("status"),
-                "runtime": get_readable_duration(response.get("runtime")),
-                "studios": get_companies(response.get("production_companies", [])),
-                "country": get_country(response.get("production_countries", [])),
-                "languages": get_languages(response.get("spoken_languages", [])),
-                "certification": provider_certification,
-            },
+            "details": movie_details,
             "cast": get_cast_credits(response.get("credits", {})),
             "crew": get_crew_credits(response.get("credits", {})),
             "studios_full": get_companies_full(response.get("production_companies")),
@@ -1286,6 +1291,13 @@ def get_synopsis(text):
     return text
 
 
+def format_currency(value):
+    """Return a formatted USD string for a TMDB budget/revenue value, or None if zero/missing."""
+    if not value:
+        return None
+    return f"${int(value):,}"
+
+
 def get_readable_duration(duration):
     """Convert duration in minutes to a readable format."""
     # if unknown movie runtime, value from response is 0
@@ -1421,11 +1433,14 @@ def get_cast_credits(credits_data, is_aggregate=False):
 
     for cast in cast_list:
         role_value = cast.get("character", "")
+        episode_count = None
         if is_aggregate:
             roles = cast.get("roles", []) or []
             if roles:
                 top_role = max(roles, key=lambda role: role.get("episode_count") or 0)
                 role_value = top_role.get("character") or role_value
+            total_eps = sum(r.get("episode_count") or 0 for r in roles)
+            episode_count = total_eps if total_eps > 0 else None
 
         cast_entries.append(
             {
@@ -1437,6 +1452,7 @@ def get_cast_credits(credits_data, is_aggregate=False):
                 "department": cast.get("known_for_department", "Acting"),
                 "role": role_value or "",
                 "order": cast.get("order"),
+                "episode_count": episode_count,
             },
         )
 
@@ -1507,8 +1523,18 @@ def get_crew_credits(credits_data, is_aggregate=False):
             },
         )
 
+    _CREW_PRIORITY = {"creator": 0, "director": 1, "screenplay": 2, "writer": 3, "showrunner": 4}
+
+    def _crew_priority(entry):
+        role_lower = (entry.get("role") or "").lower()
+        for keyword, rank in _CREW_PRIORITY.items():
+            if keyword in role_lower:
+                return rank
+        return 99
+
     crew_entries.sort(
         key=lambda row: (
+            _crew_priority(row),
             row.get("department", "").lower(),
             row.get("order") is None,
             row.get("order") if row.get("order") is not None else 999999,
