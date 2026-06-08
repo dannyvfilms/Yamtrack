@@ -1097,6 +1097,11 @@ def prefetch_album_covers(artist: Artist, limit: int | None = 20) -> int:
                 except Exception as e:
                     logger.debug("Failed to prefetch cover from iTunes for %s: %s", album.title, e)
 
+        # Both sources failed — mark as confirmed-missing so polling stops
+        if not album.image:
+            album.image = settings.IMG_NONE
+            album.save(update_fields=["image"])
+
     return updated
 
 
