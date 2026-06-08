@@ -9,7 +9,11 @@ from django.test import TestCase
 
 from app.models import (
     Anime,
+    Item,
     Manga,
+    MediaTypes,
+    Movie,
+    Sources,
     Status,
 )
 from integrations.imports import (
@@ -87,3 +91,45 @@ class ImportMAL(TestCase):
             self.user,
             "new",
         )
+
+    @patch("app.models.media.Media.process_status")
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data")
+    @patch("requests.Session.get")
+    def test_overwrite_syncs_to_existing_movie_entry(
+        self, mock_request, mock_mapping, _mock_ps
+    ):
+        """MAL overwrite import also updates a corresponding Movie entry."""
+        # MAL ID 32253 ("Ama Gli Animali", completed, score=7) maps to TMDB movie 99999
+        mock_mapping.return_value = {"tmdb_movie:99999": {"mal:32253": {}}}
+
+        movie_item = Item.objects.create(
+            media_id="99999",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Ama Gli Animali",
+            image="http://example.com/img.jpg",
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            progress=1,
+            status=Status.COMPLETED.value,
+            score=5,  # stale score — should be overwritten
+        )
+
+        with Path(mock_path / "import_mal_anime.json").open() as file:
+            anime_response = json.load(file)
+        with Path(mock_path / "import_mal_manga.json").open() as file:
+            manga_response = json.load(file)
+
+        anime_mock = MagicMock()
+        anime_mock.json.return_value = anime_response
+        manga_mock = MagicMock()
+        manga_mock.json.return_value = manga_response
+        mock_request.side_effect = [anime_mock, manga_mock]
+
+        mal.importer("bloodthirstiness", self.user, "overwrite")
+
+        movie = Movie.objects.get(item=movie_item, user=self.user)
+        self.assertEqual(int(movie.score), 7)  # updated from MAL (was 5)
+        self.assertEqual(movie.status, Status.IN_PROGRESS.value)  # is_rewatching=True

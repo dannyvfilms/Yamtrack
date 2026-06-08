@@ -12,6 +12,7 @@ import app
 from app.models import MediaTypes, Sources, Status
 from integrations.imports import helpers
 from integrations.imports.helpers import MediaImportError, MediaImportUnexpectedError
+from integrations.webhooks import anime_mappings
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +209,67 @@ class MyAnimeListImporter:
         )
         instance._history_date = updated_at
         self.bulk_media[media_type].append(instance)
+
+        self._sync_to_movie_entry(
+            content["node"]["id"],
+            media_type,
+            list_status,
+            status,
+            updated_at,
+        )
+
+    def _sync_to_movie_entry(self, mal_id, media_type, list_status, status, updated_at):
+        """If this MAL anime maps to a TMDB movie, sync data to that Movie entry."""
+        if media_type != MediaTypes.ANIME.value:
+            return
+        # Fast path: skip if the user has no Movie entries to sync to.
+        if not self.existing_media[MediaTypes.MOVIE.value]:
+            return
+
+        mapping_data = anime_mappings.fetch_mapping_data()
+        tmdb_movie_id = anime_mappings.get_tmdb_movie_id_from_mal_id(
+            mapping_data, str(mal_id)
+        )
+        if not tmdb_movie_id:
+            return
+
+        tmdb_movie_id_str = str(tmdb_movie_id)
+        source = Sources.TMDB.value
+
+        if tmdb_movie_id_str not in self.existing_media[MediaTypes.MOVIE.value][source]:
+            return
+
+        if not helpers.should_process_media(
+            self.existing_media,
+            self.to_delete,
+            MediaTypes.MOVIE.value,
+            source,
+            tmdb_movie_id_str,
+            self.mode,
+        ):
+            return
+
+        movie_media = self.existing_media[MediaTypes.MOVIE.value][source]
+        movie_item = movie_media[tmdb_movie_id_str].item
+        movie_progress = 1 if status == Status.COMPLETED.value else 0
+
+        movie_instance = app.models.Movie(
+            item=movie_item,
+            user=self.user,
+            score=list_status["score"],
+            progress=movie_progress,
+            status=status,
+            start_date=self._parse_mal_date(list_status.get("start_date")),
+            end_date=self._parse_mal_date(list_status.get("finish_date")),
+            notes=list_status["comments"],
+        )
+        movie_instance._history_date = updated_at
+        self.bulk_media[MediaTypes.MOVIE.value].append(movie_instance)
+        logger.info(
+            "Synced MAL anime %s to Movie entry (TMDB ID: %s)",
+            mal_id,
+            tmdb_movie_id_str,
+        )
 
     def _parse_mal_date(self, date_str):
         """Parse MAL date string (YYYY-MM-YY) into datetime object."""
