@@ -549,3 +549,153 @@ class TestPlexImportScenarios(TestCase):
 
         self.assertEqual(result["id"], tmdb_id)
         # Should not raise exception
+
+
+class TestPlexMultiServerImport(TestCase):
+    """Tests for multi-server / shared-library import resilience."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="multiserveruser")
+        self.account = PlexAccount.objects.create(
+            user=self.user,
+            plex_token="personal-token",
+            plex_username="multiserveruser",
+            plex_account_id="9999",
+        )
+        self.user.plex_usernames = "multiserveruser"
+        self.user.save()
+
+    # ------------------------------------------------------------------
+    # Test 1: section access_token is used instead of the personal token
+    # ------------------------------------------------------------------
+    @patch("integrations.imports.plex.plex_api.fetch_section_all_items")
+    @patch("integrations.imports.plex.plex_api.fetch_metadata")
+    @patch("integrations.imports.plex.plex_api.list_users")
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    @patch("integrations.imports.plex.plex_api.list_sections")
+    @patch("integrations.imports.plex.plex_api.fetch_account")
+    def test_friend_server_section_uses_server_access_token(
+        self,
+        mock_fetch_account,
+        mock_list_sections,
+        mock_list_resources,
+        mock_fetch_history,
+        mock_list_users,
+        mock_fetch_metadata,
+        mock_fetch_section_items,
+    ):
+        """fetch_history must be called with the section's access_token, not the personal token."""
+        mock_fetch_account.return_value = {"id": "9999"}
+        mock_list_users.return_value = []
+        mock_fetch_metadata.return_value = None
+        mock_fetch_section_items.return_value = ([], 0)
+
+        # Section from a friend's server carries a server-specific access_token
+        friend_token = "friend-server-token"
+        mock_list_sections.return_value = [
+            {
+                "id": "5",
+                "machine_identifier": "friend-machine",
+                "title": "Friend Movies",
+                "type": "movie",
+                "access_token": friend_token,
+                "uri": "http://friend-plex",
+            }
+        ]
+        mock_list_resources.return_value = [
+            {
+                "machine_identifier": "friend-machine",
+                "access_token": friend_token,
+                "connections": [{"uri": "http://friend-plex"}],
+            }
+        ]
+        mock_fetch_history.return_value = ([], 0)
+
+        plex.importer("friend-machine::5", self.user, "new")
+
+        # The token passed to fetch_history must be the friend-server token
+        calls = mock_fetch_history.call_args_list
+        self.assertTrue(len(calls) >= 1, "fetch_history should have been called")
+        for call in calls:
+            token_used = call[0][0]
+            self.assertEqual(
+                token_used,
+                friend_token,
+                f"Expected friend-server token, got '{token_used}'",
+            )
+
+    # ------------------------------------------------------------------
+    # Test 2: auth failure on one section becomes a warning, not a crash
+    # ------------------------------------------------------------------
+    @patch("integrations.imports.plex.plex_api.fetch_section_all_items")
+    @patch("integrations.imports.plex.plex_api.fetch_metadata")
+    @patch("integrations.imports.plex.plex_api.list_users")
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    @patch("integrations.imports.plex.plex_api.list_sections")
+    @patch("integrations.imports.plex.plex_api.fetch_account")
+    def test_section_auth_failure_becomes_warning_not_exception(
+        self,
+        mock_fetch_account,
+        mock_list_sections,
+        mock_list_resources,
+        mock_fetch_history,
+        mock_list_users,
+        mock_fetch_metadata,
+        mock_fetch_section_items,
+    ):
+        """A PlexAuthError from a single section must not abort the whole import."""
+        from integrations.plex import PlexAuthError
+
+        mock_fetch_account.return_value = {"id": "9999"}
+        mock_list_users.return_value = []
+        mock_fetch_metadata.return_value = None
+        mock_fetch_section_items.return_value = ([], 0)
+
+        mock_list_sections.return_value = [
+            {
+                "id": "1",
+                "machine_identifier": "my-machine",
+                "title": "My Movies",
+                "type": "movie",
+                "access_token": "my-token",
+                "server_name": "My Server",
+                "uri": "http://my-plex",
+            },
+            {
+                "id": "2",
+                "machine_identifier": "friend-machine",
+                "title": "Friend TV",
+                "type": "show",
+                "access_token": "bad-friend-token",
+                "server_name": "Friend Server",
+                "uri": "http://friend-plex",
+            },
+        ]
+        mock_list_resources.return_value = [
+            {
+                "machine_identifier": "my-machine",
+                "access_token": "my-token",
+                "connections": [{"uri": "http://my-plex"}],
+            },
+            {
+                "machine_identifier": "friend-machine",
+                "access_token": "bad-friend-token",
+                "connections": [{"uri": "http://friend-plex"}],
+            },
+        ]
+
+        def history_side_effect(token, uri, *args, **kwargs):
+            if "friend" in uri:
+                raise PlexAuthError("token rejected by friend server")
+            return ([], 0)
+
+        mock_fetch_history.side_effect = history_side_effect
+
+        # Should not raise — auth failure on one section must become a warning
+        counts, warnings = plex.importer("all", self.user, "new")
+
+        self.assertIn("Friend TV", warnings)
+        self.assertIn("Friend Server", warnings)
