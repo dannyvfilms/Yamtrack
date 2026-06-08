@@ -946,6 +946,7 @@ def serialize_settings_sections(user) -> list[dict]:
                         "direction": row.direction,
                         "filters": _normalized_filter_payload(row.filters, media_type),
                         "title": row_title(row, user),
+                        "custom_title": row.title or "",
                         "summary": row_summary(row, user),
                     }
                     for row in media_rows
@@ -957,6 +958,9 @@ def serialize_settings_sections(user) -> list[dict]:
 
 def row_title(row: HomeScreenRow, user) -> str:
     """Return the display title for a configured row."""
+    custom_title = (row.title or "").strip()
+    if custom_title:
+        return custom_title
     if row.row_type == HomeScreenRowTypeChoices.CUSTOM_LIST:
         if row.custom_list_id and row.custom_list:
             return row.custom_list.name
@@ -998,6 +1002,8 @@ def home_row_inline_summary(row: HomeScreenRow, user) -> str | None:
 def home_row_header_title_parts(row: HomeScreenRow, user) -> tuple[str, str | None]:
     """Return the main title and optional filter suffix for the Home row header."""
     title = row_title(row, user)
+    if (row.title or "").strip():
+        return title, None
     if row.row_type != HomeScreenRowTypeChoices.LIBRARY_QUERY:
         return title, None
 
@@ -1101,11 +1107,14 @@ def _row_payload_to_model(user, media_type: str, row_payload: dict, position: in
         if direction not in DirectionChoices.values:
             raise HomeScreenValidationError(f"Unsupported direction for {media_type}.")
 
+    custom_title = str(row_payload.get("custom_title") or "").strip()[:100]
+
     return HomeScreenRow(
         user=user,
         media_type=media_type,
         position=position,
         enabled=enabled,
+        title=custom_title,
         row_type=row_type,
         custom_list=custom_list,
         sort_by=sort_by,
@@ -1876,6 +1885,9 @@ def build_home_page_groups(
                 {
                     "media_type": media_type,
                     "label": _media_type_group_label(media_type),
+                    "icon_svg": str(
+                        app_tags.icon(media_type, False, "w-6 h-6 text-gray-300"),
+                    ),
                     "rows": row_sections,
                 },
             )

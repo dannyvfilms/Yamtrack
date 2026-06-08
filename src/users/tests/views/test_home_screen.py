@@ -955,6 +955,90 @@ class HomeScreenViewTests(TestCase):
         self.assertEqual(rows[1].sort_by, "date_added")
         self.assertEqual(rows[2].sort_by, HomeSortChoices.RECENT)
 
+    def test_home_screen_post_persists_custom_title_and_headers_toggle(self):
+        self._set_enabled_media_types(MediaTypes.MOVIE.value)
+
+        payload = [
+            {
+                "media_type": MediaTypes.MOVIE.value,
+                "rows": [
+                    {
+                        "enabled": True,
+                        "custom_title": "  Rewatch Soon  ",
+                        "row_type": HomeScreenRowTypeChoices.LIBRARY_QUERY,
+                        "sort_by": "title",
+                        "direction": "asc",
+                        "filters": {"status": Status.PLANNING.value},
+                    },
+                ],
+            },
+        ]
+
+        response = self.client.post(
+            reverse("home_screen"),
+            {
+                "home_screen_sections": json.dumps(payload),
+                "show_media_type_headers": "1",
+            },
+        )
+
+        self.assertRedirects(response, reverse("home_screen"))
+
+        row = HomeScreenRow.objects.get(
+            user=self.user,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        # Stored trimmed; display title prefers the custom name.
+        self.assertEqual(row.title, "Rewatch Soon")
+        self.assertEqual(home_screen.row_title(row, self.user), "Rewatch Soon")
+        title_main, title_detail = home_screen.home_row_header_title_parts(
+            row,
+            self.user,
+        )
+        self.assertEqual(title_main, "Rewatch Soon")
+        self.assertIsNone(title_detail)
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.home_show_media_type_headers)
+
+    def test_home_screen_post_without_headers_checkbox_clears_toggle(self):
+        self._set_enabled_media_types(MediaTypes.MOVIE.value)
+        self.user.home_show_media_type_headers = True
+        self.user.save(update_fields=["home_show_media_type_headers"])
+
+        payload = [{"media_type": MediaTypes.MOVIE.value, "rows": []}]
+        self.client.post(
+            reverse("home_screen"),
+            {"home_screen_sections": json.dumps(payload)},
+        )
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.home_show_media_type_headers)
+
+    def test_serialize_sections_includes_custom_title(self):
+        self._set_enabled_media_types(MediaTypes.MOVIE.value)
+        HomeScreenRow.objects.create(
+            user=self.user,
+            media_type=MediaTypes.MOVIE.value,
+            position=0,
+            title="My Movies",
+            row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+            sort_by="title",
+            direction=DirectionChoices.ASC,
+            filters={"status": Status.IN_PROGRESS.value},
+        )
+
+        response = self.client.get(reverse("home_screen"))
+        sections = json.loads(response.context["home_screen_sections_json"])
+        movie_section = next(
+            section
+            for section in sections
+            if section["media_type"] == MediaTypes.MOVIE.value
+        )
+        first_row = movie_section["rows"][0]
+        self.assertEqual(first_row["custom_title"], "My Movies")
+        self.assertEqual(first_row["title"], "My Movies")
+
     def test_home_screen_row_direction_toggle_persists_to_settings(self):
         self._set_enabled_media_types(MediaTypes.SEASON.value)
 

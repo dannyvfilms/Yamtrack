@@ -889,6 +889,10 @@ class User(AbstractUser):
         choices=PlannedHomeDisplayChoices.choices,
         help_text="Show planned items on the home screen alongside in-progress items",
     )
+    home_show_media_type_headers = models.BooleanField(
+        default=False,
+        help_text="Show a media-type header (icon + name) above each group of home screen rows",
+    )
     auto_pause_in_progress_enabled = models.BooleanField(
         default=False,
         help_text="Automatically pause stale in-progress items",
@@ -1754,6 +1758,7 @@ class HomeScreenRow(models.Model):
     )
     position = models.PositiveIntegerField(default=0)
     enabled = models.BooleanField(default=True)
+    title = models.CharField(max_length=100, blank=True, default="")
     row_type = models.CharField(
         max_length=32,
         choices=HomeScreenRowTypeChoices.choices,

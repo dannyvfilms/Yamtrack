@@ -142,6 +142,57 @@ class HomeViewTests(TestCase):
         self.assertNotContains(response, '<h2 class="text-2xl font-semibold">', html=False)
         self.assertNotContains(response, "Load All")
 
+    def test_home_groups_include_label_and_icon(self):
+        """Each home group exposes a media-type label and icon for headers."""
+        response = self.client.get(reverse("home"))
+        groups = response.context["home_groups"]
+        self.assertTrue(groups)
+        for group in groups:
+            self.assertTrue(group.get("label"))
+            self.assertIn("<svg", group.get("icon_svg", ""))
+
+    def test_home_media_type_headers_hidden_by_default(self):
+        """Media-type headers are not rendered unless the toggle is enabled."""
+        response = self.client.get(reverse("home"))
+        self.assertNotContains(
+            response,
+            '<h2 class="text-3xl font-semibold text-gray-100">',
+            html=False,
+        )
+
+    def test_home_media_type_headers_shown_when_enabled(self):
+        """Enabling the toggle renders an icon + label header per group."""
+        self.user.home_show_media_type_headers = True
+        self.user.save(update_fields=["home_show_media_type_headers"])
+
+        response = self.client.get(reverse("home"))
+        self.assertContains(
+            response,
+            '<h2 class="text-3xl font-semibold text-gray-100">',
+            html=False,
+        )
+        anime_group = self._get_group(response, MediaTypes.ANIME.value)
+        self.assertIsNotNone(anime_group)
+        self.assertContains(response, anime_group["label"], html=False)
+
+    def test_home_row_uses_custom_title(self):
+        """A custom row title overrides the auto-derived title on home."""
+        self.client.get(reverse("home"))  # seed default rows
+        anime_row = HomeScreenRow.objects.filter(
+            user=self.user,
+            media_type=MediaTypes.ANIME.value,
+            row_type="library_query",
+        ).first()
+        anime_row.title = "My Anime Queue"
+        anime_row.save(update_fields=["title"])
+
+        response = self.client.get(reverse("home"))
+        row = self._get_first_row(response, MediaTypes.ANIME.value)
+        self.assertEqual(row["title"], "My Anime Queue")
+        self.assertEqual(row["title_main"], "My Anime Queue")
+        self.assertIsNone(row["title_detail"])
+        self.assertContains(response, "My Anime Queue", html=False)
+
     def test_home_view_planning_rows_show_full_release_date_subtitle(self):
         """Planning rows should show the full release date instead of only the year."""
         self.user.date_format = DateFormatChoices.ISO_8601
