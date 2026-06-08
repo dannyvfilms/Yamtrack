@@ -1005,6 +1005,7 @@ def prefetch_artist_covers(request, artist_id):
             "artist": artist,
             "missing_cover_count": missing_cover_count,
             "poll_for_covers": poll_for_covers,
+            "user": request.user,
         },
     )
 

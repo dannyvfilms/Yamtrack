@@ -309,7 +309,7 @@
     <section class="mb-8">
       <h2 class="text-xl font-bold mb-4">Discography</h2>
       {% if discography_groups %}
-        {% include "app/components/artist_discography_container.html" with discography_groups=discography_groups artist=artist missing_cover_count=missing_cover_count poll_for_covers=poll_for_covers only %}
+        {% include "app/components/artist_discography_container.html" with discography_groups=discography_groups artist=artist missing_cover_count=missing_cover_count poll_for_covers=poll_for_covers user=user only %}
       {% else %}
         <div class="bg-[#2a2f35] p-6 rounded-lg text-center">
           <p class="text-gray-400">
