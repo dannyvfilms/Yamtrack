@@ -6,11 +6,13 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
 
 from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from app.helpers import is_caught_up_media
@@ -23,6 +25,7 @@ from users.models import (
     HomeScreenRow,
     HomeScreenRowTypeChoices,
     HomeSortChoices,
+    ListDetailSortChoices,
     MediaSortChoices,
 )
 
@@ -1834,6 +1837,50 @@ def _recently_unrated_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
     return sort_home_entries(entries, row.sort_by, row.direction)
 
 
+# Filter values that are defaults/empty and not worth putting in the link.
+_HOME_LINK_SKIP_FILTER_VALUES = frozenset({"", "all", "All", "ALL", None})
+
+
+def home_row_destination_url(row: HomeScreenRow, user) -> str:
+    """Return the library/list URL a home row's title should link to.
+
+    Library-query rows open the media list pre-sorted/filtered to match the row;
+    custom-list rows open the list itself. Sort, direction, layout and filters are
+    encoded in the URL (the media list persists them like any normal navigation).
+    """
+    # Custom-list rows open the list detail page.
+    if row.row_type == HomeScreenRowTypeChoices.CUSTOM_LIST and row.custom_list_id:
+        base = row.custom_list.get_absolute_url()
+        if row.sort_by in ListDetailSortChoices.values:
+            query = urlencode({"sort": row.sort_by, "direction": row.direction})
+            return f"{base}?{query}"
+        return base
+
+    # Library-query / recently-unrated rows open the media list.
+    params = {
+        "sort": row.sort_by,
+        "direction": row.direction,
+        "layout": getattr(user, f"{row.media_type}_layout", None) or "grid",
+    }
+
+    if row.row_type == HomeScreenRowTypeChoices.RECENTLY_UNRATED:
+        params["rating"] = "not_rated"
+    else:
+        for key, raw_value in _normalized_filter_payload(
+            row.filters or {},
+            row.media_type,
+        ).items():
+            value = raw_value
+            if isinstance(value, (list, tuple)):
+                value = value[0] if len(value) == 1 else None
+            if value in _HOME_LINK_SKIP_FILTER_VALUES:
+                continue
+            params[key] = value
+
+    base = reverse("medialist", args=[row.media_type])
+    return f"{base}?{urlencode(params)}"
+
+
 def build_home_page_groups(
     user,
     items_limit: int,
@@ -1875,6 +1922,7 @@ def build_home_page_groups(
                     "title": row_title(row, user),
                     "title_main": title_main,
                     "title_detail": title_detail,
+                    "url": home_row_destination_url(row, user),
                     "summary": row_summary(row, user),
                     "summary_inline": home_row_inline_summary(row, user),
                     "items": section_entries,
