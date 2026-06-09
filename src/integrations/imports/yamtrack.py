@@ -242,12 +242,12 @@ class YamtrackImporter:
                 media_id=row["media_id"],
                 source=row["source"],
                 media_type=media_type,
+                library_media_type=library_media_type,
                 season_number=season_number,
                 episode_number=episode_number,
                 defaults={
                     "title": row["title"],
                     "image": row["image"],
-                    **({"library_media_type": library_media_type} if library_media_type else {}),
                 },
             ),
         )
@@ -387,6 +387,8 @@ class YamtrackImporter:
             )
             return
 
+        library_media_type = (row.get("library_media_type") or "").strip().lower()
+
         season_number = (
             int(row["season_number"]) if row.get("season_number") else None
         )
@@ -411,6 +413,7 @@ class YamtrackImporter:
                 media_id=row["media_id"],
                 source=row["source"],
                 media_type=media_type,
+                library_media_type=library_media_type,
                 season_number=season_number,
                 episode_number=episode_number,
                 defaults={
