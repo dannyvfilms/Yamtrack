@@ -10,6 +10,10 @@ from django.urls import reverse
 from app.mixins import disable_fetch_releases
 from app.models import (
     Anime,
+    Album,
+    AlbumTracker,
+    Artist,
+    ArtistTracker,
     Book,
     Episode,
     Game,
@@ -245,3 +249,48 @@ class ExportCSVTest(TestCase):
 
         exported_list_names = sorted({row["list_name"] for row in movie_list_item_rows})
         self.assertEqual(exported_list_names, ["Favorites", "Rewatch"])
+
+    def test_export_csv_includes_music_artist_and_album_rows(self):
+        """ArtistTracker and AlbumTracker rows appear in the CSV export."""
+        artist = Artist.objects.create(
+            name="Radiohead",
+            musicbrainz_id="a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            image="https://image.url/artist",
+        )
+        ArtistTracker.objects.create(
+            user=self.user,
+            artist=artist,
+            status=Status.COMPLETED.value,
+            score=9,
+        )
+
+        album = Album.objects.create(
+            title="OK Computer",
+            musicbrainz_release_group_id="0f5d2a1f-c2e3-4e9e-b7b3-5b8c3d2e1f0a",
+            artist=artist,
+            image="https://image.url/album",
+        )
+        AlbumTracker.objects.create(
+            user=self.user,
+            album=album,
+            status=Status.COMPLETED.value,
+            score=10,
+        )
+
+        response = self.client.get(reverse("export_csv"))
+        self.assertEqual(response.status_code, 200)
+
+        content = b"".join(response.streaming_content).decode("utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+
+        artist_rows = [r for r in rows if r.get("media_type") == "music_artist"]
+        album_rows = [r for r in rows if r.get("media_type") == "music_album"]
+
+        self.assertEqual(len(artist_rows), 1)
+        self.assertEqual(artist_rows[0]["media_id"], artist.musicbrainz_id)
+        self.assertEqual(artist_rows[0]["score"], "9.0")
+
+        self.assertEqual(len(album_rows), 1)
+        self.assertEqual(album_rows[0]["media_id"], album.musicbrainz_release_group_id)
+        self.assertEqual(album_rows[0]["score"], "10.0")

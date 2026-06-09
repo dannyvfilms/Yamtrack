@@ -6,7 +6,7 @@ from django.apps import apps
 from django.db.models import Field, Prefetch
 
 from app import helpers
-from app.models import Episode, Item, MediaTypes, Season
+from app.models import AlbumTracker, ArtistTracker, Episode, Item, MediaTypes, Season
 from lists.models import CustomList
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def _get_media_types_to_export(media_types=None):
     children (season → episode, tv → season+episode) are returned.
     """
     if media_types is None:
-        return list(MediaTypes.values)
+        return list(MediaTypes.values) + ["music_artist", "music_album"]
 
     out = list(media_types)
     # If TV is selected, ensure season & episode are included
@@ -39,6 +39,12 @@ def _get_media_types_to_export(media_types=None):
     # If season is selected, ensure episode is included
     if MediaTypes.SEASON.value in out and MediaTypes.EPISODE.value not in out:
         out.append(MediaTypes.EPISODE.value)
+    # If music is selected, include artist and album trackers too
+    if MediaTypes.MUSIC.value in out:
+        if "music_artist" not in out:
+            out.append("music_artist")
+        if "music_album" not in out:
+            out.append("music_album")
     return out
 
 
@@ -123,6 +129,68 @@ def generate_rows(user, media_types=None, include_lists=True):
             yield writer.writerow(row)
 
         logger.debug("Finished streaming %ss to CSV", media_type)
+
+    if "music_artist" in types_to_export:
+        logger.debug("Streaming music_artists to CSV")
+        for tracker in ArtistTracker.objects.filter(user=user).select_related("artist"):
+            artist = tracker.artist
+            item_vals = {
+                "media_id": artist.musicbrainz_id or "",
+                "source": "musicbrainz",
+                "media_type": "music_artist",
+                "title": artist.name,
+                "image": artist.image or "",
+                "library_media_type": "",
+                "season_number": "",
+                "episode_number": "",
+            }
+            track_vals = {
+                "status": tracker.status,
+                "score": tracker.score if tracker.score is not None else "",
+                "notes": tracker.notes,
+                "start_date": tracker.start_date.isoformat() if tracker.start_date else "",
+                "end_date": tracker.end_date.isoformat() if tracker.end_date else "",
+                "created_at": tracker.created_at.isoformat() if tracker.created_at else "",
+            }
+            row = (
+                ["media"]
+                + [item_vals.get(f, "") for f in fields["item"]]
+                + [track_vals.get(f, "") for f in fields["track"]]
+                + [""] * len(fields["list"])
+            )
+            yield writer.writerow(row)
+        logger.debug("Finished streaming music_artists to CSV")
+
+    if "music_album" in types_to_export:
+        logger.debug("Streaming music_albums to CSV")
+        for tracker in AlbumTracker.objects.filter(user=user).select_related("album"):
+            album = tracker.album
+            item_vals = {
+                "media_id": album.musicbrainz_release_group_id or "",
+                "source": "musicbrainz",
+                "media_type": "music_album",
+                "title": album.title,
+                "image": album.image or "",
+                "library_media_type": "",
+                "season_number": "",
+                "episode_number": "",
+            }
+            track_vals = {
+                "status": tracker.status,
+                "score": tracker.score if tracker.score is not None else "",
+                "notes": tracker.notes,
+                "start_date": tracker.start_date.isoformat() if tracker.start_date else "",
+                "end_date": tracker.end_date.isoformat() if tracker.end_date else "",
+                "created_at": tracker.created_at.isoformat() if tracker.created_at else "",
+            }
+            row = (
+                ["media"]
+                + [item_vals.get(f, "") for f in fields["item"]]
+                + [track_vals.get(f, "") for f in fields["track"]]
+                + [""] * len(fields["list"])
+            )
+            yield writer.writerow(row)
+        logger.debug("Finished streaming music_albums to CSV")
 
     if not include_lists:
         return

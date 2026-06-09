@@ -2,6 +2,7 @@ import json
 import logging
 from collections import defaultdict
 from csv import DictReader
+from decimal import Decimal, InvalidOperation
 
 from django.apps import apps
 from django.conf import settings
@@ -11,7 +12,7 @@ import app
 from app.log_safety import mapping_keys
 from app import config
 from app import forms as app_forms
-from app.models import MediaTypes, Sources, Status
+from app.models import Album, AlbumTracker, Artist, ArtistTracker, MediaTypes, Sources, Status
 from app.providers import services
 from app.templatetags import app_tags
 from integrations.imports import helpers
@@ -106,6 +107,7 @@ class YamtrackImporter:
 
         # Track bulk creation lists for each media type
         self.bulk_media = defaultdict(list)
+        self.music_tracker_counts = defaultdict(int)
         self.list_map = {}
         self.status_overrides = {
             MediaTypes.TV.value: {},
@@ -150,6 +152,7 @@ class YamtrackImporter:
             media_type: len(media_list)
             for media_type, media_list in self.bulk_media.items()
         }
+        imported_counts.update(self.music_tracker_counts)
 
         deduplicated_messages = "\n".join(dict.fromkeys(self.warnings))
         return imported_counts, deduplicated_messages
@@ -195,6 +198,14 @@ class YamtrackImporter:
     def _process_media_row(self, row):
         """Process a single media row from the CSV file."""
         media_type = (row.get("media_type") or "").strip().lower()
+
+        if media_type == "music_artist":
+            self._process_music_artist_row(row)
+            return
+        if media_type == "music_album":
+            self._process_music_album_row(row)
+            return
+
         library_media_type = (row.get("library_media_type") or "").strip().lower()
         row["media_type"] = media_type
         row["source"] = (row.get("source") or "").strip().lower()
@@ -481,3 +492,91 @@ class YamtrackImporter:
 
         msg = f"Missing metadata for: {row}"
         raise MediaImportError(msg)
+
+    def _process_music_artist_row(self, row):
+        """Process a music_artist tracker row from the CSV."""
+        musicbrainz_id = (row.get("media_id") or "").strip()
+        if not musicbrainz_id:
+            self.warnings.append("Skipping music_artist row with empty media_id.")
+            return
+
+        artist = Artist.objects.filter(musicbrainz_id=musicbrainz_id).first()
+        if artist is None:
+            self.warnings.append(
+                f"Skipping music_artist row: no artist found with musicbrainz_id={musicbrainz_id}."
+            )
+            return
+
+        score_raw = row.get("score") or ""
+        try:
+            score = Decimal(score_raw) if score_raw != "" else None
+        except InvalidOperation:
+            score = None
+
+        normalized_status = _normalize_status(row.get("status")) or Status.IN_PROGRESS.value
+        tracker_defaults = {
+            "status": normalized_status,
+            "score": score,
+            "notes": row.get("notes") or "",
+            "start_date": parse_datetime(row.get("start_date") or "") if row.get("start_date") else None,
+            "end_date": parse_datetime(row.get("end_date") or "") if row.get("end_date") else None,
+        }
+
+        if self.mode == "overwrite":
+            ArtistTracker.objects.update_or_create(
+                user=self.user,
+                artist=artist,
+                defaults=tracker_defaults,
+            )
+        else:
+            ArtistTracker.objects.get_or_create(
+                user=self.user,
+                artist=artist,
+                defaults=tracker_defaults,
+            )
+
+        self.music_tracker_counts["music_artist"] += 1
+
+    def _process_music_album_row(self, row):
+        """Process a music_album tracker row from the CSV."""
+        release_group_id = (row.get("media_id") or "").strip()
+        if not release_group_id:
+            self.warnings.append("Skipping music_album row with empty media_id.")
+            return
+
+        album = Album.objects.filter(musicbrainz_release_group_id=release_group_id).first()
+        if album is None:
+            self.warnings.append(
+                f"Skipping music_album row: no album found with release_group_id={release_group_id}."
+            )
+            return
+
+        score_raw = row.get("score") or ""
+        try:
+            score = Decimal(score_raw) if score_raw != "" else None
+        except InvalidOperation:
+            score = None
+
+        normalized_status = _normalize_status(row.get("status")) or Status.IN_PROGRESS.value
+        tracker_defaults = {
+            "status": normalized_status,
+            "score": score,
+            "notes": row.get("notes") or "",
+            "start_date": parse_datetime(row.get("start_date") or "") if row.get("start_date") else None,
+            "end_date": parse_datetime(row.get("end_date") or "") if row.get("end_date") else None,
+        }
+
+        if self.mode == "overwrite":
+            AlbumTracker.objects.update_or_create(
+                user=self.user,
+                album=album,
+                defaults=tracker_defaults,
+            )
+        else:
+            AlbumTracker.objects.get_or_create(
+                user=self.user,
+                album=album,
+                defaults=tracker_defaults,
+            )
+
+        self.music_tracker_counts["music_album"] += 1
