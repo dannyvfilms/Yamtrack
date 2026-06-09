@@ -569,11 +569,14 @@ document.addEventListener("alpine:init", () => {
         isNewForm &&
         statusField &&
         statusField.value === "In progress" &&
-        startDateField &&
-        !startDateField.value
+        endDateField &&
+        !endDateField.value
       ) {
-        startDateField.value = this.getCurrentDateTime(startDateField);
-        this.autoFilled.start_date = true;
+        endDateField.value = this.getCurrentDateTime(endDateField);
+        this.autoFilled.end_date = true;
+      }
+      if (isNewForm && statusField && statusField.value === "In progress") {
+        this.syncStartDateFromProgress();
       }
 
       // Status change handler
@@ -601,7 +604,7 @@ document.addEventListener("alpine:init", () => {
           const isReturningToOriginalInProgress =
             status === "In progress" &&
             this.original.status === "In progress" &&
-            this.original.start_date === null;
+            this.original.end_date === null;
 
           // Set new dates based on new status
           if (
@@ -614,15 +617,15 @@ document.addEventListener("alpine:init", () => {
             this.autoFilled.end_date = true;
           } else if (
             status === "In progress" &&
-            startDateField &&
-            !startDateField.value &&
+            endDateField &&
+            !endDateField.value &&
             !isReturningToOriginalInProgress
           ) {
-            startDateField.value = this.getCurrentDateTime(startDateField);
-            this.autoFilled.start_date = true;
+            endDateField.value = this.getCurrentDateTime(endDateField);
+            this.autoFilled.end_date = true;
           }
 
-          if (status === "Completed") {
+          if (status === "Completed" || status === "In progress") {
             this.syncStartDateFromProgress();
           }
         });

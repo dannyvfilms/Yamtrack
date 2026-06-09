@@ -21,6 +21,7 @@ from app.models import (
     MediaTypes,
     MetadataProviderPreference,
     Sources,
+    Status,
 )
 from app.providers import services
 from app.services import bulk_episode_tracking, metadata_resolution
@@ -350,6 +351,18 @@ def _render_standard_track_modal(
         ):
             item_lookup["library_media_type"] = MediaTypes.ANIME.value
         metadata_item = Item.objects.filter(**item_lookup).first()
+
+        # Suggest "In progress" if the user already has an in-progress entry for this media
+        if request.user.is_authenticated:
+            existing_in_progress = BasicMedia.objects.filter_media(
+                request.user,
+                media_id,
+                media_type,
+                source,
+                season_number=season_number,
+            ).filter(status=Status.IN_PROGRESS.value).exists()
+            if existing_in_progress:
+                initial_data["status"] = Status.IN_PROGRESS.value
 
     if route_identity_media_type:
         initial_data["identity_media_type"] = route_identity_media_type
