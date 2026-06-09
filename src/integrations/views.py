@@ -788,8 +788,8 @@ def import_yamtrack(request):
 
     mode = request.POST["mode"]
     tasks.import_yamtrack.delay(
-        file=_read_uploaded_file(file),
         user_id=request.user.id,
+        file=_read_uploaded_file(file),
         mode=mode,
     )
     messages.info(
@@ -810,8 +810,8 @@ def import_hltb(request):
 
     mode = request.POST["mode"]
     tasks.import_hltb.delay(
-        file=_read_uploaded_file(file),
         user_id=request.user.id,
+        file=_read_uploaded_file(file),
         mode=mode,
     )
     messages.info(
@@ -1397,8 +1397,8 @@ def import_imdb(request):
 
     mode = request.POST["mode"]
     tasks.import_imdb.delay(
-        file=_read_uploaded_file(file),
         user_id=request.user.id,
+        file=_read_uploaded_file(file),
         mode=mode,
     )
     messages.info(
@@ -1419,8 +1419,8 @@ def import_goodreads(request):
 
     mode = request.POST["mode"]
     tasks.import_goodreads.delay(
-        file=_read_uploaded_file(file),
         user_id=request.user.id,
+        file=_read_uploaded_file(file),
         mode=mode,
     )
     messages.info(
@@ -1441,8 +1441,8 @@ def import_hardcover(request):
 
     mode = request.POST["mode"]
     tasks.import_hardcover.delay(
-        file=_read_uploaded_file(file),
         user_id=request.user.id,
+        file=_read_uploaded_file(file),
         mode=mode,
     )
     messages.info(

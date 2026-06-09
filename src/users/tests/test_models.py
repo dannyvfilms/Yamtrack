@@ -690,6 +690,53 @@ class UserGetImportTasksTests(TestCase):
         self.assertEqual(task_result.result, "Imported 3 movies.")
 
 
+    @patch("users.helpers.process_task_result")
+    def test_get_import_tasks_yamtrack_user_id_first_in_kwargs(self, mock_process_task_result):
+        """Yamtrack tasks appear in history when user_id comes before the file bytes blob."""
+        processed_task = MagicMock()
+        processed_task.summary = "Imported 5 items."
+        processed_task.errors = None
+        mock_process_task_result.return_value = processed_task
+
+        # Simulate truncated kwargsrepr with user_id first (as produced after fix)
+        TaskResult.objects.create(
+            task_id="task-yamtrack-fix",
+            task_name="Import from Yamtrack",
+            task_kwargs=(f"{{'user_id': {self.user.id}, 'file': b'title,image,...'}}"),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result='"Imported 5 items."',
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(len(import_tasks["results"]), 1)
+        self.assertEqual(import_tasks["results"][0]["source"], "yamtrack")
+
+    @patch("users.helpers.process_task_result")
+    def test_get_import_tasks_maps_hardcover_results(self, mock_process_task_result):
+        """Hardcover import tasks appear in history under the hardcover source."""
+        processed_task = MagicMock()
+        processed_task.summary = "Imported 3 books."
+        processed_task.errors = None
+        mock_process_task_result.return_value = processed_task
+
+        TaskResult.objects.create(
+            task_id="task-hardcover",
+            task_name="Import from Hardcover",
+            task_kwargs=(f"{{'user_id': {self.user.id}}}"),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result='"Imported 3 books."',
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(len(import_tasks["results"]), 1)
+        self.assertEqual(import_tasks["results"][0]["source"], "hardcover")
+        self.assertEqual(import_tasks["results"][0]["summary"], "Imported 3 books.")
+
+
 class UserResolveWatchDateTests(TestCase):
     """Tests for the User.resolve_watch_date method."""
 

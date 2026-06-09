@@ -1410,6 +1410,7 @@ class User(AbstractUser):
             "audiobookshelf": ["Import from Audiobookshelf"],
             "pocketcasts": ["Import from Pocket Casts"],
             "lastfm": ["Import from Last.fm History"],
+            "hardcover": ["Import from Hardcover"],
         }
         schedule_task_names = {
             **result_task_names,
