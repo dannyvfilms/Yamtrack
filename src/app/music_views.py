@@ -379,7 +379,7 @@ def _render_music_artist_details(request, artist):
     missing_cover_count = sum(
         1
         for album in all_albums
-        if not album.image or album.image == settings.IMG_NONE
+        if not album.image
     )
 
     artist_tracker = ArtistTracker.objects.filter(
@@ -619,7 +619,7 @@ def _render_music_album_details(request, artist, album):
                         },
                     )
 
-                if not album.image or album.image == settings.IMG_NONE:
+                if not album.image:
                     new_image = release_data.get("image", "")
                     if new_image and new_image != settings.IMG_NONE:
                         album.image = new_image
@@ -976,7 +976,7 @@ def prefetch_artist_covers(request, artist_id):
     missing_cover_count = sum(
         1
         for album in all_albums
-        if not album.image or album.image == settings.IMG_NONE
+        if not album.image
     )
 
     poll_for_covers = missing_cover_count > 0
@@ -1005,6 +1005,7 @@ def prefetch_artist_covers(request, artist_id):
             "artist": artist,
             "missing_cover_count": missing_cover_count,
             "poll_for_covers": poll_for_covers,
+            "user": request.user,
         },
     )
 

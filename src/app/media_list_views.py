@@ -136,6 +136,7 @@ def media_list(request, media_type):
         MediaTypes.BOOK.value,
         MediaTypes.MANGA.value,
         MediaTypes.COMIC.value,
+        MediaTypes.COMIC_ISSUE.value,
     )
     critic_rating_media_types = {
         MediaTypes.TV.value,

@@ -907,11 +907,12 @@ def next_episode_url(item, media):
 
     # ── TV / Anime show card ─────────────────────────────────────────────────
     if actual_media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-        if not media or not hasattr(media, "seasons"):
+        seasons = getattr(media, "seasons", None)
+        if not media or seasons is None:
             return ""
         # Seasons are already prefetched for TV home cards — no extra query
         in_progress = [
-            s for s in media.seasons.all()
+            s for s in seasons.all()
             if getattr(s, "status", None) == Status.IN_PROGRESS.value
             and getattr(getattr(s, "item", None), "season_number", 0) != 0
         ]

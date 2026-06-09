@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% load app_tags %}
+{% load user_tags %}
+{% load humanize %}
+{% load static %}
+
+{% block title %}{{ media|display_title:user }} - Yamtrack{% endblock title %}
+
+{% block content %}
+{# Top section — mirrors episode_details.html layout #}
+<div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8">
+  <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
+    <img alt="{{ media|display_title:user }}"
+         class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
+         src="{{ media.image|default:IMG_NONE }}">
+  </div>
+
+  <div class="md:w-3/4">
+    {# Volume title — links back to the parent comic volume #}
+    <div class="mb-1 text-center md:text-start">
+      <div class="inline-flex items-center gap-2 md:flex md:gap-2">
+        <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">
+          {% if media.details.volume_id %}
+            <a href="{% url 'media_details' source=media.source media_type=MediaTypes.COMIC.value media_id=media.details.volume_id title=media.details.volume_name|slug %}">{{ media.details.volume_name }}</a>
+          {% else %}
+            {{ media.details.volume_name|default:media|display_title:user }}
+          {% endif %}
+        </h1>
+      </div>
+    </div>
+
+    {# Issue subtitle — mirrors season/episode subtitle line #}
+    <div class="mb-3 flex flex-col items-center justify-between gap-y-4 md:mb-1 md:flex-row md:gap-y-0">
+      <div class="w-full">
+        <div class="flex flex-col gap-y-4 md:flex-row md:gap-y-0 items-center justify-between mb-1">
+          <div class="text-center md:text-start">
+            {# Desktop #}
+            <div class="hidden flex-wrap items-center justify-start gap-y-1 text-sm font-medium text-gray-400 md:flex md:text-start">
+              {% if media.details.issue_number %}
+                <span>Issue #{{ media.details.issue_number }}</span>
+              {% endif %}
+              {% if media.details.cover_date %}
+                <span class="mx-2 text-gray-600">•</span>
+                <span>{{ media.details.cover_date }}</span>
+              {% endif %}
+              {% if not public_view|default:False and user_medias %}
+                <span class="mx-2 text-gray-600">•</span>
+                <span>Read {{ user_medias|length }} time{{ user_medias|length|pluralize }}</span>
+              {% endif %}
+            </div>
+            {# Mobile #}
+            <div class="md:hidden text-sm font-medium text-gray-400 text-center">
+              {% if media.details.issue_number %}Issue #{{ media.details.issue_number }}{% endif %}
+              {% if media.details.cover_date %}<span class="mx-1 text-gray-600">•</span>{{ media.details.cover_date }}{% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex flex-col sm:contents">
+      {# User rating chip — shown when the issue has been tracked #}
+      {% if not public_view|default:False and current_instance %}
+        {% with ep_score=current_instance.score %}
+          <div class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2">
+            <div x-data="{
+              showRatingPopup: false,
+              rating: {% if ep_score is not None %}{{ ep_score|score_display:user }}{% else %}null{% endif %},
+              ratingScaleMax: {{ user|rating_scale_max }},
+              hoverRating: null,
+              isHovering: false,
+              formatRating(v) { if (v === null || v === undefined || v === '') return ''; return this.ratingScaleMax === 5 ? String(v) + '/5' : String(v); }
+            }"
+                 class="relative shrink-0 sm:w-auto">
+              <button type="button"
+                      @click="showRatingPopup = !showRatingPopup"
+                      class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
+                <span class="sr-only">Your score</span>
+                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8">
+                  {% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 sm:h-4 sm:w-4" %}
+                </span>
+                <span class="inline-flex items-center gap-1 sm:gap-2">
+                  <span class="text-[12px] font-semibold text-white sm:text-sm {% if ep_score is None %}hidden{% endif %}"
+                        :class="rating ? '' : 'hidden'"
+                        x-text="formatRating(rating)">{% if ep_score is not None %}{{ ep_score|score_display:user }}{% endif %}</span>
+                  <span class="text-[12px] text-gray-500 sm:text-sm {% if ep_score is None %}hidden{% endif %}"
+                        :class="rating ? '' : 'hidden'">|</span>
+                  <span class="text-[12px] font-medium text-gray-200 sm:text-sm"
+                        x-text="rating ? 'Edit rating' : 'Add rating'">{% if ep_score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
+                </span>
+              </button>
+              <div x-show="showRatingPopup"
+                   @click.outside="showRatingPopup = false; isHovering = false"
+                   class="absolute left-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-10"
+                   @mouseenter="isHovering = true"
+                   @mouseleave="isHovering = false; hoverRating = null">
+                <div class="flex justify-between mb-1">
+                  {% with rating_range=user|rating_scale_max|get_range %}
+                    {% for rating_value in rating_range %}
+                      <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
+                              @mouseenter="hoverRating = {{ rating_value }}"
+                              hx-post="{% url 'update_media_score' MediaTypes.COMIC_ISSUE.value current_instance.id %}"
+                              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                              hx-vals='{"score": {{ rating_value }}, "toggle": true}'
+                              hx-trigger="click"
+                              hx-swap="none"
+                              class="focus:outline-none flex flex-col items-center cursor-pointer">
+                        <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
+                          {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
+                        </div>
+                        <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
+                      </button>
+                    {% endfor %}
+                  {% endwith %}
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endwith %}
+      {% endif %}
+
+      {# Action buttons — mirrors episode_details.html button row #}
+      {% if not public_view|default:False %}
+        <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div class="mt-4 mb-5 flex flex-wrap gap-2">
+            {# Hero track button #}
+            <div x-data="{ trackOpen: false }" class="w-full sm:w-auto sm:shrink-0">
+              <button type="button"
+                      @click="trackOpen = true"
+                      hx-get="{% media_view_url 'track_modal' media %}"
+                      hx-vals='{"return_url": "{{ detail_return_url|urlencode }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}}'
+                      hx-target="#{% component_id 'track' media %}"
+                      hx-trigger="click once"
+                      class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if current_instance %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}">
+                {% if current_instance %}
+                  {% include "app/icons/eye.svg" with classes="w-5 h-5 shrink-0" %}
+                  <span class="font-medium">Read</span>
+                {% else %}
+                  {% include "app/icons/eye-closed.svg" with classes="w-5 h-5 shrink-0" %}
+                  <span class="font-medium">Mark Read</span>
+                {% endif %}
+              </button>
+              <div x-show="trackOpen"
+                   @keydown.escape.window="trackOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                     style="width: min(96vw, 72rem);"
+                     @click.outside="trackOpen = false"
+                     @click.stop>
+                  <div id="{% component_id 'track' media %}"></div>
+                </div>
+              </div>
+            </div>
+
+            {# Secondary icon buttons #}
+            <div class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap">
+              <div x-data="{ listsOpen: false }" class="flex-1 sm:flex-none">
+                <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
+                        title="Add to custom lists"
+                        hx-get="{% media_view_url 'lists_modal' media %}"
+                        hx-vals='{"return_url": "{{ detail_return_url|urlencode }}"}'
+                        hx-target="#{% component_id 'lists' media %}"
+                        hx-trigger="click once"
+                        @click="listsOpen = true">
+                  {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                </button>
+                <div x-show="listsOpen"
+                     @keydown.escape.window="listsOpen = false"
+                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                       @click.outside="listsOpen = false">
+                    <div id="{% component_id 'lists' media %}"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div x-data="{ historyOpen: false }" class="flex-1 sm:flex-none">
+                <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
+                        title="View your activity history"
+                        hx-get="{% media_view_url 'history_modal' media %}"
+                        hx-vals='{"return_url": "{{ detail_return_url|urlencode }}"}'
+                        hx-target="#{% component_id 'history' media %}"
+                        hx-trigger="click once"
+                        @click="historyOpen = true">
+                  {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                </button>
+                <div x-show="historyOpen"
+                     @keydown.escape.window="historyOpen = false"
+                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                       @click.outside="historyOpen = false">
+                    <div id="{% component_id 'history' media %}"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+      {# Synopsis #}
+      {% if media.synopsis %}
+        <div class="mb-6">
+          <div class="relative"
+               x-data="{ isExpanded: false, isClamped: false }"
+               x-init="$nextTick(() => {
+                 const el = $refs.synopsisEl;
+                 if (el) isClamped = el.scrollHeight > el.clientHeight + 4;
+               })"
+               @resize.window="$nextTick(() => {
+                 const el = $refs.synopsisEl;
+                 if (el) isClamped = el.scrollHeight > el.clientHeight + 4;
+               })">
+            <div x-ref="synopsisEl"
+                 :class="isClamped && !isExpanded ? 'line-clamp-3' : ''"
+                 class="text-gray-300 text-pretty prose prose-invert prose-sm max-w-none">
+              {{ media.synopsis|safe }}
+            </div>
+            <button x-show="isClamped"
+                    @click="isExpanded = !isExpanded"
+                    class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer inline-flex">
+              <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
+            </button>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# Details panel — mirrors the existing comic issue detail sidebar #}
+<div class="grid grid-cols-1 md:grid-cols-[250px_1fr] gap-6 md:gap-10">
+  <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start self-start">
+    {% if media.details.issue_number %}
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold text-gray-400 tracking-wide">ISSUE NUMBER</h3>
+        <p class="text-sm text-gray-200">{{ media.details.issue_number }}</p>
+      </div>
+    {% endif %}
+    {% if media.details.volume_name %}
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold text-gray-400 tracking-wide">VOLUME NAME</h3>
+        <p class="text-sm text-gray-200">{{ media.details.volume_name }}</p>
+      </div>
+    {% endif %}
+    {% if media.details.cover_date %}
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold text-gray-400 tracking-wide">COVER DATE</h3>
+        <p class="text-sm text-gray-200">{{ media.details.cover_date }}</p>
+      </div>
+    {% endif %}
+    {% if authors_linked %}
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold text-gray-400 tracking-wide">AUTHOR{{ authors_linked|length|pluralize }}</h3>
+        <div class="flex flex-col gap-1">
+          {% for author in authors_linked %}
+            <a href="{% url 'person_detail' source=author.source person_id=author.person_id name=author.name|slug %}"
+               class="text-sm text-gray-200 hover:text-indigo-500 transition-colors duration-200">{{ author.name }}</a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  (function() {
+    window.addEventListener('pageshow', function(event) {
+      if (event.persisted) { window.location.reload(); }
+    });
+  })();
+</script>
+{% endblock content %}

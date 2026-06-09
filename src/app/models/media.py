@@ -664,3 +664,9 @@ class Comic(Media):
     tracker = FieldTracker()
 
 
+class ComicIssue(Media):
+    """Model for individual comic issues."""
+
+    tracker = FieldTracker()
+
+

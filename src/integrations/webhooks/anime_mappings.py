@@ -72,6 +72,19 @@ def get_mal_id_from_imdb(mapping_data, imdb_id):
     )
 
 
+def get_tmdb_movie_id_from_mal_id(mapping_data, mal_id):
+    """Find TMDB movie ID for a MAL anime ID (reverse lookup for anime movies)."""
+    mal_id_str = str(mal_id)
+    for source_descriptor, targets in mapping_data.items():
+        if not source_descriptor.startswith("tmdb_movie:"):
+            continue
+        for target_descriptor in targets:
+            found_id = _parse_mal_descriptor(target_descriptor)
+            if found_id is not None and str(found_id) == mal_id_str:
+                return source_descriptor.split(":", 1)[1]
+    return None
+
+
 def find_entries_for_mal_id(mapping_data, mal_id):
     """Find TVDB/TMDB provider link dicts for a given MAL ID (reverse lookup)."""
     results = []

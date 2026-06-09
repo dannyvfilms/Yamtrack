@@ -10,6 +10,7 @@ from app.models import (
     BoardGame,
     Book,
     Comic,
+    ComicIssue,
     Game,
     Manga,
     MediaTypes,
@@ -28,6 +29,7 @@ TARGET_MODEL_MAP = {
     MediaTypes.MANGA.value: Manga,
     MediaTypes.BOOK.value: Book,
     MediaTypes.COMIC.value: Comic,
+    MediaTypes.COMIC_ISSUE.value: ComicIssue,
     MediaTypes.BOARDGAME.value: BoardGame,
 }
 

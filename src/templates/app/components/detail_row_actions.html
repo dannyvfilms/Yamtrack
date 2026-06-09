@@ -1,0 +1,85 @@
+{% load app_tags %}
+{% load user_tags %}
+
+<div class="flex space-x-2 shrink-0">
+  {% if track_button_variant == "episode" and episode.actions_enabled %}
+    <div x-data="{ trackOpen: false }">
+      {% include "app/components/detail_episode_track_button.html" with episode=episode track_button_oob=False only %}
+      {% include "app/components/fill_track_episode.html" with request=request media=episode episode=episode episode_title=episode.title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
+    </div>
+  {% elif track_button_variant != "episode" %}
+    <div>
+      <button hx-get="{% media_view_url 'track_modal' episode %}"
+              hx-target="#{% component_id 'track' episode %}"
+              hx-trigger="click once"
+              title="{{ track_button_title|default:'Track' }}"
+              class="p-2 {% if episode.history %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-500{% endif %} text-white rounded-full transition duration-300 cursor-pointer">
+        {% if episode.history %}
+          {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
+        {% else %}
+          {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
+        {% endif %}
+      </button>
+      <div id="{% component_id 'track' episode %}"></div>
+    </div>
+  {% endif %}
+
+  {% if episode.item or media_type == MediaTypes.SEASON.value or action_media_type == MediaTypes.COMIC_ISSUE.value %}
+    <div x-data="{ listsOpen: false }">
+      <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
+              title="Add to custom lists"
+              hx-get="{% if episode.item %}{% media_view_url 'lists_modal' episode.item %}{% else %}{% media_view_url 'lists_modal' episode %}{% endif %}"
+              hx-vals='{"return_url": "{{ detail_return_url|urlencode }}"}'
+              hx-target="#{% if episode.item %}{% component_id 'lists' episode.item %}{% else %}{% component_id 'lists' episode %}{% endif %}"
+              hx-trigger="click once"
+              @click="listsOpen = true">
+        {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+      </button>
+
+      <div x-show="listsOpen"
+           @keydown.escape.window="listsOpen = false"
+           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+             @click.outside="listsOpen = false">
+          <div id="{% if episode.item %}{% component_id 'lists' episode.item %}{% else %}{% component_id 'lists' episode %}{% endif %}"></div>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if history_item %}
+    <div x-data="{ historyOpen: false }">
+      <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
+              title="View your activity history"
+              hx-get="{% media_view_url 'history_modal' history_item %}"
+              hx-vals='{"return_url": "{{ detail_return_url|urlencode }}"}'
+              hx-target="#{% component_id 'history' history_item %}"
+              hx-trigger="click once"
+              @click="historyOpen = true">
+        {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+      </button>
+      <div x-show="historyOpen"
+           @keydown.escape.window="historyOpen = false"
+           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+             @click.outside="historyOpen = false">
+          <div id="{% component_id 'history' history_item %}"></div>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if episode.history and action_media_type == MediaTypes.EPISODE.value and current_instance %}
+    {% with ep_score=episode.history.0.score %}
+      {% include "app/components/detail_row_rating_button.html" with ep_score=ep_score rating_kind="episode" episode=episode episode_score_target_id=current_instance.id action_media_type=action_media_type csrf_token=csrf_token user=user MediaTypes=MediaTypes only %}
+    {% endwith %}
+  {% elif episode.history and action_media_type == MediaTypes.EPISODE.value and episode.rating_season_id %}
+    {% with ep_score=episode.history.0.score %}
+      {% include "app/components/detail_row_rating_button.html" with ep_score=ep_score rating_kind="episode" episode=episode episode_score_target_id=episode.rating_season_id action_media_type=action_media_type csrf_token=csrf_token user=user MediaTypes=MediaTypes only %}
+    {% endwith %}
+  {% elif episode.history and action_media_type != MediaTypes.EPISODE.value %}
+    {% with ep_score=episode.history.0.score rating_instance=episode.history.0 %}
+      {% include "app/components/detail_row_rating_button.html" with ep_score=ep_score rating_kind="media" episode=episode rating_instance=rating_instance action_media_type=action_media_type csrf_token=csrf_token user=user MediaTypes=MediaTypes only %}
+    {% endwith %}
+  {% endif %}
+</div>

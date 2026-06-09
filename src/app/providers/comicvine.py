@@ -160,6 +160,7 @@ def comic(media_id):
             },
             # used for events fetching
             "last_issue_id": response["last_issue"]["id"],
+            "issues": get_volume_issues(media_id),
         }
 
         cache.set(cache_key, data)
@@ -295,6 +296,52 @@ def get_people_full(response):
     return people_full
 
 
+def get_volume_issues(volume_id, limit=100):
+    """Get the list of issues for a comic volume, sorted by issue number."""
+    cache_key = f"{Sources.COMICVINE.value}_volume_{volume_id}_issues"
+    data = cache.get(cache_key)
+
+    if data is None:
+        params = {
+            "api_key": settings.COMICVINE_API,
+            "format": "json",
+            "field_list": "id,name,image,issue_number,cover_date,site_detail_url",
+            "filter": f"volume:{volume_id}",
+            "sort": "issue_number:asc",
+            "limit": limit,
+        }
+
+        try:
+            response = services.api_request(
+                Sources.COMICVINE.value,
+                "GET",
+                f"{base_url}/issues/",
+                params=params,
+                headers=headers,
+            )
+        except requests.exceptions.HTTPError as error:
+            handle_error(error)
+
+        data = [
+            {
+                "media_id": str(item["id"]),
+                "source": Sources.COMICVINE.value,
+                "media_type": MediaTypes.COMIC_ISSUE.value,
+                "issue_number": item.get("issue_number") or "",
+                "title": item.get("name") or "",
+                "image": get_image(item),
+                "cover_date": item.get("cover_date"),
+                "site_detail_url": item.get("site_detail_url"),
+                "history": [],
+            }
+            for item in response.get("results", [])
+        ]
+
+        cache.set(cache_key, data)
+
+    return data
+
+
 def get_publisher_comics(publisher_id, current_id, limit=15):
     """Get comics from the same publisher."""
     cache_key = f"{Sources.COMICVINE.value}_publisher_{publisher_id}_{current_id}"
@@ -339,8 +386,192 @@ def get_publisher_comics(publisher_id, current_id, limit=15):
     return data
 
 
+def search_issues(query, page):
+    """Search for individual comic issues on Comic Vine."""
+    cache_key = (
+        f"search_{Sources.COMICVINE.value}_{MediaTypes.COMIC_ISSUE.value}_{query}_{page}"
+    )
+    data = cache.get(cache_key)
+
+    if data is None:
+        params = {
+            "api_key": settings.COMICVINE_API,
+            "format": "json",
+            "query": query,
+            "resources": "issue",
+            "field_list": "id,name,image,issue_number,volume,cover_date",
+            "limit": settings.PER_PAGE,
+            "page": page,
+        }
+
+        try:
+            response = services.api_request(
+                Sources.COMICVINE.value,
+                "GET",
+                f"{base_url}/search/",
+                params=params,
+                headers=headers,
+            )
+        except requests.exceptions.HTTPError as error:
+            handle_error(error)
+
+        results = []
+        for item in response["results"]:
+            volume = item.get("volume") or {}
+            volume_name = volume.get("name") or ""
+            issue_number = item.get("issue_number") or ""
+            issue_name = item.get("name") or ""
+            if issue_name:
+                title = f"{volume_name} #{issue_number}: {issue_name}"
+            else:
+                title = f"{volume_name} #{issue_number}"
+            cover_date = item.get("cover_date") or ""
+            results.append(
+                {
+                    "media_id": str(item["id"]),
+                    "source": Sources.COMICVINE.value,
+                    "media_type": MediaTypes.COMIC_ISSUE.value,
+                    "title": title,
+                    "image": get_image(item),
+                    "year": cover_date[:4] if cover_date else None,
+                }
+            )
+
+        total_results = response["number_of_total_results"]
+        data = helpers.format_search_response(
+            page,
+            settings.PER_PAGE,
+            total_results,
+            results,
+        )
+
+        cache.set(cache_key, data)
+
+    return data
+
+
+def comic_issue(media_id):
+    """Return the full metadata for an individual comic issue from Comic Vine."""
+    cache_key = f"{Sources.COMICVINE.value}_{MediaTypes.COMIC_ISSUE.value}_{media_id}"
+    data = cache.get(cache_key)
+
+    if data is None:
+        params = {
+            "api_key": settings.COMICVINE_API,
+            "format": "json",
+            "field_list": (
+                "id,name,image,issue_number,volume,cover_date,store_date,"
+                "description,person_credits,site_detail_url"
+            ),
+        }
+
+        try:
+            response = services.api_request(
+                Sources.COMICVINE.value,
+                "GET",
+                f"{base_url}/issue/4000-{media_id}/",
+                params=params,
+                headers=headers,
+            )
+        except requests.exceptions.HTTPError as error:
+            handle_error(error)
+
+        response = response.get("results", {})
+
+        if not response:
+            services.raise_not_found_error(
+                Sources.COMICVINE.value,
+                media_id,
+                "comic_issue",
+            )
+
+        volume = response.get("volume") or {}
+        volume_name = volume.get("name") or ""
+        issue_number = response.get("issue_number") or ""
+        issue_name = response.get("name") or ""
+        cover_date = response.get("cover_date") or ""
+
+        if issue_name:
+            title = f"{volume_name} #{issue_number}: {issue_name}"
+        else:
+            title = f"{volume_name} #{issue_number}"
+
+        data = {
+            "media_id": media_id,
+            "source": Sources.COMICVINE.value,
+            "source_url": response.get("site_detail_url"),
+            "media_type": MediaTypes.COMIC_ISSUE.value,
+            "title": title,
+            "max_progress": 1,
+            "image": get_image(response),
+            "synopsis": get_synopsis(response),
+            "genres": None,
+            "score": None,
+            "score_count": None,
+            "details": {
+                "issue_number": issue_number,
+                "volume_name": volume_name,
+                "volume_id": str(volume.get("id") or ""),
+                "cover_date": cover_date or None,
+                "store_date": response.get("store_date"),
+                "start_date": cover_date[:4] if cover_date else None,
+                "people": _get_issue_people(response),
+            },
+            "authors_full": _get_issue_people_full(response),
+            "related": {
+                "recommendations": [],
+            },
+        }
+
+        cache.set(cache_key, data)
+
+    return data
+
+
+def _get_issue_people(response):
+    """Return writer names from issue person_credits."""
+    credits = response.get("person_credits") or []
+    return [
+        person["name"]
+        for person in credits[:5]
+        if isinstance(person, dict) and _is_writer_role(person.get("role") or "")
+    ] or [
+        person["name"]
+        for person in credits[:5]
+        if isinstance(person, dict)
+    ]
+
+
+def _get_issue_people_full(response):
+    """Return normalized writer payloads from issue person_credits."""
+    credits = response.get("person_credits") or []
+    people_full = []
+    seen = set()
+    for index, person in enumerate(credits):
+        if not isinstance(person, dict):
+            continue
+        role = person.get("role") or ""
+        if not _is_writer_role(role):
+            continue
+        person_id = _extract_person_id(person)
+        name = (person.get("name") or "").strip()
+        if not person_id or not name or person_id in seen:
+            continue
+        seen.add(person_id)
+        people_full.append(
+            {
+                "person_id": person_id,
+                "name": name,
+                "image": settings.IMG_NONE,
+                "role": role or "Writer",
+                "sort_order": index,
+            },
+        )
+    return people_full
+
+
 def issue(media_id):
-    """Return the metadata for the selected comic issue from Comic Vine."""
+    """Return cover and store dates for a comic issue (used by volume detail page)."""
     cache_key = f"{Sources.COMICVINE.value}_issue_{media_id}"
     data = cache.get(cache_key)
 

@@ -24,6 +24,7 @@ from app.models import (
     Book,
     CollectionEntry,
     Comic,
+    ComicIssue,
     CreditRoleType,
     Episode,
     Game,
@@ -403,6 +404,115 @@ class MediaDetailsViewTests(TestCase):
         )
         self.assertLess(content.index("tmdb-logo.png"), content.index("Add to tracker"))
         self.assertLess(content.index("Add to tracker"), content.index("Test overview"))
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_comic_volume_issue_rows_render_shared_action_buttons(self, mock_get_metadata):
+        volume_metadata = {
+            "media_id": "500",
+            "title": "Test Volume",
+            "media_type": MediaTypes.COMIC.value,
+            "source": Sources.COMICVINE.value,
+            "image": "http://example.com/volume.jpg",
+            "issues": [
+                {
+                    "media_id": 114214,
+                    "source": Sources.COMICVINE.value,
+                    "media_type": MediaTypes.COMIC_ISSUE.value,
+                    "title": "Tracked Issue",
+                    "issue_number": "1",
+                    "cover_date": "2024-01-01",
+                    "image": "http://example.com/issue.jpg",
+                },
+                {
+                    "media_id": 114215,
+                    "source": Sources.COMICVINE.value,
+                    "media_type": MediaTypes.COMIC_ISSUE.value,
+                    "title": "Untracked Issue",
+                    "issue_number": "2",
+                    "cover_date": "2024-02-01",
+                    "image": "http://example.com/issue2.jpg",
+                },
+            ],
+        }
+        issue_metadata = {
+            "media_id": "114214",
+            "title": "Tracked Issue",
+            "media_type": MediaTypes.COMIC_ISSUE.value,
+            "source": Sources.COMICVINE.value,
+            "image": "http://example.com/issue.jpg",
+            "max_progress": 1,
+            "details": {},
+        }
+        mock_get_metadata.side_effect = (
+            lambda requested_media_type, *_args, **_kwargs: issue_metadata
+            if requested_media_type == MediaTypes.COMIC_ISSUE.value
+            else volume_metadata
+        )
+
+        volume_item = Item.objects.create(
+            media_id="500",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Test Volume",
+            image="http://example.com/volume.jpg",
+        )
+        issue_item = Item.objects.create(
+            media_id="114214",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC_ISSUE.value,
+            title="Tracked Issue",
+            image="http://example.com/issue.jpg",
+        )
+        tracked_issue = ComicIssue.objects.create(
+            item=issue_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            end_date=timezone.now(),
+            score=8,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.COMICVINE.value,
+                    "media_type": MediaTypes.COMIC.value,
+                    "media_id": "500",
+                    "title": "test-volume",
+                },
+            ),
+            {"fragment": "secondary"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse(
+                "lists_modal",
+                args=[Sources.COMICVINE.value, MediaTypes.COMIC_ISSUE.value, "114214"],
+            ),
+        )
+        self.assertContains(
+            response,
+            reverse(
+                "lists_modal",
+                args=[Sources.COMICVINE.value, MediaTypes.COMIC_ISSUE.value, "114215"],
+            ),
+        )
+        self.assertContains(
+            response,
+            reverse(
+                "history_modal",
+                args=[Sources.COMICVINE.value, MediaTypes.COMIC_ISSUE.value, "114214"],
+            ),
+        )
+        self.assertContains(
+            response,
+            reverse(
+                "update_media_score",
+                args=[MediaTypes.COMIC_ISSUE.value, tracked_issue.id],
+            ),
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_related_sections_use_mobile_card_grid_preferences(self, mock_get_metadata):

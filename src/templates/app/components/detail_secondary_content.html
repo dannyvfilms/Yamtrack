@@ -469,7 +469,7 @@
                }"
                x-init="Alpine.store('epLayout', localStorage.getItem('ep-layout') || 'grid')">
             <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-bold">Episodes</h2>
+              <h2 class="text-xl font-bold">{% if media_type == MediaTypes.COMIC.value %}Issues{% else %}Episodes{% endif %}</h2>
               {% if media_type != MediaTypes.PODCAST.value %}
                 <div class="flex items-center gap-1">
                   <button @click="setLayout('grid')"
@@ -498,8 +498,13 @@
               {% else %}
               <div class="space-y-6" id="episodes-batch">
                 {% for episode in media.episodes %}
-                  {% if media_type == MediaTypes.SEASON.value and media.source and media.media_id and media.season_number %}{% if parent_media_type == MediaTypes.ANIME.value %}{% url 'anime_episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% else %}{% url 'episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% endif %}{% endif %}
-                  {% include "app/components/episode_row.html" %}
+                  {% if media_type == MediaTypes.COMIC.value %}
+                    {% url 'media_details' source=episode.source media_type=episode.media_type media_id=episode.media_id title=episode.title|default:episode.issue_number|slug as ep_detail_url %}
+                    {% include "app/components/issue_row.html" %}
+                  {% else %}
+                    {% if media_type == MediaTypes.SEASON.value and media.source and media.media_id and media.season_number %}{% if parent_media_type == MediaTypes.ANIME.value %}{% url 'anime_episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% else %}{% url 'episode_details' source=media.source media_id=media.media_id title=media.title|slug season_number=media.season_number episode_number=episode.episode_number as ep_detail_url %}{% endif %}{% endif %}
+                    {% include "app/components/episode_row.html" %}
+                  {% endif %}
                 {% endfor %}
                 {% if episode_load_more %}
                   <div class="detail-episode-load-more flex justify-center pt-2" data-episode-load-more>

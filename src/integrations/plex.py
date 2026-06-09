@@ -513,6 +513,7 @@ def _fetch_sections_from_connection(
                 "server_name": server.get("name"),
                 "machine_identifier": server.get("machine_identifier"),
                 "uri": uri,
+                "access_token": token,
             },
         )
     return sections

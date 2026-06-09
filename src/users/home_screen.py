@@ -40,6 +40,7 @@ AUTHOR_MEDIA_TYPES = {
     MediaTypes.BOOK.value,
     MediaTypes.MANGA.value,
     MediaTypes.COMIC.value,
+    MediaTypes.COMIC_ISSUE.value,
 }
 HOME_PROGRESS_MEDIA_TYPES = {
     MediaTypes.TV.value,
@@ -219,6 +220,16 @@ SUPPORTED_FILTERS_BY_MEDIA_TYPE = {
         "release",
         "source",
         "format",
+        "author",
+        "tag",
+        "tag_exclude",
+    },
+    MediaTypes.COMIC_ISSUE.value: {
+        "status",
+        "rating",
+        "year",
+        "release",
+        "source",
         "author",
         "tag",
         "tag_exclude",

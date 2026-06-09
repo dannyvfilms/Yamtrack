@@ -234,6 +234,7 @@ def bulk_create_media(bulk_media_list, user):
                 model,
                 batch_size=500,
                 default_user=user,
+                default_date=timezone.now(),
             )
 
         retry_on_lock(create_media)

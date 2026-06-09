@@ -108,8 +108,18 @@ class PlexHistoryImporter:
         for section in sections:
             try:
                 self._import_section(section)
-            except MediaImportError:
-                raise
+            except MediaImportError as exc:
+                section_label = section.get("title") or section.get("id") or "unknown library"
+                server_label = section.get("server_name") or "unknown server"
+                logger.warning(
+                    "Failed to import Plex section '%s' on '%s': %s",
+                    section_label,
+                    server_label,
+                    exc,
+                )
+                self.warnings.append(
+                    f"Could not import library '{section_label}' from '{server_label}': {exc}",
+                )
             except Exception as exc:  # pragma: no cover - defensive
                 msg = f"Unexpected error importing Plex section {section.get('title')}: {exc}"
                 raise MediaImportUnexpectedError(msg) from exc
@@ -307,6 +317,9 @@ class PlexHistoryImporter:
 
     def _import_section(self, section: dict):
         """Fetch and ingest history for a single Plex section."""
+        section_token = section.get("access_token") or self.account.plex_token
+        self._current_section_token = section_token
+
         connections = self._connections_for_machine(section.get("machine_identifier"))
         if section.get("uri"):
             connections.insert(0, section.get("uri"))
@@ -324,7 +337,7 @@ class PlexHistoryImporter:
                 f"has unsupported type '{section_type}'; unsupported entries will be skipped.",
             )
 
-        entries, uri_used = self._fetch_history_entries(connections, section.get("id"))
+        entries, uri_used = self._fetch_history_entries(connections, section.get("id"), token=section_token)
 
         for entry in entries:
             try:
@@ -348,7 +361,7 @@ class PlexHistoryImporter:
 
         # Fetch and apply ratings from library items
         try:
-            self._import_ratings_from_library(section, uri_used)
+            self._import_ratings_from_library(section, uri_used, token=section_token)
         except Exception as exc:
             logger.warning(
                 "Failed to import ratings from Plex library items: %s",
@@ -358,8 +371,9 @@ class PlexHistoryImporter:
                 f"Failed to import ratings from library items: {exc}",
             )
 
-    def _fetch_history_entries(self, connections: list[str], section_id: str | None) -> tuple[list[dict], str]:
+    def _fetch_history_entries(self, connections: list[str], section_id: str | None, token: str | None = None) -> tuple[list[dict], str]:
         """Pull all history pages up front to minimize per-page overhead, trying fallbacks."""
+        effective_token = token or self.account.plex_token
         entries: list[dict] = []
         start = 0
         max_items = settings.PLEX_HISTORY_MAX_ITEMS
@@ -375,7 +389,7 @@ class PlexHistoryImporter:
             try:
                 while max_items is None or start < max_items:
                     page, total = plex_api.fetch_history(
-                        self.account.plex_token,
+                        effective_token,
                         uri,
                         section_id,
                         start,
@@ -392,7 +406,11 @@ class PlexHistoryImporter:
                 uri_used = uri
                 break
             except plex_api.PlexAuthError as exc:
-                raise MediaImportError("Plex token expired; reconnect and try again.") from exc
+                raise MediaImportError(
+                    f"Authentication failed for Plex server at {uri}; "
+                    "the token may be expired or this may be a shared server. "
+                    "Reconnect Plex and try again."
+                ) from exc
             except plex_api.PlexClientError as exc:
                 failures.append((uri, str(exc)))
                 uri_index += 1
@@ -708,13 +726,14 @@ class PlexHistoryImporter:
         else:
             try:
                 details = plex_api.fetch_metadata(
-                    self.account.plex_token,
+                    getattr(self, "_current_section_token", None) or self.account.plex_token,
                     uri,
                     rating_key,
                 )
             except plex_api.PlexAuthError as exc:
                 raise MediaImportError(
-                    "Plex token expired; reconnect and try again.",
+                    "Authentication failed fetching Plex metadata; "
+                    "the token may be expired or this may be a shared server.",
                 ) from exc
             except plex_api.PlexClientError as exc:
                 self.warnings.append(
@@ -898,12 +917,13 @@ class PlexHistoryImporter:
         played_at = datetime.fromtimestamp(ts_int, tz=UTC)
         return timezone.localtime(played_at)
 
-    def _import_ratings_from_library(self, section: dict, uri: str):
+    def _import_ratings_from_library(self, section: dict, uri: str, token: str | None = None):
         """Fetch ratings from Plex library items and apply them to imported media instances.
-        
+
         This complements history import by fetching ratings from library items,
         which may have ratings even if they weren't in the watch history.
         """
+        effective_token = token or self.account.plex_token
         section_type = (section.get("type") or "").lower()
         if section_type not in ("movie", "show"):
             # Only import ratings for movies and TV shows
@@ -928,14 +948,17 @@ class PlexHistoryImporter:
         while True:
             try:
                 items, total = plex_api.fetch_section_all_items(
-                    self.account.plex_token,
+                    effective_token,
                     uri,
                     str(section_key),
                     start=start,
                     size=page_size,
                 )
             except plex_api.PlexAuthError as exc:
-                raise MediaImportError("Plex token expired; reconnect and try again.") from exc
+                raise MediaImportError(
+                    f"Authentication failed fetching ratings from Plex server at {uri}; "
+                    "the token may be expired or this may be a shared server."
+                ) from exc
             except plex_api.PlexClientError as exc:
                 logger.warning(
                     "Failed to fetch library items for rating import: %s",
