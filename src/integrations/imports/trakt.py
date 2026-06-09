@@ -478,7 +478,8 @@ class TraktImporter:
             status=Status.COMPLETED.value,
             progress=1,
         )
-        movie_obj._history_date = watched_at_dt
+        if watched_at_dt is not None:
+            movie_obj._history_date = watched_at_dt
 
         self.media_instances[MediaTypes.MOVIE.value][key].append(movie_obj)
         self.bulk_media[MediaTypes.MOVIE.value].append(movie_obj)
@@ -571,7 +572,8 @@ class TraktImporter:
                     user=self.user,
                     status=status,
                 )
-                tv_obj._history_date = watched_at_dt
+                if watched_at_dt is not None:
+                    tv_obj._history_date = watched_at_dt
                 self.bulk_media[MediaTypes.TV.value].append(tv_obj)
             elif tmdb_id in self.dropped_tmdb_ids and tv_obj.status != Status.DROPPED.value:
                 tv_obj.status = Status.DROPPED.value
@@ -601,7 +603,8 @@ class TraktImporter:
                     related_tv=tv_obj,
                     status=Status.IN_PROGRESS.value,
                 )
-                season_obj._history_date = watched_at_dt
+                if watched_at_dt is not None:
+                    season_obj._history_date = watched_at_dt
                 self.bulk_media[MediaTypes.SEASON.value].append(season_obj)
             self.media_instances[MediaTypes.SEASON.value][season_key] = [season_obj]
         else:
@@ -629,7 +632,8 @@ class TraktImporter:
             related_season=season_obj,
             end_date=watched_at_dt,
         )
-        episode_obj._history_date = watched_at_dt
+        if watched_at_dt is not None:
+            episode_obj._history_date = watched_at_dt
         self.media_instances[MediaTypes.EPISODE.value][ep_key].append(episode_obj)
         self.bulk_media[MediaTypes.EPISODE.value].append(episode_obj)
         self.existing_episode_watch_keys.add(episode_watch_key)
@@ -911,7 +915,8 @@ class TraktImporter:
                 user=self.user,
                 **defaults,
             )
-            media_obj._history_date = updated_at
+            if updated_at is not None:
+                media_obj._history_date = updated_at
             self.bulk_media[media_type].append(media_obj)
             self.media_instances[media_type][key] = [media_obj]
 
@@ -942,7 +947,8 @@ class TraktImporter:
                 user=self.user,
                 status=Status.IN_PROGRESS.value,
             )
-            tv_obj._history_date = updated_at
+            if updated_at is not None:
+                tv_obj._history_date = updated_at
             self.bulk_media[MediaTypes.TV.value].append(tv_obj)
             self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]
         return tv_obj
