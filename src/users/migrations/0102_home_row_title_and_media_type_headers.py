@@ -3,7 +3,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("users", "0100_quick_season_update_choices"),
+        ("users", "0101_remove_homescreenrow_home_screen_row_media_type_valid_and_more"),
     ]
 
     operations = [
