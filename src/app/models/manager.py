@@ -1205,7 +1205,7 @@ class MediaManager(models.Manager):
         """Annotate max_progress for all media items."""
         current_datetime = timezone.now()
 
-        if media_type == MediaTypes.MOVIE.value:
+        if media_type in (MediaTypes.MOVIE.value, MediaTypes.COMIC_ISSUE.value):
             for media in media_list:
                 media.max_progress = 1
             return

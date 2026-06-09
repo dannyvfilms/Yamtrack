@@ -50,6 +50,7 @@ from app.models import (
     Album,
     Anime,
     BasicMedia,
+    ComicIssue,
     CreditRoleType,
     Episode,
     Item,
@@ -73,6 +74,38 @@ from app.view_constants import DETAIL_SECONDARY_FRAGMENT
 from lists.models import CustomList
 
 logger = logging.getLogger(__name__)
+
+
+def _enrich_comic_issues(issues, user):
+    """Attach user tracking history to each issue dict from the volume issues list."""
+    if not issues:
+        return issues
+
+    issue_ids = [str(issue["media_id"]) for issue in issues]
+    items_qs = Item.objects.filter(
+        media_id__in=issue_ids,
+        source=Sources.COMICVINE.value,
+        media_type=MediaTypes.COMIC_ISSUE.value,
+    )
+    item_by_media_id = {item.media_id: item for item in items_qs}
+
+    history_by_media_id = {}
+    if user is not None and user.is_authenticated:
+        tracked = ComicIssue.objects.filter(
+            user=user,
+            item__in=item_by_media_id.values(),
+        ).select_related("item")
+        for entry in tracked:
+            history_by_media_id.setdefault(entry.item.media_id, []).append(entry)
+
+    enriched = []
+    for issue in issues:
+        entry = dict(issue)
+        media_id = str(entry["media_id"])
+        entry["history"] = history_by_media_id.get(media_id, [])
+        entry["item"] = item_by_media_id.get(media_id)
+        enriched.append(entry)
+    return enriched
 
 
 def _get_tv_runtime_display_fallback(detail_item, media_metadata):
@@ -814,6 +847,11 @@ def media_details(
     media_metadata = services.get_media_metadata(media_type, media_id, source)
     if isinstance(media_metadata, dict):
         media_metadata.update(Item.title_fields_from_metadata(media_metadata))
+
+    if media_type == MediaTypes.COMIC.value and isinstance(media_metadata, dict):
+        raw_issues = media_metadata.pop("issues", None)
+        if raw_issues:
+            media_metadata["episodes"] = _enrich_comic_issues(raw_issues, request.user)
 
     detail_item = Item.objects.filter(**detail_item_lookup).first()
 
@@ -1902,12 +1940,14 @@ def media_details(
         source,
         (time.perf_counter() - detail_view_started_at) * 1000,
     )
+    if media_type == MediaTypes.COMIC_ISSUE.value:
+        template = "app/comic_issue_details.html"
+    elif render_secondary_only:
+        template = "app/components/detail_secondary_content.html"
+    else:
+        template = "app/media_details.html"
     return render(
         request,
-        (
-            "app/components/detail_secondary_content.html"
-            if render_secondary_only
-            else "app/media_details.html"
-        ),
+        template,
         context,
     )

@@ -31,6 +31,7 @@ class MediaTypes(models.TextChoices):
     GAME = "game", "Game"
     BOOK = "book", "Book"
     COMIC = "comic", "Comic"
+    COMIC_ISSUE = "comicissue", "Comic Issue"
     BOARDGAME = "boardgame", "Board Game"
     MUSIC = "music", "Music"
     PODCAST = "podcast", "Podcast"

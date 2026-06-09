@@ -20,6 +20,7 @@ from app.models import (
     BoardGame,
     Book,
     Comic,
+    ComicIssue,
     CollectionEntry,
     DiscoverFeedback,
     DiscoverFeedbackType,
@@ -655,6 +656,19 @@ def refresh_statistics_cache_on_comic_change(sender, instance, **kwargs):  # noq
         user_id,
         MediaTypes.COMIC.value,
         reason="comic_change",
+        statistics_day_values=day_keys,
+    )
+
+
+@receiver([post_save, post_delete], sender=ComicIssue)
+def refresh_statistics_cache_on_comic_issue_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Schedule statistics cache refresh when comic issue activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    day_keys = _collect_reading_statistics_day_keys(instance)
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.COMIC_ISSUE.value,
+        reason="comic_issue_change",
         statistics_day_values=day_keys,
     )
 

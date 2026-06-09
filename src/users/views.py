@@ -83,6 +83,7 @@ AUTO_PAUSE_MEDIA_TYPES = [
     MediaTypes.MANGA.value,
     MediaTypes.BOOK.value,
     MediaTypes.COMIC.value,
+    MediaTypes.COMIC_ISSUE.value,
 ]
 
 

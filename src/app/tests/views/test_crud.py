@@ -16,6 +16,7 @@ from app.models import (
     Anime,
     Book,
     Comic,
+    ComicIssue,
     Episode,
     Item,
     Manga,
@@ -222,6 +223,38 @@ class CreateMedia(TestCase):
         )
         self.assertEqual(item.authors, ["Writer One", "Writer Two"])
         self.assertTrue(Comic.objects.filter(item=item, user=self.user).exists())
+
+    @patch("app.save_views.ensure_item_metadata")
+    def test_create_comic_issue(self, mock_ensure_item_metadata):
+        """Comic issue saves should create ComicIssue rows."""
+        item = Item.objects.create(
+            media_id="114214",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC_ISSUE.value,
+            title="The Iron Prometheus",
+            image="http://example.com/issue.jpg",
+        )
+        mock_ensure_item_metadata.return_value = SimpleNamespace(
+            item=item,
+            artist=None,
+            album=None,
+            track=None,
+            podcast_show=None,
+        )
+
+        response = self.client.post(
+            reverse("media_save"),
+            {
+                "media_id": "114214",
+                "source": Sources.COMICVINE.value,
+                "media_type": MediaTypes.COMIC_ISSUE.value,
+                "status": Status.COMPLETED.value,
+                "progress": 1,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(ComicIssue.objects.filter(item=item, user=self.user).exists())
 
     @patch("app.views.services.get_media_metadata")
     def test_create_movie_sets_release_datetime_from_metadata(self, metadata_mock):

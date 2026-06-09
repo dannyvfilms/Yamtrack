@@ -471,6 +471,7 @@ def get_media_metadata(
             else openlibrary.book(media_id)
         ),
         MediaTypes.COMIC.value: lambda: comicvine.comic(media_id),
+        MediaTypes.COMIC_ISSUE.value: lambda: comicvine.comic_issue(media_id),
         MediaTypes.BOARDGAME.value: lambda: bgg.boardgame(media_id),
         MediaTypes.MUSIC.value: lambda: musicbrainz.recording(media_id),
         MediaTypes.PODCAST.value: lambda s=source: {
@@ -881,6 +882,7 @@ def search(media_type, query, page, source=None):
             else hardcover.search(query, page)
         ),
         MediaTypes.COMIC.value: lambda: comicvine.search(query, page),
+        MediaTypes.COMIC_ISSUE.value: lambda: comicvine.search_issues(query, page),
         MediaTypes.BOARDGAME.value: lambda: bgg.search(query, page),
         MediaTypes.MUSIC.value: lambda: musicbrainz.search_combined(query, page),
         MediaTypes.PODCAST.value: lambda: (

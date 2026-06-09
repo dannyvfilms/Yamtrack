@@ -1,0 +1,61 @@
+{% load app_tags %}
+{% load user_tags %}
+<div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg"
+     x-show="!$store.epLayout || $store.epLayout !== 'list'">
+  <div class="flex flex-col md:flex-row">
+    {# Cover image #}
+    <div class="relative shrink-0 self-start overflow-hidden">
+      {% if ep_detail_url %}<a href="{{ ep_detail_url }}" class="block">{% endif %}
+      <img src="{{ IMG_NONE }}"
+           alt="#{{ episode.issue_number }}"
+           data-src="{{ episode.image }}"
+           class="lazyload md:w-64 md:h-40 {% if ep_detail_url %}hover:opacity-90 transition-opacity{% endif %} shrink-0 {% if episode.image != IMG_NONE %}object-cover{% endif %}">
+      {% if ep_detail_url %}</a>{% endif %}
+      {% if episode.history %}
+        <div class="absolute top-2 left-2 z-10 bg-emerald-600/90 rounded-full p-1" title="Read">
+          {% include "app/icons/checkmark.svg" with classes="w-3.5 h-3.5 text-white" %}
+        </div>
+      {% endif %}
+    </div>
+
+    {# Text content #}
+    <div class="py-3 flex-1 flex flex-col">
+      <div class="flex-1">
+        <div class="flex justify-between items-start mb-2 space-x-2 px-4">
+          {% if ep_detail_url %}<a href="{{ ep_detail_url }}" class="block min-w-0 hover:text-indigo-400 transition-colors">{% endif %}
+          <div>
+            <h2 class="text-xl font-semibold mb-1 line-clamp-1">{{ episode.title|default:"Unknown" }}</h2>
+            <p class="text-sm text-gray-400">
+              Issue #{{ episode.issue_number }}{% if episode.cover_date %} • {{ episode.cover_date }}{% endif %}
+            </p>
+          </div>
+          {% if ep_detail_url %}</a>{% endif %}
+
+          {% if not public_view|default:False and user.is_authenticated %}
+            {% include "app/components/detail_row_actions.html" with episode=episode action_media_type=MediaTypes.COMIC_ISSUE.value track_button_variant="media" track_button_title="Track Issue" history_item=episode detail_return_url=detail_return_url request=request csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user media_type=media_type MediaTypes=MediaTypes only %}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# Compact list view row #}
+<div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#2a2f35] hover:bg-[#2f353c] transition-colors"
+     x-show="$store.epLayout === 'list'"
+     style="display:none">
+  <span class="shrink-0 w-9 text-center text-[11px] font-mono text-gray-500 tabular-nums">
+    #{{ episode.issue_number }}
+  </span>
+  <div class="flex-1 min-w-0">
+    {% if ep_detail_url %}<a href="{{ ep_detail_url }}" class="group/issue-row block">{% endif %}
+    <p class="text-sm font-medium truncate {% if ep_detail_url %}group-hover/issue-row:text-indigo-400 transition-colors{% endif %}">{{ episode.title|default:"Unknown" }}</p>
+    <p class="text-xs text-gray-400 truncate mt-0.5">
+      {% if episode.cover_date %}{{ episode.cover_date }}{% endif %}{% if episode.history %} · Read{% endif %}
+    </p>
+    {% if ep_detail_url %}</a>{% endif %}
+  </div>
+  {% if episode.history %}
+    <span class="shrink-0 text-emerald-400" title="Read">{% include "app/icons/checkmark.svg" with classes="w-4 h-4" %}</span>
+  {% endif %}
+</div>

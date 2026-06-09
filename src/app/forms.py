@@ -17,6 +17,7 @@ from app.models import (
     Book,
     CollectionEntry,
     Comic,
+    ComicIssue,
     Episode,
     Game,
     Item,
@@ -522,6 +523,15 @@ class ComicForm(MediaForm):
                 "step": 0.1,
                 "placeholder": "%"
             })
+
+
+class ComicissueForm(MediaForm):
+    """Form for individual comic issues."""
+
+    class Meta(MediaForm.Meta):
+        """Bind form to model."""
+
+        model = ComicIssue
 
 
 class TvForm(MediaForm):
