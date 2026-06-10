@@ -504,7 +504,7 @@ def _resolve_studio_url_target(value):
 def _music_slug(value, fallback):
     """Return a stable slug with a safe fallback."""
     normalized = slug(value or "")
-    if normalized:
+    if normalized and "%" not in normalized:
         return normalized
     fallback_value = str(fallback or "item")
     return slug(fallback_value) or "item"
@@ -580,7 +580,7 @@ def music_album_url(album):
 def _studio_slug(value, fallback):
     """Return a stable slug with a safe fallback for studio links."""
     normalized = slug(value or "")
-    if normalized:
+    if normalized and "%" not in normalized:
         return normalized
     fallback_value = str(fallback or "item")
     return slug(fallback_value) or "item"
