@@ -378,6 +378,117 @@ class TestPlexHybridImport(TestCase):
         )
         self.assertEqual(Episode.objects.filter(related_season=existing_season).count(), 1)
 
+    @patch("integrations.imports.plex.plex_api.fetch_section_all_items")
+    @patch("integrations.imports.plex.PlexWebhookProcessor._find_tv_media_id")
+    @patch("integrations.imports.plex.services.get_media_metadata")
+    @patch("integrations.imports.plex.plex_api.fetch_metadata")
+    @patch("integrations.imports.plex.plex_api.list_users")
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    @patch("integrations.imports.plex.plex_api.list_sections")
+    @patch("integrations.imports.plex.plex_api.fetch_account")
+    def test_episode_import_uses_library_media_type_in_item_lookup(
+        self,
+        mock_fetch_account,
+        mock_list_sections,
+        mock_list_resources,
+        mock_fetch_history,
+        mock_list_users,
+        mock_fetch_metadata,
+        mock_get_metadata,
+        mock_find_tv_media_id,
+        mock_fetch_section_items,
+    ):
+        """Episode imports should target the normalized library media type lookup."""
+        Item.objects.create(
+            title="Yellowstone",
+            media_id="1515183",
+            media_type=MediaTypes.EPISODE.value,
+            library_media_type=MediaTypes.ANIME.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/anime-episode.jpg",
+            season_number=1,
+            episode_number=4,
+        )
+        Item.objects.create(
+            title="Yellowstone",
+            media_id="1515183",
+            media_type=MediaTypes.EPISODE.value,
+            library_media_type=MediaTypes.EPISODE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/episode.jpg",
+            season_number=1,
+            episode_number=4,
+        )
+
+        mock_fetch_account.return_value = {"id": "4441952"}
+        mock_list_sections.return_value = [
+            {"id": "1", "machine_identifier": "machine", "title": "TV", "type": "show"}
+        ]
+        mock_list_resources.return_value = [
+            {"machine_identifier": "machine", "connections": [{"uri": "http://plex"}]}
+        ]
+        mock_list_users.return_value = []
+        mock_fetch_metadata.return_value = None
+        mock_fetch_section_items.return_value = ([], 0)
+        mock_find_tv_media_id.return_value = ("73586", 1, 4)
+        mock_fetch_history.return_value = (
+            [
+                {
+                    "type": "episode",
+                    "title": "Going Back to Cali",
+                    "grandparentTitle": "Yellowstone",
+                    "parentIndex": 1,
+                    "index": 4,
+                    "guid": "tmdb://1515183",
+                    "viewedAt": 1700000000,
+                    "accountID": "4441952",
+                    "ratingKey": "rk-yellowstone",
+                    "key": "/metadata/rk-yellowstone",
+                }
+            ],
+            1,
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "73586",
+            "title": "Yellowstone",
+            "original_title": "Yellowstone",
+            "localized_title": "Yellowstone",
+            "image": "https://example.com/show.jpg",
+            "tvdb_id": "361315",
+            "season/1": {
+                "image": "https://example.com/season1.jpg",
+                "episodes": [
+                    {
+                        "episode_number": 4,
+                        "still_path": "/episode4.jpg",
+                    }
+                ],
+            },
+        }
+
+        plex.importer("machine::1", self.user, "new")
+
+        self.assertEqual(
+            Item.objects.filter(
+                media_id="1515183",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+            ).count(),
+            2,
+        )
+        imported_episode = Episode.objects.get(related_season__user=self.user)
+        self.assertEqual(
+            imported_episode.item.library_media_type,
+            MediaTypes.EPISODE.value,
+        )
+        self.assertFalse(
+            Episode.objects.filter(
+                related_season__user=self.user,
+                item__library_media_type=MediaTypes.ANIME.value,
+            ).exists()
+        )
+
 
 class TestPlexImportScenarios(TestCase):
     """

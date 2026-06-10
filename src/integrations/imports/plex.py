@@ -1581,6 +1581,7 @@ class PlexHistoryImporter:
             "media_id": tmdb_id,
             "source": Sources.TMDB.value,
             "media_type": media_type,
+            "library_media_type": media_type,
         }
 
         if season_number is not None:
