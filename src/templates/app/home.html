@@ -1,7 +1,12 @@
 {% extends "base.html" %}
 {% load app_tags %}
 
-{% block extra_head %}
+{% block title %}
+  Home - Yamtrack
+{% endblock title %}
+
+{% block content %}
+  {# Styles live in the content block so boosted navigation keeps them #}
   <style>
     @media (max-width: 639.98px) {
       .home-row-heading {
@@ -46,13 +51,6 @@
       }
     }
   </style>
-{% endblock extra_head %}
-
-{% block title %}
-  Home - Yamtrack
-{% endblock title %}
-
-{% block content %}
   <div class="space-y-4 sm:space-y-8">
     <div id="active-playback-container"
          class="media-grid"

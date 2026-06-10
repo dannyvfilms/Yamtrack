@@ -3,7 +3,6 @@
 {% load app_tags %}
 
 {% block extra_head %}
-  {{ form.media.css }}
   <meta name="cache-control" content="no-cache, no-store, must-revalidate, max-age=0">
   <meta name="pragma" content="no-cache">
   <meta http-equiv="expires" content="0">
@@ -15,6 +14,8 @@
 {% endblock title %}
 
 {% block content %}
+  {# Form CSS lives in the content block so boosted navigation keeps it #}
+  {{ form.media.css }}
   <div x-data="{ showModal: false, listMode: 'manual', showTraktModal: false, traktDefaultStep: {% if trakt_has_credentials %}3{% else %}1{% endif %}, traktStep: {% if trakt_has_credentials %}3{% else %}1{% endif %} }">
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
       <div>

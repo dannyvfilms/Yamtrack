@@ -2,16 +2,14 @@
 {% load static %}
 {% load app_tags %}
 
-{% block extra_head %}
-  {% if form %}{{ form.media.css }}{% endif %}
-{% endblock extra_head %}
-
 {% block title %}
   {{ custom_list }} - Yamtrack
 {% endblock title %}
 
 {# djlint:off #}
 {% block content %}
+  {# Form CSS lives in the content block so boosted navigation keeps it #}
+  {% if form %}{{ form.media.css }}{% endif %}
   <div class="mb-6">
     <div class="w-full min-w-0">
       <div class="mb-2 flex flex-wrap items-center gap-3">
