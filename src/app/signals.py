@@ -345,7 +345,8 @@ def flush_media_change_side_effects(
         normalized_items.append(item)
 
     if normalized_items:
-        _sync_owner_smart_lists_for_items(owner, normalized_items)
+        from lists.tasks import sync_smart_lists_for_items_task
+        sync_smart_lists_for_items_task.delay(owner.id, list(seen_item_ids))
         DiscoverFeedback.objects.filter(
             user_id=owner.id,
             item_id__in=seen_item_ids,

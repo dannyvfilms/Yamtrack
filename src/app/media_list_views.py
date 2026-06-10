@@ -1600,7 +1600,6 @@ def media_list(request, media_type):
 
     if media_type == MediaTypes.MUSIC.value:
         from app.models import Artist, ArtistTracker
-        from app.services.music import get_artist_hero_image
 
         artist_trackers = (
             ArtistTracker.objects.filter(user=request.user)
@@ -1770,6 +1769,8 @@ def media_list(request, media_type):
 
         # Only backfill images for artists on the current page to avoid full queryset evaluation
         # Use object_list to avoid consuming the page iterator (important for HTMX pagination)
+        from app.models import Album
+
         artists_to_update = []
         seen_artist_ids = set()
         artist_id_to_updated_image = {}  # Track which artists got updated images
@@ -1777,25 +1778,43 @@ def media_list(request, media_type):
         artists_with_images = 0
         artists_missing_images = 0
 
+        # Partition artists into those with / without images in a single pass.
+        artists_missing_image_objects = []
         for tracker in artist_page.object_list:
             artist = tracker.artist
             if artist.id not in seen_artist_ids:
                 seen_artist_ids.add(artist.id)
                 artists_checked += 1
-
-                # Check if artist already has an image (handle both None and empty string)
-                # This check happens AFTER refresh, so we have the latest data
                 has_image = artist.image and artist.image != settings.IMG_NONE and artist.image != ""
                 if has_image:
                     artists_with_images += 1
                 else:
                     artists_missing_images += 1
-                    # Try to get hero image from albums
-                    hero_image = get_artist_hero_image(artist)
-                    if hero_image and hero_image != settings.IMG_NONE:
-                        artist.image = hero_image
-                        artists_to_update.append(artist)
-                        artist_id_to_updated_image[artist.id] = hero_image
+                    artists_missing_image_objects.append(artist)
+
+        # Batch fetch earliest album image for all artists missing one — 1 query instead of 2 per artist.
+        hero_image_map: dict[int, str] = {}
+        if artists_missing_image_objects:
+            missing_ids = [a.id for a in artists_missing_image_objects]
+            seen_for_hero: set[int] = set()
+            for row in (
+                Album.objects.filter(artist_id__in=missing_ids)
+                .exclude(image="")
+                .exclude(image=settings.IMG_NONE)
+                .order_by("artist_id", "release_date")
+                .values("artist_id", "image")
+            ):
+                aid = row["artist_id"]
+                if aid not in seen_for_hero:
+                    seen_for_hero.add(aid)
+                    hero_image_map[aid] = row["image"]
+
+        for artist in artists_missing_image_objects:
+            hero_image = hero_image_map.get(artist.id)
+            if hero_image and hero_image != settings.IMG_NONE:
+                artist.image = hero_image
+                artists_to_update.append(artist)
+                artist_id_to_updated_image[artist.id] = hero_image
 
         # Log backfill attempt (always, not just when updates happen)
         is_pagination_req = bool(request.GET.get("page") and int(request.GET.get("page", 1)) > 1)
