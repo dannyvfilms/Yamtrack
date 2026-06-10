@@ -6,6 +6,65 @@ from django.test import SimpleTestCase
 from app.providers import musicbrainz
 
 
+class MusicBrainzReleaseTests(SimpleTestCase):
+    """Test release metadata formatting."""
+
+    def test_get_release_returns_structured_artist_credits(self):
+        """Release details should preserve individual artist credits."""
+        with (
+            patch("app.providers.musicbrainz.cache.get", return_value=None),
+            patch("app.providers.musicbrainz.cache.set"),
+            patch("app.providers.musicbrainz._mb_request") as mock_mb_request,
+        ):
+            mock_mb_request.return_value = {
+                "title": "Shared Album",
+                "date": "2024-01-15",
+                "release-group": {"id": "release-group-mbid"},
+                "artist-credit": [
+                    {
+                        "name": "Artist One",
+                        "joinphrase": " & ",
+                        "artist": {
+                            "id": "artist-one-mbid",
+                            "name": "Artist One",
+                            "sort-name": "One, Artist",
+                        },
+                    },
+                    {
+                        "name": "Artist Two",
+                        "joinphrase": "",
+                        "artist": {
+                            "id": "artist-two-mbid",
+                            "name": "Artist Two",
+                            "sort-name": "Two, Artist",
+                        },
+                    },
+                ],
+                "media": [],
+            }
+
+            data = musicbrainz.get_release("release-mbid", skip_cover_art=True)
+
+        self.assertEqual(data["artist_name"], "Artist One & Artist Two")
+        self.assertEqual(
+            data["artist_credits"],
+            [
+                {
+                    "artist_id": "artist-one-mbid",
+                    "name": "Artist One",
+                    "sort_name": "One, Artist",
+                    "join_phrase": " & ",
+                },
+                {
+                    "artist_id": "artist-two-mbid",
+                    "name": "Artist Two",
+                    "sort_name": "Two, Artist",
+                    "join_phrase": "",
+                },
+            ],
+        )
+
+
 class MusicBrainzCombinedSearchTests(SimpleTestCase):
     """Test combined music search result formatting."""
 

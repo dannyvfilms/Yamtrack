@@ -42,6 +42,7 @@ from app.models.media import (
 )
 from app.models.music import (
     Album,
+    AlbumArtist,
     AlbumTracker,
     Artist,
     ArtistTracker,
@@ -67,6 +68,7 @@ __all__ = [
     "ActiveAnimeManager",
     "ActiveAnimeQuerySet",
     "Album",
+    "AlbumArtist",
     "AlbumTracker",
     "Anime",
     "Artist",

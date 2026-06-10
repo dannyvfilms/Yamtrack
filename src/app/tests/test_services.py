@@ -7,6 +7,10 @@ from django.utils import timezone
 from app.mixins import disable_fetch_releases
 from app.models import (
     TV,
+    Album,
+    AlbumArtist,
+    AlbumTracker,
+    Artist,
     Book,
     Game,
     Item,
@@ -17,6 +21,7 @@ from app.models import (
     Status,
 )
 from app.services.auto_pause import auto_pause_stale_items
+from app.services.music import canonicalize_album, sync_album_artist_credits
 
 
 class AutoPauseServiceTests(TestCase):
@@ -183,3 +188,81 @@ class AutoPauseServiceTests(TestCase):
         )
         return book
 
+
+class MusicServiceTests(TestCase):
+    """Tests for music service helpers."""
+
+    def test_sync_album_artist_credits_replaces_fallback_credit(self):
+        """Structured MusicBrainz credits replace the legacy single-artist fallback."""
+        artist = Artist.objects.create(
+            name="Brian Eno",
+            musicbrainz_id="ff95eb47-41c4-4f7f-a104-cdc30f02e872",
+        )
+        album = Album.objects.create(
+            title="My Life in the Bush of Ghosts",
+            artist=artist,
+            musicbrainz_release_id="10eaf5b7-e319-42fd-babb-d3686ad347cf",
+        )
+        AlbumArtist.objects.create(album=album, artist=artist)
+
+        sync_album_artist_credits(
+            album,
+            {
+                "artist_credits": [
+                    {
+                        "artist_id": "ff95eb47-41c4-4f7f-a104-cdc30f02e872",
+                        "name": "Brian Eno",
+                        "sort_name": "Eno, Brian",
+                        "join_phrase": "\u2014",
+                    },
+                    {
+                        "artist_id": "641b56b5-6571-43dc-b5b1-2e822f349162",
+                        "name": "David Byrne",
+                        "sort_name": "Byrne, David",
+                        "join_phrase": "",
+                    },
+                ],
+            },
+        )
+
+        credits = list(album.artist_credits.select_related("artist"))
+        self.assertEqual(
+            [credit.artist.name for credit in credits],
+            ["Brian Eno", "David Byrne"],
+        )
+        self.assertEqual([credit.join_phrase for credit in credits], ["\u2014", ""])
+
+    def test_canonicalize_album_merges_cross_artist_duplicate(self):
+        """Shared MusicBrainz albums should use one canonical album row."""
+        user = get_user_model().objects.create_user(
+            username="music_user",
+            password="pass12345",
+        )
+        brian_eno = Artist.objects.create(name="Brian Eno")
+        david_byrne = Artist.objects.create(name="David Byrne")
+        canonical = Album.objects.create(
+            title="My Life in the Bush of Ghosts",
+            artist=brian_eno,
+            musicbrainz_release_group_id="release-group-mbid",
+        )
+        duplicate = Album.objects.create(
+            title="My Life in the Bush of Ghosts",
+            artist=david_byrne,
+            musicbrainz_release_group_id="release-group-mbid",
+        )
+        AlbumArtist.objects.create(album=canonical, artist=brian_eno)
+        AlbumArtist.objects.create(album=duplicate, artist=david_byrne)
+        AlbumTracker.objects.create(
+            user=user,
+            album=canonical,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        result = canonicalize_album(duplicate, user=user)
+
+        self.assertEqual(result, canonical)
+        self.assertFalse(Album.objects.filter(id=duplicate.id).exists())
+        self.assertCountEqual(
+            list(canonical.artist_credits.values_list("artist__name", flat=True)),
+            ["Brian Eno", "David Byrne"],
+        )

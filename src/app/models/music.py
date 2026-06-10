@@ -81,6 +81,12 @@ class Album(models.Model):
         null=True,
         blank=True,
     )
+    credited_artists = models.ManyToManyField(
+        Artist,
+        through="AlbumArtist",
+        related_name="credited_albums",
+        blank=True,
+    )
     release_date = models.DateField(null=True, blank=True)
     image = models.URLField(blank=True, default="")
     release_type = models.CharField(
@@ -116,6 +122,30 @@ class Album(models.Model):
         if self.artist:
             return f"{self.title} - {self.artist.name}"
         return self.title
+
+
+class AlbumArtist(models.Model):
+    album = models.ForeignKey(
+        Album,
+        on_delete=models.CASCADE,
+        related_name="artist_credits",
+    )
+    artist = models.ForeignKey(
+        Artist,
+        on_delete=models.CASCADE,
+        related_name="album_credits",
+    )
+    position = models.PositiveIntegerField(default=0)
+    join_phrase = models.CharField(max_length=100, blank=True, default="")
+
+    class Meta:
+        ordering = ["position"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["album", "artist"],
+                name="unique_album_artist_credit",
+            ),
+        ]
 
 
 class Track(models.Model):

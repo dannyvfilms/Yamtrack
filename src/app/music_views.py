@@ -4,7 +4,7 @@ from uuid import uuid4
 from django.conf import settings
 from django.contrib import messages
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import IntegrityError, models
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -263,6 +263,7 @@ def _render_music_artist_details(request, artist):
     from app.providers import musicbrainz
     from app.services.music import (
         build_discography_groups,
+        canonicalize_album,
         needs_discography_sync,
         sync_artist_discography,
     )
@@ -316,7 +317,9 @@ def _render_music_artist_details(request, artist):
 
     dedupe_artist_albums(artist)
 
-    albums_qs = Album.objects.filter(artist=artist)
+    albums_qs = Album.objects.filter(
+        models.Q(artist=artist) | models.Q(artist_credits__artist=artist),
+    ).distinct()
     existing_album_count = albums_qs.count()
     missing_mbids = albums_qs.filter(
         musicbrainz_release_id__isnull=True,
@@ -340,14 +343,23 @@ def _render_music_artist_details(request, artist):
             artist.name,
         )
 
-    all_albums = list(
-        Album.objects.filter(artist=artist).order_by("-release_date", "title"),
+    raw_albums = list(
+        Album.objects.filter(
+            models.Q(artist=artist) | models.Q(artist_credits__artist=artist),
+        )
+        .distinct()
+        .order_by("-release_date", "title"),
     )
+    all_albums_by_id = {}
+    for album in raw_albums:
+        canonical_album = canonicalize_album(album, user=request.user)
+        all_albums_by_id[canonical_album.id] = canonical_album
+    all_albums = list(all_albums_by_id.values())
 
     user_music_entries = list(
         Music.objects.filter(
+            models.Q(album__artist=artist) | models.Q(album__artist_credits__artist=artist),
             user=request.user,
-            album__artist=artist,
         ).select_related("album", "item"),
     )
 
@@ -595,10 +607,28 @@ def _render_music_album_details(request, artist, album):
         ensure_album_has_release_id(album)
 
     has_mb_identity = album_has_musicbrainz_id(album)
+    album_release_data = None
+    if (
+        album.musicbrainz_release_id
+        and sync_services.album_artist_credits_need_sync(album)
+    ):
+        try:
+            album_release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+            sync_services.sync_album_artist_credits(album, album_release_data)
+        except Exception as exc:
+            logger.warning(
+                "Failed to sync artist credits for album %s: %s",
+                album.title,
+                exc,
+            )
+
     if not album.tracks_populated and has_mb_identity:
         try:
             if album.musicbrainz_release_id:
-                release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+                release_data = album_release_data or musicbrainz.get_release(
+                    album.musicbrainz_release_id,
+                )
+                sync_services.sync_album_artist_credits(album, release_data)
                 tracks_data = release_data.get("tracks", [])
 
                 if release_data.get("genres") and not album.genres:
@@ -824,7 +854,16 @@ def music_artist_details(request, artist_id, artist_slug):
 @require_GET
 def music_album_details(request, artist_id, artist_slug, album_id, album_slug):
     """Return the canonical shared music album detail page."""
-    album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
+    from app.services.music import canonicalize_album
+
+    album = get_object_or_404(
+        Album.objects.select_related("artist").prefetch_related("artist_credits__artist"),
+        id=album_id,
+    )
+    canonical_album = canonicalize_album(album, user=request.user)
+    if canonical_album.id != album.id:
+        return redirect(_music_album_detail_url(canonical_album))
+    album = canonical_album
     if album.artist_id and album.artist_id != artist_id:
         return redirect(_music_album_detail_url(album))
     artist = album.artist
@@ -875,21 +914,57 @@ def create_album_from_search(request, musicbrainz_release_id):
 
     if not album:
         artist = None
+        created_artists = []
         artist_id = release_data.get("artist_id")
         artist_name = release_data.get("artist_name")
+        artist_credits = release_data.get("artist_credits", [])
 
-        if artist_id:
-            artist = Artist.objects.filter(musicbrainz_id=artist_id).first()
-            if not artist and artist_name:
-                artist = Artist.objects.create(
-                    name=artist_name,
-                    musicbrainz_id=artist_id,
-                    country=release_data.get("country", "") or "",
-                )
-        elif artist_name:
-            artist = Artist.objects.filter(name=artist_name).first()
-            if not artist:
-                artist = Artist.objects.create(name=artist_name)
+        if artist_credits:
+            for position, credit in enumerate(artist_credits):
+                credit_artist_id = credit.get("artist_id")
+                credit_artist_name = credit.get("name")
+                if not credit_artist_name:
+                    continue
+
+                credit_artist = None
+                if credit_artist_id:
+                    credit_artist = Artist.objects.filter(
+                        musicbrainz_id=credit_artist_id,
+                    ).first()
+                if not credit_artist:
+                    credit_artist = Artist.objects.filter(
+                        name=credit_artist_name,
+                    ).first()
+                if not credit_artist:
+                    credit_artist = Artist.objects.create(
+                        name=credit_artist_name,
+                        sort_name=credit.get("sort_name", ""),
+                        musicbrainz_id=credit_artist_id,
+                    )
+
+                if artist is None:
+                    artist = credit_artist
+                created_artists.append((
+                    credit_artist,
+                    position,
+                    credit.get("join_phrase", ""),
+                ))
+        else:
+            if artist_id:
+                artist = Artist.objects.filter(musicbrainz_id=artist_id).first()
+                if not artist and artist_name:
+                    artist = Artist.objects.create(
+                        name=artist_name,
+                        musicbrainz_id=artist_id,
+                        country=release_data.get("country", "") or "",
+                    )
+            elif artist_name:
+                artist = Artist.objects.filter(name=artist_name).first()
+                if not artist:
+                    artist = Artist.objects.create(name=artist_name)
+
+            if artist:
+                created_artists.append((artist, 0, ""))
 
         release_date = None
         date_str = release_data.get("release_date", "")
@@ -917,8 +992,25 @@ def create_album_from_search(request, musicbrainz_release_id):
             image=release_data.get("image", ""),
             genres=release_data.get("genres", []),
         )
+        from app.models import AlbumArtist
+
+        for credit_artist, position, join_phrase in created_artists:
+            AlbumArtist.objects.get_or_create(
+                album=album,
+                artist=credit_artist,
+                defaults={"position": position, "join_phrase": join_phrase},
+            )
         logger.info("Created album %s from MusicBrainz", album.title)
     else:
+        if not album.artist_credits.exists() and album.artist:
+            from app.models import AlbumArtist
+
+            AlbumArtist.objects.get_or_create(
+                album=album,
+                artist=album.artist,
+                defaults={"position": 0, "join_phrase": ""},
+            )
+
         new_image = release_data.get("image", "")
         if (
             new_image
@@ -954,11 +1046,18 @@ def prefetch_artist_covers(request, artist_id):
 
     artist = get_object_or_404(Artist, id=artist_id)
 
-    all_albums = list(Album.objects.filter(artist=artist).order_by("-release_date", "title"))
+    all_albums = list(
+        Album.objects.filter(
+            models.Q(artist=artist) | models.Q(artist_credits__artist=artist),
+        )
+        .distinct()
+        .order_by("-release_date", "title"),
+    )
 
     user_music_entries = Music.objects.filter(
         user=request.user,
-        album__artist=artist,
+    ).filter(
+        models.Q(album__artist=artist) | models.Q(album__artist_credits__artist=artist),
     ).select_related("album")
 
     album_play_counts = {}

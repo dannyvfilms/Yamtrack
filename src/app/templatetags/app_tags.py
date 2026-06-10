@@ -108,6 +108,20 @@ def collection_quality_display(collection_entry, explicit_label=""):
 
 
 @register.filter
+def music_artist_join_phrase(value):
+    """Normalize album artist join phrases for display."""
+    phrase = str(value or "")
+    stripped = phrase.strip()
+    if not stripped:
+        return ""
+
+    if stripped == ",":
+        return ", "
+
+    return f" {stripped} "
+
+
+@register.filter
 def slug(arg1):
     """Return the slug of the string.
 

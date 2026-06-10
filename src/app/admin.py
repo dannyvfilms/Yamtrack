@@ -80,6 +80,7 @@ SpecialModels = [
     "BasicMedia",
     "Artist",
     "Album",
+    "AlbumArtist",
     "Track",
     "ArtistTracker",
     "AlbumTracker",

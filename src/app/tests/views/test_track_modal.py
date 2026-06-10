@@ -8,6 +8,7 @@ from django.urls import reverse
 from app.models import (
     TV,
     Album,
+    AlbumArtist,
     AlbumTracker,
     Anime,
     Artist,
@@ -74,7 +75,7 @@ class TrackModalViewTests(TestCase):
         self.client.login(**self.credentials)
 
         self.mock_get_media_metadata = patch(
-            "app.models.providers.services.get_media_metadata",
+            "app.providers.services.get_media_metadata",
             return_value={"max_progress": 1},
         )
         self.mock_fetch_releases = patch("app.models.Item.fetch_releases")
@@ -466,7 +467,10 @@ class TrackModalViewTests(TestCase):
         )
 
         album = Album.objects.get(musicbrainz_release_id="release-mbid")
+        credit = AlbumArtist.objects.get(album=album)
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(credit.artist, album.artist)
+        self.assertEqual(credit.position, 0)
         self.assertEqual(
             response.url,
             reverse(
@@ -478,6 +482,52 @@ class TrackModalViewTests(TestCase):
                     "album_slug": "fetched-album",
                 },
             ),
+        )
+
+    @patch("app.providers.musicbrainz.get_release")
+    def test_create_album_from_search_creates_structured_artist_credits(
+        self,
+        mock_get_release,
+    ):
+        """Album search creates individual artists for multi-artist releases."""
+        mock_get_release.return_value = {
+            "title": "Fetched Album",
+            "artist_id": "artist-one-mbid",
+            "artist_name": "Artist One & Artist Two",
+            "artist_credits": [
+                {
+                    "artist_id": "artist-one-mbid",
+                    "name": "Artist One",
+                    "sort_name": "One, Artist",
+                    "join_phrase": " & ",
+                },
+                {
+                    "artist_id": "artist-two-mbid",
+                    "name": "Artist Two",
+                    "sort_name": "Two, Artist",
+                    "join_phrase": "",
+                },
+            ],
+            "release_date": "2024-01-15",
+            "image": "https://example.com/album.jpg",
+            "genres": ["rock"],
+        }
+
+        response = self.client.get(
+            reverse("create_album_from_search", args=["release-mbid"]),
+        )
+
+        album = Album.objects.get(musicbrainz_release_id="release-mbid")
+        credits = list(album.artist_credits.select_related("artist"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(album.artist.name, "Artist One")
+        self.assertEqual(
+            [credit.artist.name for credit in credits],
+            ["Artist One", "Artist Two"],
+        )
+        self.assertEqual([credit.join_phrase for credit in credits], [" & ", ""])
+        self.assertTrue(
+            Artist.objects.filter(musicbrainz_id="artist-two-mbid").exists(),
         )
 
     @patch("app.providers.services.get_media_metadata")

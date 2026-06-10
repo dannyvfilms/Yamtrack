@@ -302,6 +302,13 @@ class AppTagsTests(TestCase):
             ),
         )
 
+    def test_music_artist_join_phrase_normalizes_display_spacing(self):
+        """Album artist separators should have consistent display spacing."""
+        self.assertEqual(app_tags.music_artist_join_phrase("\u2014 "), " \u2014 ")
+        self.assertEqual(app_tags.music_artist_join_phrase(" & "), " & ")
+        self.assertEqual(app_tags.music_artist_join_phrase(","), ", ")
+        self.assertEqual(app_tags.music_artist_join_phrase(""), "")
+
     def test_music_album_url_returns_nested_canonical_details_path(self):
         """Music albums should resolve to the nested artist/album shared route."""
         artist = Artist.objects.create(name="The Amazing Artist")

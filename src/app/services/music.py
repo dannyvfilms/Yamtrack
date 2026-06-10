@@ -10,7 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from app.log_safety import exception_summary
-from app.models import Album, Artist, Track
+from app.models import Album, AlbumArtist, Artist, Track
 
 logger = logging.getLogger(__name__)
 
@@ -840,6 +840,13 @@ def sync_artist_discography(artist: Artist, force: bool = False) -> int:
             else:
                 logger.debug("Updated album: %s", album.title)
 
+            AlbumArtist.objects.get_or_create(
+                album=album,
+                artist=artist,
+                defaults={"position": 0, "join_phrase": ""},
+            )
+            canonicalize_album(album)
+
             synced_count += 1
 
         # Update sync timestamp
@@ -856,6 +863,231 @@ def sync_artist_discography(artist: Artist, force: bool = False) -> int:
     except Exception as e:
         logger.exception("Failed to sync discography for artist %s: %s", artist.name, e)
         return 0
+
+
+def sync_album_artist_credits(album: Album, release_data: dict) -> None:
+    """Create AlbumArtist credits from MusicBrainz release data."""
+    artist_credits = release_data.get("artist_credits") or []
+
+    def clear_prefetch_cache() -> None:
+        if hasattr(album, "_prefetched_objects_cache"):
+            album._prefetched_objects_cache.pop("artist_credits", None)
+
+    if not artist_credits:
+        if album.artist_id and not album.artist_credits.exists():
+            AlbumArtist.objects.get_or_create(
+                album=album,
+                artist=album.artist,
+                defaults={"position": 0, "join_phrase": ""},
+            )
+            clear_prefetch_cache()
+        return
+
+    created_credits = []
+    for position, credit in enumerate(artist_credits):
+        artist_id = credit.get("artist_id")
+        artist_name = credit.get("name")
+        if not artist_name:
+            continue
+
+        artist = None
+        if artist_id:
+            artist = Artist.objects.filter(musicbrainz_id=artist_id).first()
+        if not artist:
+            artist = Artist.objects.filter(name=artist_name).first()
+        if not artist:
+            artist = Artist.objects.create(
+                name=artist_name,
+                sort_name=credit.get("sort_name", ""),
+                musicbrainz_id=artist_id,
+            )
+
+        created_credits.append((artist, position, credit.get("join_phrase", "")))
+
+    if not created_credits:
+        return
+
+    if album.artist_id is None:
+        album.artist = created_credits[0][0]
+        album.save(update_fields=["artist"])
+
+    album.artist_credits.all().delete()
+    for artist, position, join_phrase in created_credits:
+        AlbumArtist.objects.create(
+            album=album,
+            artist=artist,
+            position=position,
+            join_phrase=join_phrase,
+        )
+    clear_prefetch_cache()
+
+
+def album_artist_credits_need_sync(album: Album) -> bool:
+    """Return True when album credits are missing or look like fallback data."""
+    credits = list(album.artist_credits.all()[:2])
+    if not credits:
+        return True
+
+    return (
+        len(credits) == 1
+        and album.artist_id is not None
+        and credits[0].artist_id == album.artist_id
+        and credits[0].position == 0
+        and credits[0].join_phrase == ""
+    )
+
+
+def _album_identity_filter(album: Album) -> models.Q | None:
+    if album.musicbrainz_release_group_id:
+        return models.Q(
+            musicbrainz_release_group_id=album.musicbrainz_release_group_id,
+        )
+    if album.musicbrainz_release_id:
+        return models.Q(musicbrainz_release_id=album.musicbrainz_release_id)
+    return None
+
+
+def find_canonical_album(album: Album, user=None) -> Album:
+    """Return the preferred row for a MusicBrainz album identity."""
+    identity_filter = _album_identity_filter(album)
+    if identity_filter is None:
+        return album
+
+    from app.models import AlbumTracker, Music
+
+    candidates = list(Album.objects.filter(identity_filter).select_related("artist"))
+    if len(candidates) <= 1:
+        return album
+
+    def score(candidate: Album) -> tuple:
+        user_tracker = 0
+        if user is not None and getattr(user, "is_authenticated", False):
+            user_tracker = int(
+                AlbumTracker.objects.filter(user=user, album=candidate).exists(),
+            )
+        return (
+            user_tracker,
+            int(AlbumTracker.objects.filter(album=candidate).exists()),
+            int(Music.objects.filter(album=candidate).exists()),
+            int(candidate.tracks_populated),
+            candidate.tracklist.count(),
+            int(bool(candidate.musicbrainz_release_id)),
+            int(bool(candidate.release_date)),
+            -candidate.id,
+        )
+
+    return max(candidates, key=score)
+
+
+def merge_album_records(source_album: Album, target_album: Album) -> Album:
+    """Merge a duplicate album row into the canonical album row."""
+    if source_album.id == target_album.id:
+        return target_album
+
+    from app.models import AlbumTracker, Music
+
+    updates = set()
+    if (
+        (not target_album.image or target_album.image == settings.IMG_NONE)
+        and source_album.image
+        and source_album.image != settings.IMG_NONE
+    ):
+        target_album.image = source_album.image
+        updates.add("image")
+    if not target_album.musicbrainz_release_id and source_album.musicbrainz_release_id:
+        target_album.musicbrainz_release_id = source_album.musicbrainz_release_id
+        updates.add("musicbrainz_release_id")
+    if (
+        not target_album.musicbrainz_release_group_id
+        and source_album.musicbrainz_release_group_id
+    ):
+        target_album.musicbrainz_release_group_id = source_album.musicbrainz_release_group_id
+        updates.add("musicbrainz_release_group_id")
+    if not target_album.release_date and source_album.release_date:
+        target_album.release_date = source_album.release_date
+        updates.add("release_date")
+    if not target_album.release_type and source_album.release_type:
+        target_album.release_type = source_album.release_type
+        updates.add("release_type")
+    if not target_album.genres and source_album.genres:
+        target_album.genres = source_album.genres
+        updates.add("genres")
+    if updates:
+        target_album.save(update_fields=list(updates))
+
+    for credit in source_album.artist_credits.select_related("artist"):
+        AlbumArtist.objects.get_or_create(
+            album=target_album,
+            artist=credit.artist,
+            defaults={
+                "position": credit.position,
+                "join_phrase": credit.join_phrase,
+            },
+        )
+
+    for tracker in AlbumTracker.objects.filter(album=source_album):
+        existing = AlbumTracker.objects.filter(
+            user=tracker.user,
+            album=target_album,
+        ).first()
+        if existing:
+            tracker_updates = set()
+            preferred_status = _preferred_status(existing.status, tracker.status)
+            if preferred_status and preferred_status != existing.status:
+                existing.status = preferred_status
+                tracker_updates.add("status")
+            if existing.score is None and tracker.score is not None:
+                existing.score = tracker.score
+                tracker_updates.add("score")
+            if tracker.start_date and (
+                not existing.start_date or tracker.start_date < existing.start_date
+            ):
+                existing.start_date = tracker.start_date
+                tracker_updates.add("start_date")
+            if tracker.end_date and (
+                not existing.end_date or tracker.end_date > existing.end_date
+            ):
+                existing.end_date = tracker.end_date
+                tracker_updates.add("end_date")
+            if tracker_updates:
+                existing.save(update_fields=list(tracker_updates))
+            tracker.delete()
+        else:
+            tracker.album = target_album
+            tracker.save(update_fields=["album"])
+
+    for music in Music.objects.filter(album=source_album):
+        target_track = None
+        if music.track_id:
+            target_track = target_album.tracklist.filter(
+                musicbrainz_recording_id=music.track.musicbrainz_recording_id,
+            ).first()
+        Music.objects.filter(pk=music.pk).update(
+            album=target_album,
+            track=target_track,
+        )
+
+    for track in source_album.tracklist.all():
+        conflict = target_album.tracklist.filter(
+            disc_number=track.disc_number,
+            track_number=track.track_number,
+        ).first()
+        if conflict:
+            track.delete()
+        else:
+            track.album = target_album
+            track.save(update_fields=["album"])
+
+    source_album.delete()
+    return target_album
+
+
+def canonicalize_album(album: Album, user=None) -> Album:
+    """Merge duplicate MusicBrainz album rows and return the canonical row."""
+    canonical = find_canonical_album(album, user=user)
+    if canonical.id == album.id:
+        return album
+    return merge_album_records(album, canonical)
 
 
 def needs_discography_sync(artist: Artist, max_age_days: int = 7) -> bool:
@@ -1003,6 +1235,7 @@ def populate_album_tracks(album: Album) -> int:
 
     try:
         release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+        sync_album_artist_credits(album, release_data)
         tracks_data = release_data.get("tracks", [])
 
         # Update genres from release if album lacks them

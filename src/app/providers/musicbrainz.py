@@ -960,6 +960,17 @@ def get_release(release_id, skip_cover_art: bool = False):
                 artist_parts.append(credit.get("joinphrase", ""))
         artist_name = "".join(artist_parts).strip()
 
+    structured_credits = []
+    for credit in artist_credits:
+        if isinstance(credit, dict):
+            artist_data = credit.get("artist", {})
+            structured_credits.append({
+                "artist_id": artist_data.get("id"),
+                "name": credit.get("name") or artist_data.get("name", ""),
+                "sort_name": artist_data.get("sort-name", ""),
+                "join_phrase": credit.get("joinphrase", ""),
+            })
+
     # Get cover art with release group fallback
     image = settings.IMG_NONE if skip_cover_art else _get_cover_art(release_id, release_group_id)
 
@@ -1004,6 +1015,7 @@ def get_release(release_id, skip_cover_art: bool = False):
         "title": title,
         "artist_name": artist_name,
         "artist_id": artist_id,
+        "artist_credits": structured_credits,
         "release_date": date,
         "image": image,
         "genres": genres,

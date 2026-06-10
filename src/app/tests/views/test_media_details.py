@@ -16,6 +16,7 @@ from app import statistics_cache
 from app.models import (
     TV,
     Album,
+    AlbumArtist,
     AlbumTracker,
     Anime,
     Artist,
@@ -788,6 +789,160 @@ class MediaDetailsViewTests(TestCase):
             response,
             f'hx-get="{reverse("album_track_modal", args=[album.id])}?instance_id={album_tracker.id}',
             html=False,
+        )
+
+    @patch("app.services.music_scrobble.is_incomplete_album", return_value=False)
+    @patch("app.services.music_scrobble.dedupe_artist_albums")
+    def test_music_album_details_renders_credited_artists(
+        self,
+        _mock_dedupe_artist_albums,
+        _mock_is_incomplete_album,
+    ):
+        artist = Artist.objects.create(name="Artist One")
+        second_artist = Artist.objects.create(name="Artist Two")
+        album = Album.objects.create(title="Shared Album", artist=artist)
+        AlbumArtist.objects.create(
+            album=album,
+            artist=artist,
+            position=0,
+            join_phrase=" & ",
+        )
+        AlbumArtist.objects.create(
+            album=album,
+            artist=second_artist,
+            position=1,
+            join_phrase="",
+        )
+
+        response = self.client.get(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "artist-one",
+                    "album_id": album.id,
+                    "album_slug": "shared-album",
+                },
+            ),
+        )
+
+        first_url = reverse(
+            "music_artist_details",
+            kwargs={"artist_id": artist.id, "artist_slug": "artist-one"},
+        )
+        second_url = reverse(
+            "music_artist_details",
+            kwargs={"artist_id": second_artist.id, "artist_slug": "artist-two"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{first_url}"', html=False)
+        self.assertContains(response, f'href="{second_url}"', html=False)
+        self.assertContains(response, "Artist One</a> &", html=False)
+        self.assertContains(response, "Artist Two</a>", html=False)
+
+    @patch("app.providers.musicbrainz.get_release")
+    @patch("app.services.music_scrobble.is_incomplete_album", return_value=False)
+    @patch("app.services.music_scrobble.dedupe_artist_albums")
+    def test_music_album_details_repairs_fallback_artist_credit(
+        self,
+        _mock_dedupe_artist_albums,
+        _mock_is_incomplete_album,
+        mock_get_release,
+    ):
+        artist = Artist.objects.create(
+            name="Brian Eno",
+            musicbrainz_id="ff95eb47-41c4-4f7f-a104-cdc30f02e872",
+        )
+        album = Album.objects.create(
+            title="My Life in the Bush of Ghosts",
+            artist=artist,
+            musicbrainz_release_id="10eaf5b7-e319-42fd-babb-d3686ad347cf",
+            tracks_populated=True,
+        )
+        AlbumArtist.objects.create(album=album, artist=artist)
+        mock_get_release.return_value = {
+            "artist_credits": [
+                {
+                    "artist_id": "ff95eb47-41c4-4f7f-a104-cdc30f02e872",
+                    "name": "Brian Eno",
+                    "sort_name": "Eno, Brian",
+                    "join_phrase": "\u2014",
+                },
+                {
+                    "artist_id": "641b56b5-6571-43dc-b5b1-2e822f349162",
+                    "name": "David Byrne",
+                    "sort_name": "Byrne, David",
+                    "join_phrase": "",
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "brian-eno",
+                    "album_id": album.id,
+                    "album_slug": "my-life-in-the-bush-of-ghosts",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Brian Eno</a> \u2014 ", html=False)
+        self.assertContains(response, "David Byrne</a>", html=False)
+
+    def test_music_album_details_redirects_cross_artist_duplicate_to_canonical(self):
+        user = get_user_model().objects.create_user(
+            username="music_album_user",
+            password="pass12345",
+        )
+        self.client.force_login(user)
+        brian_eno = Artist.objects.create(name="Brian Eno")
+        david_byrne = Artist.objects.create(name="David Byrne")
+        canonical = Album.objects.create(
+            title="My Life in the Bush of Ghosts",
+            artist=brian_eno,
+            musicbrainz_release_group_id="release-group-mbid",
+        )
+        duplicate = Album.objects.create(
+            title="My Life in the Bush of Ghosts",
+            artist=david_byrne,
+            musicbrainz_release_group_id="release-group-mbid",
+        )
+        AlbumArtist.objects.create(album=canonical, artist=brian_eno)
+        AlbumArtist.objects.create(album=duplicate, artist=david_byrne)
+        AlbumTracker.objects.create(
+            user=user,
+            album=canonical,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        response = self.client.get(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": david_byrne.id,
+                    "artist_slug": "david-byrne",
+                    "album_id": duplicate.id,
+                    "album_slug": "my-life-in-the-bush-of-ghosts",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": brian_eno.id,
+                    "artist_slug": "brian-eno",
+                    "album_id": canonical.id,
+                    "album_slug": "my-life-in-the-bush-of-ghosts",
+                },
+            ),
         )
 
     def test_legacy_music_artist_detail_redirects_to_canonical_route(self):

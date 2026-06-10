@@ -19,13 +19,22 @@
 
   <div class="md:w-3/4">
     <div class="mb-1 text-center md:text-start">
-      {% if artist %}
-        <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">
-          <a href="{{ artist|music_artist_url }}">{{ artist.name }}</a>
-        </h1>
-      {% else %}
-        <h1 class="text-3xl font-bold">Unknown Artist</h1>
-      {% endif %}
+      {% with credits=album.artist_credits.all %}
+        {% if credits %}
+          <h1 class="text-3xl font-bold">
+            {% for credit in credits %}
+              <a href="{{ credit.artist|music_artist_url }}"
+                 class="hover:text-indigo-500 transition-colors duration-200 cursor-pointer">{{ credit.artist.name }}</a>{{ credit.join_phrase|music_artist_join_phrase }}
+            {% endfor %}
+          </h1>
+        {% elif artist %}
+          <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">
+            <a href="{{ artist|music_artist_url }}">{{ artist.name }}</a>
+          </h1>
+        {% else %}
+          <h1 class="text-3xl font-bold">Unknown Artist</h1>
+        {% endif %}
+      {% endwith %}
     </div>
 
     {% include "app/components/detail_music_album_activity_subtitle.html" with album=album music_album_activity_subtitle=music_album_activity_subtitle user=user only %}
