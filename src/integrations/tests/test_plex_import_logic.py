@@ -699,3 +699,131 @@ class TestPlexMultiServerImport(TestCase):
 
         self.assertIn("Friend TV", warnings)
         self.assertIn("Friend Server", warnings)
+
+
+class TestOverwriteMetadataFailureSafety(TestCase):
+    """Regression tests for issue #252: overwrite import must not permanently delete media
+    when TMDB metadata is unavailable (404) or when the import aborts mid-run."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="testuser")
+        self.account = PlexAccount.objects.create(
+            user=self.user,
+            plex_token="token",
+            plex_username="testuser",
+            plex_account_id="111",
+        )
+        self.user.plex_usernames = "testuser"
+        self.user.save()
+
+    def _make_base_patches(self):
+        """Return common patcher objects used by every test in this class."""
+        return [
+            patch("integrations.imports.plex.plex_api.fetch_account", return_value={"id": "111"}),
+            patch("integrations.imports.plex.plex_api.list_users", return_value=[]),
+            patch("integrations.imports.plex.plex_api.fetch_metadata", return_value=None),
+            patch("integrations.imports.plex.plex_api.fetch_section_all_items", return_value=([], 0)),
+            patch("integrations.imports.plex.plex_api.list_sections", return_value=[
+                {"id": "1", "machine_identifier": "m", "title": "TV", "type": "show"},
+            ]),
+            patch("integrations.imports.plex.plex_api.list_resources", return_value=[
+                {"machine_identifier": "m", "connections": [{"uri": "http://plex"}]},
+            ]),
+        ]
+
+    def test_tv_show_preserved_when_tmdb_returns_404_in_overwrite(self):
+        """A TV show that TMDB can no longer resolve (404) must survive an overwrite import."""
+        # Pre-create the show in Yamtrack as if previously imported
+        item = Item.objects.create(
+            media_id="9999",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="For All Mankind",
+        )
+        tv = TV.objects.create(user=self.user, item=item, status=Status.IN_PROGRESS.value)
+
+        episode_history_entry = {
+            "type": "episode",
+            "grandparentTitle": "For All Mankind",
+            "parentIndex": 1,
+            "index": 1,
+            "guid": "tmdb://9999",
+            "viewedAt": 1700000000,
+            "accountID": "111",
+        }
+
+        def metadata_side_effect(media_type, media_id, source, **kwargs):
+            # Simulate TMDB returning 404 for this show
+            from app.providers.services import ProviderAPIError
+            err = ProviderAPIError("tmdb", Exception("Not Found"))
+            err.status_code = 404
+            raise err
+
+        patches = self._make_base_patches() + [
+            patch("integrations.imports.plex.plex_api.fetch_history", return_value=([episode_history_entry], 1)),
+            patch("integrations.imports.plex.services.get_media_metadata", side_effect=metadata_side_effect),
+            patch("integrations.imports.plex.services.search", return_value={"results": []}),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            plex.importer("m::1", self.user, "overwrite")
+        finally:
+            for p in patches:
+                p.stop()
+
+        # The show must still exist — it could not be re-created so it should not have been deleted
+        self.assertTrue(
+            TV.objects.filter(user=self.user, item__media_id="9999").exists(),
+            "TV show was deleted during overwrite import despite TMDB 404 — data loss bug",
+        )
+
+    def test_tv_show_preserved_when_tmdb_raises_during_metadata_warm(self):
+        """If TMDB raises a non-404 error during metadata warm-up, the import must abort
+        before deleting any existing records."""
+        item = Item.objects.create(
+            media_id="8888",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="For All Mankind",
+        )
+        tv = TV.objects.create(user=self.user, item=item, status=Status.IN_PROGRESS.value)
+
+        episode_history_entry = {
+            "type": "episode",
+            "grandparentTitle": "For All Mankind",
+            "parentIndex": 1,
+            "index": 1,
+            "guid": "tmdb://8888",
+            "viewedAt": 1700000000,
+            "accountID": "111",
+        }
+
+        call_count = {"n": 0}
+
+        def metadata_side_effect(media_type, media_id, source, **kwargs):
+            call_count["n"] += 1
+            from app.providers.services import ProviderAPIError
+            err = ProviderAPIError("tmdb", Exception("Rate limit exceeded"))
+            err.status_code = 429
+            raise err
+
+        patches = self._make_base_patches() + [
+            patch("integrations.imports.plex.plex_api.fetch_history", return_value=([episode_history_entry], 1)),
+            patch("integrations.imports.plex.services.get_media_metadata", side_effect=metadata_side_effect),
+            patch("integrations.imports.plex.services.search", return_value={"results": []}),
+        ]
+        started = [p.start() for p in patches]
+        try:
+            with self.assertRaises(Exception):
+                plex.importer("m::1", self.user, "overwrite")
+        finally:
+            for p in patches:
+                p.stop()
+
+        # The show must survive — the import should have aborted before cleanup
+        self.assertTrue(
+            TV.objects.filter(user=self.user, item__media_id="8888").exists(),
+            "TV show was deleted before TMDB error propagated — delete happened too early",
+        )

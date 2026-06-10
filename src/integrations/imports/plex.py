@@ -127,11 +127,30 @@ class PlexHistoryImporter:
         if self.mode == "new":
             self._build_existing_dedupe_sets()
 
-        if self.mode == "overwrite":
-            helpers.cleanup_existing_media(self.to_delete, self.user)
-
         logger.info("Warming TV metadata cache...")
         self._warm_tv_metadata_cache()
+
+        if self.mode == "overwrite":
+            self._pre_warm_movie_metadata()
+            unresolvable_tv_ids = self._tv_ids - set(self._tv_metadata_cache.keys())
+            if unresolvable_tv_ids:
+                logger.warning(
+                    "Preserving %d TV show(s) in overwrite mode — TMDB metadata unavailable: %s",
+                    len(unresolvable_tv_ids),
+                    unresolvable_tv_ids,
+                )
+                for source_ids in self.to_delete.get(MediaTypes.TV.value, {}).values():
+                    source_ids.difference_update(unresolvable_tv_ids)
+            unresolvable_movie_ids = self._movie_ids - set(self._movie_metadata_cache.keys())
+            if unresolvable_movie_ids:
+                logger.warning(
+                    "Preserving %d movie(s) in overwrite mode — TMDB metadata unavailable: %s",
+                    len(unresolvable_movie_ids),
+                    unresolvable_movie_ids,
+                )
+                for source_ids in self.to_delete.get(MediaTypes.MOVIE.value, {}).values():
+                    source_ids.difference_update(unresolvable_movie_ids)
+            helpers.cleanup_existing_media(self.to_delete, self.user)
         logger.info("Building bulk media instances...")
         self._build_bulk_media()
         logger.info("Finalizing bulk creation...")
@@ -1415,6 +1434,11 @@ class PlexHistoryImporter:
     def _round_datetime(self, value: datetime) -> datetime:
         """Round datetimes to minute precision for replay-safe matching."""
         return timezone.localtime(value).replace(second=0, microsecond=0)
+
+    def _pre_warm_movie_metadata(self):
+        """Pre-fetch TMDB metadata for all pending movie records before overwrite deletion."""
+        for record in self._movie_records:
+            self._get_movie_metadata(record["tmdb_id"], record.get("title"))
 
     def _warm_tv_metadata_cache(self):
         """Fetch TV metadata with season payloads in bulk."""
