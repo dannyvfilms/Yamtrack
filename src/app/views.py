@@ -297,6 +297,7 @@ from app.score_views import (
     update_artist_score,
     update_episode_score,
     update_media_score,
+    update_track_score,
 )
 from app.activity_builders import (
     DETAIL_EPISODES_PER_PAGE,

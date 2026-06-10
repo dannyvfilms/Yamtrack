@@ -155,6 +155,41 @@ def update_episode_score(request, season_id, episode_number):
     )
 
 
+@login_required
+@require_POST
+def update_track_score(request, music_id):
+    """Update the user's score for a music track."""
+    from app.models import Music
+
+    music = get_object_or_404(Music, id=music_id, user=request.user)
+
+    score_raw = request.POST.get("score")
+    toggle = request.POST.get("toggle")
+    score = None
+    if score_raw is not None:
+        score_raw = score_raw.strip()
+        if score_raw and score_raw.lower() != "null":
+            try:
+                score = Decimal(score_raw)
+            except (InvalidOperation, TypeError):
+                return HttpResponseBadRequest("Invalid score.")
+            score = request.user.scale_score_for_storage(score)
+            if score is None:
+                return HttpResponseBadRequest("Invalid score.")
+
+    if toggle and score is not None and music.score == score:
+        score = None
+
+    music.score = score
+    music.save()
+    logger.info("%s score updated to %s", music, score)
+
+    return JsonResponse({
+        "success": True,
+        "score": request.user.format_score_for_display(score) if score is not None else None,
+    })
+
+
 @require_POST
 def update_artist_score(request, artist_id):
     """Update the user's score for an artist."""

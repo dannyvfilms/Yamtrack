@@ -200,6 +200,11 @@ urlpatterns = [
         name="update_album_score",
     ),
     path(
+        "music/track/<int:music_id>/update-score/",
+        views.update_track_score,
+        name="update_track_score",
+    ),
+    path(
         "music/artist/<int:artist_id>/sync/",
         views.sync_artist_discography_view,
         name="sync_artist_discography",
