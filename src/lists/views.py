@@ -303,7 +303,8 @@ def lists(request):
     import time
     cache_buster = int(time.time())
     
-    if request.headers.get("HX-Request"):
+    # Boosted navigation still sends HX-Request but needs the full page
+    if helpers.is_htmx_fragment(request):
         response = render(
             request,
             "lists/components/list_grid.html",
@@ -319,7 +320,7 @@ def lists(request):
         response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response["Pragma"] = "no-cache"
         response["Expires"] = "0"
-        response["Vary"] = "Cookie, HX-Request"
+        response["Vary"] = "Cookie, HX-Request, HX-Boosted"
         response["X-Cache-Buster"] = str(cache_buster)
         return response
 
@@ -717,7 +718,7 @@ def _smart_list_detail_response(
         for media_type in available_media_types
     }
 
-    is_partial = bool(request.headers.get("HX-Request"))
+    is_partial = helpers.is_htmx_fragment(request)
     is_pagination = is_partial and page > 1
     has_active_filters = bool(active_rules.get("media_types")) or any(
         [
@@ -1213,7 +1214,7 @@ def list_detail(request, list_reference):
 
     # Base context for both full and partial responses
     chip_sort = "score" if params["sort_by"] == "rating" else params["sort_by"]
-    is_partial = bool(request.headers.get("HX-Request"))
+    is_partial = helpers.is_htmx_fragment(request)
     is_pagination = is_partial and params["page"] > 1
     current_media_type = _resolve_list_table_media_type(
         params["media_types"],

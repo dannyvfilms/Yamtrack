@@ -21,6 +21,19 @@ _ENCODED_NAVIGATION_SEPARATOR_PATTERNS = (
 )
 
 
+def is_htmx_fragment(request):
+    """Return whether this HTMX request expects a partial fragment response.
+
+    Boosted navigation (hx-boost) and history restores send HX-Request too,
+    but they replace the whole page and need the full template.
+    """
+    return bool(
+        request.headers.get("HX-Request")
+        and not request.headers.get("HX-Boosted")
+        and not request.headers.get("HX-History-Restore-Request"),
+    )
+
+
 def minutes_to_hhmm(total_minutes):
     """Convert total minutes to HH:MM format."""
     hours = int(total_minutes / 60)

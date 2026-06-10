@@ -1926,8 +1926,9 @@ def media_list(request, media_type):
                 resolved_keys,
             )
 
-    # Handle HTMX requests for partial updates
-    if request.headers.get("HX-Request"):
+    # Handle HTMX requests for partial updates (boosted navigation still
+    # sends HX-Request but needs the full page)
+    if helpers.is_htmx_fragment(request):
         is_artist_list = context.get("is_artist_list", False)
         # Changing from empty list to a status with items
         if request.headers.get("HX-Target") == "empty_list":
