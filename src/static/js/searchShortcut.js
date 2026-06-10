@@ -1,4 +1,7 @@
 // Global keyboard shortcut for search
+// Bind once: this script is re-evaluated on boosted (hx-boost) navigation.
+if (!window.__yamtrackSearchShortcutBound) {
+window.__yamtrackSearchShortcutBound = true;
 document.addEventListener('keydown', (e) => {
   // Ignore if typing in an input, textarea, or contenteditable
   const activeEl = document.activeElement;
@@ -17,3 +20,4 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+}

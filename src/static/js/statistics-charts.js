@@ -1,5 +1,20 @@
-document.addEventListener("DOMContentLoaded", function () {
+(function () {
+function initStatisticsCharts() {
+  if (typeof Chart === "undefined") {
+    return;
+  }
   Chart.register(ChartDataLabels);
+
+  // Destroy charts from a previous visit (their canvases were detached by a
+  // boosted body swap) before creating new instances.
+  (window.__yamtrackStatsCharts || []).forEach(function (chart) {
+    try {
+      chart.destroy();
+    } catch (error) {
+      console.debug("[stats] failed to destroy stale chart", error);
+    }
+  });
+  window.__yamtrackStatsCharts = [];
 
   // Custom external tooltip for bar charts
   function customBarTooltip(context) {
@@ -321,11 +336,13 @@ document.addEventListener("DOMContentLoaded", function () {
   function initializeChartIfExists(elementId, chartType, data, options) {
     const element = document.getElementById(elementId);
     if (element) {
-      return new Chart(element.getContext("2d"), {
+      const chart = new Chart(element.getContext("2d"), {
         type: chartType,
         data: data,
         options: options,
       });
+      window.__yamtrackStatsCharts.push(chart);
+      return chart;
     }
     return null;
   }
@@ -970,9 +987,27 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Initial sizing and on resize for the copied score chart wrapper
   matchScoreCopyHeight();
-  window.addEventListener("resize", function () {
-    // Debounce-ish
-    clearTimeout(window._scoreCopyResizeTimer);
-    window._scoreCopyResizeTimer = setTimeout(matchScoreCopyHeight, 120);
-  });
-});
+  // Re-bind through a window-level reference so the resize listener is only
+  // attached once but always uses the current page's sizing function.
+  window.__yamtrackStatsFit = matchScoreCopyHeight;
+  if (!window.__yamtrackStatsResizeBound) {
+    window.__yamtrackStatsResizeBound = true;
+    window.addEventListener("resize", function () {
+      // Debounce-ish
+      clearTimeout(window._scoreCopyResizeTimer);
+      window._scoreCopyResizeTimer = setTimeout(function () {
+        if (window.__yamtrackStatsFit) {
+          window.__yamtrackStatsFit();
+        }
+      }, 120);
+    });
+  }
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initStatisticsCharts, { once: true });
+} else {
+  // Script was injected after DOM load (e.g. boosted navigation swap).
+  initStatisticsCharts();
+}
+})();

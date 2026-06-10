@@ -1,10 +1,15 @@
 /**
  * Cache Updater - Polls cache status and updates pages when fresh data is available
- * 
+ *
  * Usage:
  *   Initialize with: CacheUpdater.init(cacheType, options)
  *   Options: { rangeName, loggingStyle, pollInterval, timeout }
  */
+
+// Guard against re-execution: this script is re-evaluated when pages are
+// loaded via boosted (hx-boost) navigation, and a top-level class
+// redeclaration would throw.
+if (!window.CacheUpdater) {
 
 class CacheUpdater {
     constructor(cacheType, options = {}) {
@@ -22,6 +27,9 @@ class CacheUpdater {
         this.lastBuiltAt = null; // Track built_at to detect fresh builds even if lock lingers
         this.onUpdateCallback = options.onUpdate || null;
         this.onRefreshCompleteCallback = options.onRefreshComplete || null;
+        // Remember which page started this updater so an orphaned poll loop
+        // can't reload an unrelated page after boosted navigation away.
+        this.pagePath = window.location.pathname;
     }
 
     currentRefreshActive(data) {
@@ -72,6 +80,13 @@ class CacheUpdater {
      */
     async poll() {
         if (!this.isPolling) {
+            return;
+        }
+
+        // Stop if the user navigated to a different page since this updater
+        // was created (the poll timer survives boosted body swaps).
+        if (window.location.pathname !== this.pagePath) {
+            this.stop();
             return;
         }
 
@@ -228,6 +243,10 @@ class CacheUpdater {
         // Reload the page to show fresh data
         // Using a small delay to ensure cache is fully updated
         setTimeout(() => {
+            if (window.location.pathname !== this.pagePath) {
+                console.log('CacheUpdater: Page changed, skipping reload');
+                return;
+            }
             console.log('CacheUpdater: Reloading page now');
             window.location.reload();
         }, 300);
@@ -252,3 +271,5 @@ if (typeof module !== 'undefined' && module.exports) {
 
 // Make available globally
 window.CacheUpdater = CacheUpdater;
+
+}

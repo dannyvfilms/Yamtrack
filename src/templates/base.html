@@ -451,9 +451,13 @@
         $root.find('.django-select2').not('.select2-hidden-accessible').djangoSelect2();
       }
 
-      document.addEventListener('DOMContentLoaded', () => initDjangoSelect2(document));
-      document.body.addEventListener('htmx:afterSwap', () => initDjangoSelect2(document));
-      document.body.addEventListener('htmx:afterSettle', () => initDjangoSelect2(document));
+      // Bind once: these scripts are re-evaluated on boosted (hx-boost) navigation.
+      if (!window.__yamtrackSelect2Bound) {
+        window.__yamtrackSelect2Bound = true;
+        document.addEventListener('DOMContentLoaded', () => initDjangoSelect2(document));
+        document.body.addEventListener('htmx:afterSwap', () => initDjangoSelect2(document));
+        document.body.addEventListener('htmx:afterSettle', () => initDjangoSelect2(document));
+      }
     </script>
 
     <script>
@@ -496,10 +500,13 @@
         });
       }
 
-      // Init on load and after HTMX swaps
-      document.addEventListener('DOMContentLoaded', initMediaCardHover);
-      document.body.addEventListener('htmx:afterSwap', initMediaCardHover);
-      document.body.addEventListener('htmx:afterSettle', initMediaCardHover);
+      // Init on load and after HTMX swaps (bind once; script re-runs on boosted navigation)
+      if (!window.__yamtrackMediaCardHoverBound) {
+        window.__yamtrackMediaCardHoverBound = true;
+        document.addEventListener('DOMContentLoaded', initMediaCardHover);
+        document.body.addEventListener('htmx:afterSwap', initMediaCardHover);
+        document.body.addEventListener('htmx:afterSettle', initMediaCardHover);
+      }
     </script>
 
     <script>
