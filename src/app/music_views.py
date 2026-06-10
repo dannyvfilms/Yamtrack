@@ -1068,8 +1068,22 @@ def artist_track_modal(request, artist_id):
     """Return the shared tracking form modal for a music artist."""
     from app.forms import ArtistTrackerForm
     from app.models import ArtistTracker
+    from app.tasks_music import populate_album_tracks_batch
 
     artist = get_object_or_404(Artist, id=artist_id)
+
+    # Queue background population for albums whose tracks haven't been fetched yet
+    albums_needing_tracks = list(
+        Album.objects.filter(artist=artist, tracks_populated=False)
+        .exclude(
+            musicbrainz_release_id__isnull=True,
+            musicbrainz_release_group_id__isnull=True,
+        )
+        .values_list("id", flat=True)
+    )
+    if albums_needing_tracks:
+        populate_album_tracks_batch.delay(albums_needing_tracks)
+
     tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
     form = ArtistTrackerForm(
         instance=tracker,
@@ -1083,7 +1097,9 @@ def artist_track_modal(request, artist_id):
         form=form,
         save_url=reverse("artist_save"),
         delete_url=reverse("artist_delete"),
-        bulk_domain=bulk_music_tracking.build_artist_play_domain(request.user, artist),
+        bulk_domain=bulk_music_tracking.build_artist_play_domain(
+            request.user, artist, fetch_missing=False
+        ),
     )
 
 

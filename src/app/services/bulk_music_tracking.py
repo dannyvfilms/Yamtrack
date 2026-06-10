@@ -128,7 +128,9 @@ def _ensure_album_tracks(album: Album) -> None:
     music_services.populate_album_tracks(album)
 
 
-def _build_domain_from_albums(*, albums: list[Album], context_kind: str, context_id: int):
+def _build_domain_from_albums(
+    *, albums: list[Album], context_kind: str, context_id: int, skip_missing_fetch: bool = False
+):
     """Return a selector domain that reuses the shared bulk range form."""
     available_albums = []
     excluded_albums = 0
@@ -136,7 +138,8 @@ def _build_domain_from_albums(*, albums: list[Album], context_kind: str, context
     season_episode_map = {}
 
     for album in sorted(albums, key=_album_sort_key):
-        _ensure_album_tracks(album)
+        if not skip_missing_fetch:
+            _ensure_album_tracks(album)
         tracks = list(
             Track.objects.filter(album=album)
             .order_by("disc_number", "track_number", "title", "id")
@@ -173,10 +176,16 @@ def _build_domain_from_albums(*, albums: list[Album], context_kind: str, context
     mode_notice = ""
     if excluded_albums:
         album_word = "album" if excluded_albums == 1 else "albums"
-        mode_notice = (
-            f"Only albums with available track lists are included here. "
-            f"{excluded_albums} {album_word} could not be loaded."
-        )
+        if skip_missing_fetch:
+            mode_notice = (
+                f"{excluded_albums} {album_word} are still loading their track list "
+                f"in the background. Reopen this modal once they're ready."
+            )
+        else:
+            mode_notice = (
+                f"Only albums with available track lists are included here. "
+                f"{excluded_albums} {album_word} could not be loaded."
+            )
 
     default_first = episodes[0]
     default_last = episodes[-1]
@@ -249,7 +258,7 @@ def build_album_play_domain(user, album: Album):
     return domain
 
 
-def build_artist_play_domain(user, artist: Artist):
+def build_artist_play_domain(user, artist: Artist, fetch_missing: bool = True):
     """Return the shared bulk-play selector domain for an artist discography."""
     albums = list(
         Album.objects.filter(artist=artist)
@@ -260,6 +269,7 @@ def build_artist_play_domain(user, artist: Artist):
         albums=albums,
         context_kind="artist",
         context_id=artist.id,
+        skip_missing_fetch=not fetch_missing,
     )
     if domain is None:
         return None
