@@ -11,7 +11,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
-from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -358,7 +358,7 @@ def lists(request):
     return response
 
 
-@login_required
+@login_not_required
 @require_GET
 def list_cover_image(request, list_id):
     """Return an <img> fragment for a list card's cover image (HTMX lazy load).
@@ -377,6 +377,8 @@ def list_cover_image(request, list_id):
         ),
         id=list_id,
     )
+    if not custom_list.user_can_view(request.user):
+        return HttpResponseForbidden()
     image_url = custom_list.image
     return render(
         request,

@@ -95,7 +95,7 @@ if not settings.IS_PROD:
     urlpatterns.append(
         re_path(
             rf"^{static_url_pattern}(?P<path>.*)$",
-            serve,
+            login_not_required(serve),
             {"document_root": str(settings.STATICFILES_DIRS[0])},
         ),
     )
