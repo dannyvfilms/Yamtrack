@@ -67,8 +67,14 @@
                         </button>
 
                         <div class="min-w-0 flex-1">
-                          <div class="truncate whitespace-nowrap text-sm font-medium text-white"
-                               x-text="rowDisplayTitle(section, row)"></div>
+                          <input type="text"
+                                 x-model="row.custom_title"
+                                 maxlength="100"
+                                 :placeholder="rowAutoTitle(section, row)"
+                                 title="Rename this row"
+                                 @click.stop
+                                 @keydown.enter.prevent="$el.blur()"
+                                 class="w-full truncate whitespace-nowrap rounded border border-transparent bg-transparent px-1 -mx-1 text-sm font-medium text-white placeholder:text-white hover:border-[#4a515d] focus:border-indigo-500 focus:outline-none focus:placeholder:text-gray-500">
                         </div>
 
                         <div x-show="!isDesktop || hovering || openMenu !== null || row.editorOpen"
@@ -316,6 +322,18 @@
         </template>
       </div>
 
+      <label class="mt-6 flex items-start gap-3 rounded-md border border-gray-600 bg-[#272c31] px-3 py-3 cursor-pointer">
+        <input type="checkbox"
+               name="show_media_type_headers"
+               value="1"
+               {% if show_media_type_headers %}checked{% endif %}
+               class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-500 bg-[#1f2429] text-indigo-600 focus:ring-indigo-500">
+        <span class="min-w-0">
+          <span class="block text-sm font-medium text-gray-200">Show media type headers</span>
+          <span class="block text-xs text-gray-400">Group rows under a header (icon + media type) on the home screen.</span>
+        </span>
+      </label>
+
       <div class="mt-6 flex items-center justify-end">
         <button type="submit"
                 class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 cursor-pointer">
@@ -338,6 +356,7 @@
           rows: (section.rows || []).map(row => ({
             ...row,
             enabled: true,
+            custom_title: row.custom_title || '',
             editorOpen: row.row_type === 'custom_list' && !row.id,
             filters: { ...(row.filters || {}) },
             listQuery: row.custom_list_name || '',
@@ -404,7 +423,7 @@
           if (type === 'custom_list') return 'List / Smart List';
           return 'Recently Played';
         },
-        rowDisplayTitle(section, row) {
+        rowAutoTitle(section, row) {
           if (row.row_type === 'custom_list') {
             return row.custom_list_name || 'List / Smart List';
           }
@@ -412,6 +431,10 @@
             return 'Recently Played - Not Rated';
           }
           return this.describeFilters(section, row);
+        },
+        rowDisplayTitle(section, row) {
+          const custom = (row.custom_title || '').trim();
+          return custom || this.rowAutoTitle(section, row);
         },
         activeLibraryFilterCount(row) {
           return Object.entries(row.filters || {}).filter(([key, value]) => {
@@ -550,6 +573,7 @@
             id: null,
             client_id: `new-row-${this.nextRowId++}`,
             enabled: true,
+            custom_title: '',
             row_type: rowType,
             custom_list_id: null,
             custom_list_name: '',
@@ -622,6 +646,7 @@
             rows: section.rows.map(row => ({
               id: row.id,
               enabled: true,
+              custom_title: row.custom_title || '',
               row_type: row.row_type,
               custom_list_id: row.custom_list_id,
               sort_by: row.sort_by,

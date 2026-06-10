@@ -546,11 +546,16 @@ def home_screen(request):
         except HomeScreenValidationError as exc:
             messages.error(request, str(exc))
         else:
+            request.user.home_show_media_type_headers = bool(
+                request.POST.get("show_media_type_headers"),
+            )
+            request.user.save(update_fields=["home_show_media_type_headers"])
             messages.success(request, "Home screen updated successfully.")
         return redirect("home_screen")
 
     context = {
         "home_screen_sections_json": json.dumps(serialize_settings_sections(request.user)),
+        "show_media_type_headers": request.user.home_show_media_type_headers,
         "home_screen_list_search_url": reverse("home_screen_list_search"),
         "direction_choices_json": json.dumps(
             [

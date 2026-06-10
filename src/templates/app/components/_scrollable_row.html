@@ -22,6 +22,7 @@
     <div class="min-w-0 flex-1">
       {% if row.summary_inline %}
         <h3 class="home-row-heading flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          {% if row.url %}<a href="{{ row.url }}" class="home-row-heading-link inline-flex flex-wrap items-baseline gap-x-2 rounded-sm hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-500">{% endif %}
           <span class="home-row-heading-title text-lg font-semibold leading-none text-gray-100">{{ row.title_main }}</span>
           {% if row.title_detail %}
             <span class="home-row-heading-detail-wrap inline-flex items-center gap-x-2">
@@ -30,6 +31,7 @@
               <span class="home-row-heading-detail text-lg font-semibold leading-none text-gray-100">{{ row.title_detail }}</span>
             </span>
           {% endif %}
+          {% if row.url %}</a>{% endif %}
           <form method="post"
                 action="{% url 'toggle_home_screen_row_direction' row.row_id %}"
                 class="home-row-heading-sort-form inline ml-3.5">
@@ -58,7 +60,13 @@
           </form>
         </h3>
       {% else %}
-        <h3 class="text-lg font-semibold">{{ row.title }}</h3>
+        <h3 class="text-lg font-semibold">
+          {% if row.url %}
+            <a href="{{ row.url }}" class="rounded-sm hover:underline focus:outline-none focus:ring-2 focus:ring-indigo-500">{{ row.title }}</a>
+          {% else %}
+            {{ row.title }}
+          {% endif %}
+        </h3>
         <p class="text-sm text-gray-400">{{ row.summary }}</p>
       {% endif %}
     </div>
