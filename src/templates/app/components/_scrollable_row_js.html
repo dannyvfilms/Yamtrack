@@ -9,13 +9,13 @@
     - Elements with [data-active-playback-card] for the playback ticker
 {% endcomment %}
 <script>
-  const FETCH_URL = '{% url "fetch_release_year" %}';
-  const pendingFetches = new Set();
-  let fetchQueue = [];
-  let isProcessing = false;
-  let activePlaybackTimer = null;
-  const homeRowLoadTimers = new WeakMap();
-  const homeRowObservers = new WeakMap();
+  // var (not let/const): this script re-executes on boosted navigation
+  var FETCH_URL = '{% url "fetch_release_year" %}';
+  var pendingFetches = new Set();
+  var fetchQueue = [];
+  var isProcessing = false;
+  var homeRowLoadTimers = new WeakMap();
+  var homeRowObservers = new WeakMap();
 
   function getHomeRowItemCount(row) {
     return Array.from(row.children).filter(child => !child.hasAttribute('data-home-row-sentinel')).length;
@@ -119,12 +119,15 @@
     });
   }
 
-  document.body.addEventListener('refreshHomeRow', function(event) {
-    const rowId = event.detail && event.detail.rowId;
-    if (!rowId) return;
-    const row = document.querySelector(`#media-grid-row-${rowId}`);
-    if (row) reloadHomeRow(row, rowId);
-  });
+  if (!window.__yamtrackHomeRowRefreshBound) {
+    window.__yamtrackHomeRowRefreshBound = true;
+    document.body.addEventListener('refreshHomeRow', function(event) {
+      const rowId = event.detail && event.detail.rowId;
+      if (!rowId) return;
+      const row = document.querySelector(`#media-grid-row-${rowId}`);
+      if (row) reloadHomeRow(row, rowId);
+    });
+  }
 
   function triggerHomeRowLoadMore(row) {
     const { loaded, total } = getHomeRowCounts(row);
@@ -262,9 +265,11 @@
   }
 
   function initActivePlaybackTicker() {
-    if (activePlaybackTimer) {
-      clearInterval(activePlaybackTimer);
-      activePlaybackTimer = null;
+    // Timer id lives on window so a re-executed copy of this script can
+    // still clear the interval started by a previous page.
+    if (window.__yamtrackActivePlaybackTimer) {
+      clearInterval(window.__yamtrackActivePlaybackTimer);
+      window.__yamtrackActivePlaybackTimer = null;
     }
 
     const tick = () => {
@@ -273,7 +278,7 @@
     };
 
     tick();
-    activePlaybackTimer = setInterval(tick, 1000);
+    window.__yamtrackActivePlaybackTimer = setInterval(tick, 1000);
   }
 
   function initHomePageEnhancements() {
@@ -287,6 +292,11 @@
   } else {
     initHomePageEnhancements();
   }
+
+  // Bind once: these handlers resolve functions and state through global
+  // names, so the latest executed copy of this script is always used.
+  if (!window.__yamtrackHomeRowEventsBound) {
+  window.__yamtrackHomeRowEventsBound = true;
 
   document.body.addEventListener('htmx:beforeRequest', function(event) {
     const row = event.detail.elt;
@@ -330,4 +340,6 @@
       initActivePlaybackTicker();
     }, 50);
   });
+
+  }
 </script>

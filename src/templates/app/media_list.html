@@ -1575,6 +1575,12 @@
       }
 
       document.body.addEventListener('htmx:afterRequest', function(event) {
+        // Stale handler from a previous visit (boosted navigation swaps the
+        // body but keeps body listeners): only act for the live filter form.
+        if (!filterForm.isConnected) {
+          return;
+        }
+
         const requestConfig = event && event.detail ? event.detail.requestConfig : null;
         if (!requestConfig) {
           return;
@@ -1602,10 +1608,11 @@
   </script>
 
   <script>
-    const RELEASE_YEAR_FETCH_URL = '{% url "fetch_release_year" %}';
-    const releaseYearPending = new Set();
-    let releaseYearQueue = [];
-    let releaseYearProcessing = false;
+    // var (not let/const): this script re-executes on boosted navigation
+    var RELEASE_YEAR_FETCH_URL = '{% url "fetch_release_year" %}';
+    var releaseYearPending = new Set();
+    var releaseYearQueue = [];
+    var releaseYearProcessing = false;
 
     function processReleaseYearQueue() {
       if (releaseYearProcessing || releaseYearQueue.length === 0) return;
@@ -1674,9 +1681,12 @@
       loadVisibleReleaseYears();
     }
 
-    document.body.addEventListener('htmx:afterSwap', function() {
-      setTimeout(loadVisibleReleaseYears, 50);
-    });
+    if (!window.__yamtrackMediaListReleaseYearsBound) {
+      window.__yamtrackMediaListReleaseYearsBound = true;
+      document.body.addEventListener('htmx:afterSwap', function() {
+        setTimeout(loadVisibleReleaseYears, 50);
+      });
+    }
   </script>
 
   <script>
@@ -1686,10 +1696,11 @@
       }
     });
 
-    let paginationDebugLog = [];
-    let activePaginationRequests = new Set();
-    let paginationInProgress = false;
-    
+    // var (not let/const): this script re-executes on boosted navigation
+    var paginationDebugLog = [];
+    var activePaginationRequests = new Set();
+    var paginationInProgress = false;
+
     // Debug logging function
     function logPaginationEvent(event, details) {
       const timestamp = new Date().toISOString();
@@ -1703,13 +1714,18 @@
       }
     }
     
+    // Bind once: a second copy of these handlers would see
+    // paginationInProgress=true and block every pagination request.
+    if (!window.__yamtrackMediaListPaginationBound) {
+    window.__yamtrackMediaListPaginationBound = true;
+
     // Prevent multiple pagination triggers from being active at once
     document.body.addEventListener('htmx:beforeRequest', function(evt) {
       if (evt.detail.elt.classList.contains('pagination-trigger')) {
         const pageUrl = evt.detail.requestConfig.path;
         const pageMatch = pageUrl.match(/page=(\d+)/);
         const pageNumber = pageMatch ? pageMatch[1] : 'unknown';
-        
+
         logPaginationEvent('PAGINATION_REQUEST_START', `Page ${pageNumber}, URL: ${pageUrl}`);
         
         // Check if any pagination is already in progress
@@ -1792,9 +1808,13 @@
         console.log(`Trigger ${index}: Page ${pageNumber}, URL: ${url}, Trigger: ${triggerType}`);
       });
     };
+
+    }
   </script>
 
   <script>
+    if (!window.__yamtrackResultCountBound) {
+    window.__yamtrackResultCountBound = true;
     document.body.addEventListener('resultCountUpdated', function(evt) {
       const count = evt.detail && evt.detail.count;
       if (count === undefined || count === null) {
@@ -1805,5 +1825,6 @@
         badge.textContent = String(count);
       });
     });
+    }
   </script>
 {% endblock content %}

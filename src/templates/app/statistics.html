@@ -485,6 +485,7 @@
     cacheRefreshing: false,
     metadataRefreshing: false,
     cacheUpdater: null,
+    rebuildListener: null,
     selectedRangeName: '{{ selected_range_name|default:"" }}',
     init() {
       // Initialize cache updater immediately if we have a range name
@@ -508,7 +509,7 @@
       
       // When the refresh button triggers a rebuild, hand reload control to
       // CacheUpdater (which guards on data.exists before reloading).
-      window.addEventListener('stats-cache-rebuild-started', () => {
+      this.rebuildListener = () => {
         console.log('Statistics page: rebuild started event received, starting CacheUpdater');
         this.cacheRefreshing = true;
         if (this.cacheUpdater && !this.cacheUpdater.isPolling) {
@@ -516,7 +517,8 @@
           this.cacheUpdater.lastBuiltAt = null;
           this.cacheUpdater.start();
         }
-      });
+      };
+      window.addEventListener('stats-cache-rebuild-started', this.rebuildListener);
 
       // Check initial cache status after a short delay to ensure Alpine.js is ready
       requestAnimationFrame(() => {
@@ -524,6 +526,15 @@
           this.checkCacheStatus();
         }, 200);
       });
+    },
+    destroy() {
+      // Stop polling and drop listeners when the page is swapped away
+      if (this.cacheUpdater) {
+        this.cacheUpdater.stop();
+      }
+      if (this.rebuildListener) {
+        window.removeEventListener('stats-cache-rebuild-started', this.rebuildListener);
+      }
     },
     async checkCacheStatus() {
       if (!this.selectedRangeName) {
@@ -2037,7 +2048,8 @@
       };
     }
 
-    let statsMediaCardFitFrame = null;
+    // var (not let): this script re-executes on boosted navigation
+    var statsMediaCardFitFrame = null;
 
     function fitStatisticsMediaCardValues() {
       const isMobile = window.matchMedia("(max-width: 639px)").matches;
@@ -2082,12 +2094,15 @@
       });
     }
 
-    window.addEventListener("resize", scheduleStatisticsMediaCardFit, { passive: true });
-    window.addEventListener("load", scheduleStatisticsMediaCardFit);
+    if (!window.__yamtrackStatsCardFitBound) {
+      window.__yamtrackStatsCardFitBound = true;
+      window.addEventListener("resize", () => scheduleStatisticsMediaCardFit(), { passive: true });
+      window.addEventListener("load", () => scheduleStatisticsMediaCardFit());
+    }
     scheduleStatisticsMediaCardFit();
 
     if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(scheduleStatisticsMediaCardFit);
+      document.fonts.ready.then(() => scheduleStatisticsMediaCardFit());
     }
   </script>
 

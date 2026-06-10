@@ -1,5 +1,6 @@
 <script>
-  const COLUMN_UI_DEBUG = (
+  // var (not let/const): this script re-executes on boosted navigation
+  var COLUMN_UI_DEBUG = (
     window.location.hostname === 'localhost' ||
     window.location.hostname === '127.0.0.1'
   );
@@ -12,8 +13,8 @@
   }
 
   window.columnUiDebugLog = columnUiDebugLog;
-  let columnRefreshInFlight = false;
-  let columnRefreshQueued = false;
+  var columnRefreshInFlight = false;
+  var columnRefreshQueued = false;
 
   function refreshTableAfterColumnSave(options = {}) {
     if (!window.htmx || !options.refreshUrl) {

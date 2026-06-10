@@ -10,6 +10,7 @@
 <div x-data="{
   cacheRefreshing: {{ history_refreshing|yesno:"true,false" }},
   cacheUpdater: null,
+  refreshListener: null,
   loggingStyle: '{{ user.game_logging_style|default:"repeats" }}',
   init() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -19,13 +20,14 @@
     }
 
     // Listen for HTMX-triggered refresh requests (e.g., deletes)
-    window.addEventListener('history-refresh-start', () => {
+    this.refreshListener = () => {
       this.cacheRefreshing = true;
       if (this.cacheUpdater) {
         this.cacheUpdater.wasRefreshing = true;
         this.cacheUpdater.start();
       }
-    });
+    };
+    window.addEventListener('history-refresh-start', this.refreshListener);
 
     // Initialize cache updater immediately
     if (window.CacheUpdater) {
@@ -49,6 +51,15 @@
     if (this.cacheRefreshing && this.cacheUpdater) {
       this.cacheUpdater.wasRefreshing = true;
       this.cacheUpdater.start();
+    }
+  },
+  destroy() {
+    // Stop polling and drop listeners when the page is swapped away
+    if (this.cacheUpdater) {
+      this.cacheUpdater.stop();
+    }
+    if (this.refreshListener) {
+      window.removeEventListener('history-refresh-start', this.refreshListener);
     }
   }
 }" x-init="$el.closest('.container')?.classList.add('history-page-container')">

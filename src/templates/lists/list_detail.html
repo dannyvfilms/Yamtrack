@@ -758,17 +758,18 @@
   </script>
 
   <script>
-    const mediaTypeLabels = {
+    // var (not let/const): these scripts re-execute on boosted navigation
+    var mediaTypeLabels = {
       {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
       'all': 'All Types'
     };
   </script>
 
   <script>
-    const FETCH_URL = '{% url "fetch_release_year" %}';
-    const pendingFetches = new Set();
-    let fetchQueue = [];
-    let isProcessing = false;
+    var FETCH_URL = '{% url "fetch_release_year" %}';
+    var pendingFetches = new Set();
+    var fetchQueue = [];
+    var isProcessing = false;
 
     function processQueue() {
       if (isProcessing || fetchQueue.length === 0) return;
@@ -836,14 +837,18 @@
       loadVisibleReleaseYears();
     }
 
-    document.body.addEventListener('htmx:afterSwap', function() {
-      setTimeout(loadVisibleReleaseYears, 50);
-    });
+    if (!window.__yamtrackListDetailReleaseYearsBound) {
+      window.__yamtrackListDetailReleaseYearsBound = true;
+      document.body.addEventListener('htmx:afterSwap', function() {
+        setTimeout(loadVisibleReleaseYears, 50);
+      });
+    }
   </script>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
   <script>
-    let _listSortable = null;
+    // var (not let): this script re-executes on boosted navigation
+    var _listSortable = null;
 
     function initListSortable(layout) {
       destroyListSortable();

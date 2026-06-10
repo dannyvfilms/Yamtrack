@@ -835,7 +835,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
   <script>
-    let _listSortable = null;
+    // var (not let): this script re-executes on boosted navigation
+    var _listSortable = null;
 
     function initListSortable(layout) {
       destroyListSortable();

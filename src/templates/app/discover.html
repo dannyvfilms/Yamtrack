@@ -218,6 +218,19 @@
           };
           document.body.addEventListener("discoverActionComplete", this.discoverActionListener);
         },
+        destroy() {
+          // Stop polling and drop body listeners when the page is swapped away
+          this.stopCacheUpdater();
+          if (this.swapGuardListener) {
+            document.body.removeEventListener("htmx:beforeSwap", this.swapGuardListener);
+          }
+          if (this.rowsRefreshListener) {
+            document.body.removeEventListener("htmx:afterSwap", this.rowsRefreshListener);
+          }
+          if (this.discoverActionListener) {
+            document.body.removeEventListener("discoverActionComplete", this.discoverActionListener);
+          }
+        },
         resetRefreshState() {
           this.refreshing = false;
           this.cacheRefreshing = false;
