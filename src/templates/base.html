@@ -40,6 +40,12 @@
 
           htmx.config.getCacheBusterParam = true;
 
+          // Boosted navigation: never serve history entries from the local
+          // snapshot cache (it would capture Alpine/Select2-mutated DOM);
+          // back/forward instead does a normal full page load.
+          htmx.config.historyCacheSize = 0;
+          htmx.config.refreshOnHistoryMiss = true;
+
           document.body.addEventListener("htmx:configRequest", function(event) {
             const path = event.detail && event.detail.path ? event.detail.path : "";
             const needsModalCacheBust = (
@@ -114,7 +120,8 @@
           <div class="h-16 border-b border-[#2c3136] flex items-center px-6">
             <h1 class="text-2xl font-semibold text-gray-100">Yamtrack</h1>
           </div>
-          <nav class="p-4 flex-1 overflow-y-auto" style="-webkit-overflow-scrolling: touch;">
+          {# hx-boost: swap the body instead of reloading on sidebar navigation #}
+          <nav class="p-4 flex-1 overflow-y-auto" hx-boost="true" style="-webkit-overflow-scrolling: touch;">
             <ul class="space-y-1 mb-6">
               <li>
                 <a href="{% url 'home' %}"
@@ -241,6 +248,7 @@
               {% url 'export_data' as export_url %}
               {% url 'ui_preferences' as ui_preferences_url %}
               <a href="{{ account_url }}"
+                 hx-boost="true"
                  class="flex items-center space-x-3 px-4 py-2 rounded-md transition-colors duration-200 text-sm {% if request.path == account_url or request.path == notifications_url or request.path == sidebar_url or request.path == ui_preferences_url or request.path == preferences_url or request.path == home_screen_url or request.path == integrations_url or request.path == import_url or request.path == export_url %}text-white bg-[#2c3136]{% else %}text-gray-400 hover:text-white hover:bg-[#23272b]{% endif %}">
                 {% if request.path == account_url or request.path == notifications_url or request.path == sidebar_url or request.path == ui_preferences_url or request.path == preferences_url or request.path == home_screen_url or request.path == integrations_url or request.path == import_url or request.path == export_url %}
                   {% include "app/icons/settings.svg" with classes="w-5 h-5 text-indigo-400 " %}
