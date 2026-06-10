@@ -276,6 +276,17 @@ def song_save(request):
                     request=request,
                 ),
             )
+        response.write(
+            render_to_string(
+                "app/components/detail_music_track_actions.html",
+                {
+                    "track_data": track_data,
+                    "track_actions_oob": True,
+                    "user": request.user,
+                },
+                request=request,
+            ),
+        )
         response["HX-Trigger"] = json.dumps(
             {
                 "closeModal": {},

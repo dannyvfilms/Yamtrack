@@ -1,0 +1,55 @@
+{% load app_tags user_tags %}
+
+<div id="music-track-actions-{{ track_data.track.id }}"
+     {% if track_actions_oob %}hx-swap-oob="true"{% endif %}
+     class="flex space-x-2">
+  {% if track_data.music %}
+    {# Lists button #}
+    <div x-data="{ listsOpen: false }">
+      <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
+              title="Add to custom lists"
+              hx-get="{% media_view_url 'lists_modal' track_data.music.item %}"
+              hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+              hx-target="#lists-modal-{{ track_data.track.id }}"
+              hx-trigger="click once"
+              @click="listsOpen = true">
+        {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+      </button>
+
+      <div x-show="listsOpen"
+           @keydown.escape.window="listsOpen = false"
+           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+             @click.outside="listsOpen = false">
+          <div id="lists-modal-{{ track_data.track.id }}"></div>
+        </div>
+      </div>
+    </div>
+
+    {# History button #}
+    <div x-data="{ historyOpen: false }">
+      <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
+              title="View your activity history"
+              hx-get="{% media_view_url 'history_modal' track_data.music.item %}"
+              hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+              hx-target="#history-modal-{{ track_data.track.id }}"
+              hx-trigger="click once"
+              @click="historyOpen = true">
+        {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+      </button>
+      <div x-show="historyOpen"
+           @keydown.escape.window="historyOpen = false"
+           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+             @click.outside="historyOpen = false">
+          <div id="history-modal-{{ track_data.track.id }}"></div>
+        </div>
+      </div>
+    </div>
+
+    {# Rating button — same circular style as TV episodes / comic issues, always last #}
+    {% with ep_score=track_data.music.score %}
+      {% include "app/components/detail_row_rating_button.html" with ep_score=ep_score rating_kind="music" music_instance=track_data.music csrf_token=csrf_token user=user only %}
+    {% endwith %}
+  {% endif %}
+</div>

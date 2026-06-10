@@ -12,7 +12,7 @@
      class="relative">
   <button type="button"
           @click="showRatingPopup = !showRatingPopup"
-          title="{% if action_media_type == MediaTypes.EPISODE.value %}Rate episode{% else %}Rate item{% endif %}"
+          title="{% if rating_kind == 'episode' %}Rate episode{% elif rating_kind == 'music' %}Rate track{% else %}Rate item{% endif %}"
           :class="rating !== null
             ? 'border-amber-400/28 bg-amber-500/14 hover:bg-amber-500/20'
             : 'border-gray-400/28 bg-gray-500/14 hover:bg-gray-500/20'"
@@ -33,6 +33,8 @@
                   @mouseenter="hoverRating = {{ rating_value }}"
                   {% if rating_kind == "episode" %}
                     hx-post="{% url 'update_episode_score' episode_score_target_id episode.episode_number %}"
+                  {% elif rating_kind == "music" %}
+                    hx-post="{% url 'update_track_score' music_instance.id %}"
                   {% else %}
                     hx-post="{% url 'update_media_score' action_media_type rating_instance.id %}"
                   {% endif %}
