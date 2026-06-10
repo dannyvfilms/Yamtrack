@@ -554,6 +554,77 @@ class AudiobookshelfImporterTests(TestCase):
             "https://abs.example.com/api/items/item-4/cover",
         )
 
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_normalizes_filesystem_cover_path_to_api_endpoint(self, mock_me, mock_item):
+        """ABS filesystem coverPath should be mapped to the API cover endpoint."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-fs",
+                    "currentTime": 600,
+                    "lastUpdate": 9_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 3_600,
+                "metadata": {
+                    "title": "Filesystem Cover Book",
+                    "authors": [{"name": "Test Author"}],
+                },
+            },
+            "coverPath": "/metadata/items/item-fs/cover.jpg",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        item = Book.objects.get(user=self.user).item
+        self.assertEqual(
+            item.image,
+            "https://abs.example.com/api/items/item-fs/cover",
+        )
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_completed_book_progress_set_to_runtime_minutes(self, mock_me, mock_item):
+        """Finished books with partial currentTime should have progress = runtime_minutes."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-partial-finished",
+                    "currentTime": 3_400,
+                    "duration": 3_600,
+                    "progress": 0.944,
+                    "isFinished": True,
+                    "lastUpdate": 8_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 3_600,
+                "metadata": {
+                    "title": "Almost Finished Book",
+                    "authors": [{"name": "Test Author"}],
+                },
+            },
+            "coverPath": "https://img.example/partial.jpg",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        media = Book.objects.get(user=self.user)
+        self.assertEqual(media.status, Status.COMPLETED.value)
+        self.assertEqual(media.progress, media.item.runtime_minutes)
+
     @patch("integrations.imports.audiobookshelf.services.get_media_metadata")
     @patch("integrations.imports.audiobookshelf.services.search")
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")

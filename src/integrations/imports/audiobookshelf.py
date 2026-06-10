@@ -199,6 +199,18 @@ class AudiobookshelfImporter:
         series_name, series_position = self._extract_series_info(metadata)
 
         image = self._normalize_cover_url(item_metadata.get("coverPath"))
+        # ABS returns coverPath as a server filesystem path (e.g. /metadata/items/.../cover.jpg).
+        # Map any ABS-hosted non-API URL to the authenticated cover endpoint so that
+        # _should_prefer_provider_cover triggers provider enrichment with a valid fallback.
+        if image:
+            _parsed = urlparse(image)
+            _abs_host = urlparse(self.account.base_url).netloc.lower()
+            if (
+                _parsed.netloc.lower() == _abs_host
+                and not ("/api/items/" in _parsed.path and "/cover" in _parsed.path)
+            ):
+                image = f"{self.account.base_url.rstrip('/')}/api/items/{library_item_id}/cover"
+
         should_enrich = (
             self._should_prefer_provider_cover(image)
             or not authors_list
@@ -290,6 +302,9 @@ class AudiobookshelfImporter:
         progress_seconds = int(progress_entry.get("currentTime") or 0)
         progress_minutes = max(0, progress_seconds // 60)
         is_finished = self._is_finished_progress_entry(progress_entry)
+
+        if is_finished and runtime_minutes:
+            progress_minutes = runtime_minutes
 
         if is_finished:
             status = Status.COMPLETED.value

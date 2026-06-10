@@ -657,6 +657,13 @@ class Book(Media):
 
     tracker = FieldTracker()
 
+    @property
+    def formatted_progress(self):
+        """Return progress formatted by book format: time for audiobooks, pages otherwise."""
+        if getattr(self, "item", None) and self.item.format == "audiobook":
+            return app.helpers.minutes_to_hhmm(self.progress)
+        return str(self.progress)
+
 
 class Comic(Media):
     """Model for comics."""
