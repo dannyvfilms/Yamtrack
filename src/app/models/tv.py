@@ -572,7 +572,8 @@ class Season(Media):
         )
         if (
             desired_status != Status.COMPLETED.value
-            or self.status == Status.COMPLETED.value
+            or self.status
+            in {Status.COMPLETED.value, Status.IN_PROGRESS.value}
         ):
             return False
 
@@ -746,8 +747,14 @@ class Season(Media):
         desired_status = None
 
         if total_eps > 0 and max_watched >= total_eps:
-            # We know how many have released and we've logged them all
-            desired_status = Status.COMPLETED.value
+            # We know how many have released and we've logged them all.
+            # Respect a manual IN_PROGRESS override (rewatch) rather than
+            # forcing back to Completed.
+            desired_status = (
+                Status.IN_PROGRESS.value
+                if self.status == Status.IN_PROGRESS.value
+                else Status.COMPLETED.value
+            )
         elif max_watched > 0 and total_eps == 0:
             # No release data, but we have watches — stay in progress
             desired_status = Status.IN_PROGRESS.value

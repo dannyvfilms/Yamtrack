@@ -542,27 +542,41 @@ def season_details(
             if isinstance(season_metadata, dict)
             else None
         )
+        derived = current_instance.derived_status_from_episode_progress(
+            max_progress=season_max_progress,
+        )
+        # Only auto-promote to Completed if the user hasn't manually overridden
+        # to In Progress (rewatch scenario). PAUSED/DROPPED are already guarded
+        # inside derived_status_from_episode_progress.
         if (
-            current_instance.derived_status_from_episode_progress(
-                max_progress=season_max_progress,
-            )
-            == Status.COMPLETED.value
-            and current_instance.status != Status.COMPLETED.value
+            derived == Status.COMPLETED.value
+            and current_instance.status not in {
+                Status.COMPLETED.value,
+                Status.IN_PROGRESS.value,
+            }
         ):
             current_instance.promote_to_completed_if_fully_watched(
                 max_progress=season_max_progress,
             )
         current_instance.max_progress = season_max_progress
-        current_instance.status = current_instance.derived_status_from_episode_progress(
-            max_progress=season_max_progress,
-        )
+        # Don't overwrite a manual IN_PROGRESS with a derived COMPLETED (rewatch).
+        if not (
+            derived == Status.COMPLETED.value
+            and current_instance.status == Status.IN_PROGRESS.value
+        ):
+            current_instance.status = derived
         for user_media in user_medias:
             if not hasattr(user_media, "derived_status_from_episode_progress"):
                 continue
-            user_media.max_progress = season_max_progress
-            user_media.status = user_media.derived_status_from_episode_progress(
+            user_media_derived = user_media.derived_status_from_episode_progress(
                 max_progress=season_max_progress,
             )
+            user_media.max_progress = season_max_progress
+            if not (
+                user_media_derived == Status.COMPLETED.value
+                and user_media.status == Status.IN_PROGRESS.value
+            ):
+                user_media.status = user_media_derived
 
     # Get collection entry, stats, and metadata for this season (if not public view)
     collection_entry = None

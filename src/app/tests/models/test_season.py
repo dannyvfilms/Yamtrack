@@ -466,6 +466,36 @@ class SeasonStatusTests(TestCase):
             # bulk_create shouldn't have been called
             mock_bulk_create.assert_not_called()
 
+    def test_promote_to_completed_skips_manual_in_progress(self):
+        """Regression: promote_to_completed_if_fully_watched must not override
+        a manually set IN_PROGRESS status (rewatch scenario, issue #261)."""
+        ep_item = Item.objects.create(
+            media_id="123",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Test Show",
+            image="http://example.com/image.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.create(
+            item=ep_item,
+            related_season=self.season,
+            end_date=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+
+        # Season is fully watched (1/1 episodes), user manually set IN_PROGRESS
+        self.season.status = Status.IN_PROGRESS.value
+        self.season.save()
+        self.season.refresh_from_db()
+
+        # promote_to_completed_if_fully_watched should be a no-op
+        result = self.season.promote_to_completed_if_fully_watched(max_progress=1)
+        self.assertFalse(result)
+
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.status, Status.IN_PROGRESS.value)
+
     def test_get_tv_creates_tv_if_not_exists(self):
         """Test get_tv creates TV instance if it doesn't exist."""
         self.tv.delete()
