@@ -23,6 +23,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 from integrations import plex as plex_api
 from integrations.imports import helpers
 from integrations.imports.helpers import MediaImportError, MediaImportUnexpectedError
+from integrations.webhooks import anime_mappings
 from integrations.webhooks.plex import PlexWebhookProcessor
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,7 @@ class PlexHistoryImporter:
         self._unique_music_tracks: set[tuple[str, str]] = set()
         # Store ratings from library items to apply during bulk media creation
         self._library_ratings: dict[tuple[str, str], float] = {}
+        self._anime_import_keys: set[tuple[str, int]] = set()
 
     def import_data(self):
         """Import history for the selected library."""
@@ -912,6 +914,7 @@ class PlexHistoryImporter:
         self._episode_records.append(
             {
                 "tmdb_id": media_id,
+                "external_ids": dict(ids),
                 "season_number": season_number,
                 "episode_number": episode_number,
                 "watched_at": watched_at,
@@ -920,6 +923,7 @@ class PlexHistoryImporter:
                 "rating": rating,
                 "title": metadata.get("title") or "Unknown Episode",
                 "series_title": series_search_title,
+                "guid": metadata.get("Guid") or metadata.get("guid"),
             },
         )
         self._tv_ids.add(media_id)
@@ -1097,6 +1101,257 @@ class PlexHistoryImporter:
             return str(response["movie_results"][0]["id"])
         return None
 
+    def _try_import_episode_record_as_anime(
+        self,
+        record: dict,
+        tv_metadata: dict,
+    ) -> bool:
+        """Route confirmed Plex anime history through the anime webhook path."""
+        if not getattr(self.user, "anime_enabled", False):
+            return False
+
+        season_number = record["season_number"]
+        episode_number = record["episode_number"]
+        tmdb_id = str(tv_metadata.get("media_id", record["tmdb_id"]))
+        external_ids = dict(record.get("external_ids") or {})
+        tvdb_id = external_ids.get("tvdb_id") or tv_metadata.get("tvdb_id")
+
+        if self._has_existing_non_anime_tv_tracking(tmdb_id, tvdb_id):
+            return False
+
+        for _source, mal_id, mapped_episode in self._anime_mapping_candidates(
+            tmdb_id,
+            tvdb_id,
+            season_number,
+            episode_number,
+        ):
+            if mal_id and self._import_mapped_anime_record(
+                record,
+                mal_id,
+                mapped_episode,
+            ):
+                return True
+
+        resolved_tvdb_id = self._resolve_tvdb_id_for_anime_probe(
+            tmdb_id,
+            tvdb_id,
+            tv_metadata,
+        )
+        if not resolved_tvdb_id:
+            return False
+
+        if self._has_existing_non_anime_tv_tracking(tmdb_id, resolved_tvdb_id):
+            return False
+
+        try:
+            tvdb_metadata = app.providers.tvdb.tv(resolved_tvdb_id)
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            logger.warning(
+                "Failed TVDB anime probe for Plex import show %s via TVDB ID %s: %s",
+                tmdb_id,
+                resolved_tvdb_id,
+                exception_summary(exc),
+            )
+            return False
+
+        if not app.providers.tvdb.series_has_anime_genre(
+            resolved_tvdb_id,
+            tv_data=tvdb_metadata,
+        ):
+            return False
+
+        if int(season_number) == 0:
+            self.warnings.append(
+                f"Skipping Plex anime special for {record['series_title']}: "
+                "no MAL episode mapping found.",
+            )
+            self.summary_counts["skipped_missing_ids"] += 1
+            return True
+
+        mal_id = (tvdb_metadata.get("provider_external_ids") or {}).get("mal_id")
+        if not mal_id:
+            logger.info(
+                "TVDB anime probe matched Plex import show %s but no MAL ID was available",
+                tmdb_id,
+            )
+            return False
+
+        return self._import_mapped_anime_record(record, mal_id, episode_number)
+
+    def _has_existing_non_anime_tv_tracking(self, tmdb_id, tvdb_id=None) -> bool:
+        """Return whether this show is already tracked as regular TV."""
+        tmdb_id = str(tmdb_id)
+
+        if app.models.Item.objects.filter(
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            media_id=tmdb_id,
+        ).exclude(library_media_type=MediaTypes.ANIME.value).exists():
+            return True
+
+        if app.models.ItemProviderLink.objects.filter(
+            item__media_type=MediaTypes.TV.value,
+            provider=Sources.TMDB.value,
+            provider_media_type=MediaTypes.TV.value,
+            provider_media_id=tmdb_id,
+        ).exclude(item__library_media_type=MediaTypes.ANIME.value).exists():
+            return True
+
+        if tvdb_id not in (None, "") and app.models.ItemProviderLink.objects.filter(
+            item__media_type=MediaTypes.TV.value,
+            provider=Sources.TVDB.value,
+            provider_media_type=MediaTypes.TV.value,
+            provider_media_id=str(tvdb_id),
+        ).exclude(item__library_media_type=MediaTypes.ANIME.value).exists():
+            return True
+
+        return False
+
+    def _anime_mapping_candidates(
+        self,
+        tmdb_id: str,
+        tvdb_id,
+        season_number: int,
+        episode_number: int,
+    ):
+        """Yield explicit anime mapping candidates for a Plex episode record."""
+        yield (
+            "stored TMDB",
+            *self.processor._get_mal_id_from_provider_links(
+                Sources.TMDB.value,
+                tmdb_id,
+                season_number,
+                episode_number,
+            ),
+        )
+        yield (
+            "stored TVDB",
+            *self.processor._get_mal_id_from_provider_links(
+                Sources.TVDB.value,
+                tvdb_id,
+                season_number,
+                episode_number,
+            ),
+        )
+
+        if not tvdb_id:
+            return
+
+        try:
+            mapping_data = anime_mappings.fetch_mapping_data()
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            logger.warning(
+                "Failed to fetch anime mappings during Plex import: %s",
+                exception_summary(exc),
+            )
+            return
+        yield (
+            "TVDB",
+            *anime_mappings.get_mal_id_from_tvdb(
+                mapping_data,
+                tvdb_id,
+                season_number,
+                episode_number,
+            ),
+        )
+
+    def _resolve_tvdb_id_for_anime_probe(
+        self,
+        tmdb_id: str,
+        tvdb_id,
+        tv_metadata: dict,
+    ):
+        """Return a TVDB ID for conservative anime genre probing."""
+        if not app.providers.tvdb.enabled():
+            return None
+        if tvdb_id:
+            return tvdb_id
+        return app.providers.tmdb.resolve_tvdb_id_for_tmdb_show(tmdb_id, tv_metadata)
+
+    def _import_mapped_anime_record(self, record: dict, mal_id, mapped_episode) -> bool:
+        """Import one Plex history row as flat Anime progress."""
+        if not mal_id or mapped_episode is None:
+            return False
+
+        try:
+            mapped_episode = int(mapped_episode)
+        except (TypeError, ValueError):
+            return False
+        if mapped_episode <= 0:
+            return False
+
+        dedupe_key = (str(mal_id), mapped_episode)
+        if dedupe_key in self._anime_import_keys:
+            self.summary_counts["skipped_existing"] += 1
+            return True
+        self._anime_import_keys.add(dedupe_key)
+
+        existing = app.models.Anime.objects.filter(
+            user=self.user,
+            item__source=Sources.MAL.value,
+            item__media_id=str(mal_id),
+        ).first()
+        if existing and existing.progress >= mapped_episode:
+            self.summary_counts["skipped_existing"] += 1
+            return True
+
+        if not self.processor._handle_anime(
+            str(mal_id),
+            mapped_episode,
+            self._build_anime_payload(record),
+            self.user,
+        ):
+            return False
+
+        anime = app.models.Anime.objects.filter(
+            user=self.user,
+            item__source=Sources.MAL.value,
+            item__media_id=str(mal_id),
+        ).first()
+        if anime:
+            self._apply_import_timestamp(anime, record["watched_at"])
+
+        self.counts[MediaTypes.ANIME.value] += 1
+        self.summary_counts["created"] += 1
+        return True
+
+    def _build_anime_payload(self, record: dict) -> dict:
+        """Build a minimal played Plex payload for anime mapping handlers."""
+        metadata = {
+            "type": "episode",
+            "title": record["title"],
+            "grandparentTitle": record["series_title"],
+            "parentIndex": int(record["season_number"]),
+            "index": int(record["episode_number"]),
+            "ratingKey": record.get("plex_rating_key"),
+        }
+        if record.get("viewed_at_ts"):
+            metadata["viewedAt"] = int(record["viewed_at_ts"])
+        if record.get("guid"):
+            metadata["Guid"] = record["guid"]
+
+        return {
+            "event": "media.scrobble",
+            "Account": {"title": self.account.plex_username or self.user.username},
+            "Metadata": metadata,
+            "_import_batch": True,
+        }
+
+    def _apply_import_timestamp(self, anime, watched_at: datetime):
+        """Preserve Plex history time on Anime rows created through webhook handlers."""
+        update_fields = []
+        if anime.status == Status.COMPLETED.value:
+            if anime.end_date != watched_at:
+                anime.end_date = watched_at
+                update_fields.append("end_date")
+        elif anime.start_date != watched_at:
+            anime.start_date = watched_at
+            update_fields.append("start_date")
+
+        if update_fields:
+            anime._history_date = watched_at
+            anime.save(update_fields=update_fields)
+
     def _build_existing_dedupe_sets(self):
         """Collect existing movie/episode keys for replay-safe imports."""
         if self._movie_ids:
@@ -1206,6 +1461,9 @@ class PlexHistoryImporter:
                     {"grandparentTitle": record["title"]},
                     f"not found in {Sources.TMDB.label} with ID {record['tmdb_id']}",
                 )
+                continue
+
+            if self._try_import_episode_record_as_anime(record, tv_metadata):
                 continue
 
             season_metadata = tv_metadata.get(

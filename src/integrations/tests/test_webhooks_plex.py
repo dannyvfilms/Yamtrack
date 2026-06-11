@@ -20,6 +20,7 @@ from app.models import (
     Season,
     Status,
 )
+from app.providers import tmdb
 from integrations.models import PlexAccount
 from integrations.webhooks.plex import PlexWebhookProcessor
 
@@ -642,7 +643,7 @@ class PlexWebhookTests(TestCase):
             self.user,
         )
 
-        cached_season = cache.get("tmdb_season_114410_0")
+        cached_season = cache.get(tmdb._season_cache_key("114410", 0))
         cached_tv = cache.get("tmdb_tv_114410")
 
         self.assertIsNotNone(cached_season)

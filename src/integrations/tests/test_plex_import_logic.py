@@ -6,8 +6,20 @@ from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from app.models import Episode, Item, MediaTypes, Movie, Season, Sources, Status, TV
+from app.models import (
+    Anime,
+    Episode,
+    Item,
+    ItemProviderLink,
+    MediaTypes,
+    Movie,
+    Season,
+    Sources,
+    Status,
+    TV,
+)
 from app.providers import services
+from integrations import tasks
 from integrations.imports import helpers, plex
 from integrations.imports.plex import PlexHistoryImporter
 from integrations.models import PlexAccount
@@ -36,6 +48,8 @@ class TestPlexHybridImport(TestCase):
 
     @patch("integrations.imports.plex.plex_api.fetch_metadata")
     @patch("integrations.imports.plex.plex_api.list_users")
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
     @patch("integrations.imports.plex.services.search")
     @patch("integrations.imports.plex.services.get_media_metadata")
     @patch("integrations.imports.plex.plex_api.fetch_history")
@@ -50,6 +64,8 @@ class TestPlexHybridImport(TestCase):
         mock_fetch_history,
         mock_get_metadata,
         mock_search,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
         mock_list_users,
         mock_fetch_metadata,
     ):
@@ -219,9 +235,13 @@ class TestPlexHybridImport(TestCase):
 
         mock_get_metadata.side_effect = metadata_side_effect
 
-        with patch("integrations.webhooks.plex.app.providers.tmdb.find") as mock_find:
+        with (
+            patch("integrations.webhooks.base.app.providers.tmdb.find") as mock_find,
+            patch("integrations.webhooks.base.app.providers.tmdb.search") as mock_tmdb_search,
+        ):
             # First find fails
             mock_find.return_value = {"tv_results": [], "tv_episode_results": []}
+            mock_tmdb_search.return_value = mock_search.return_value
 
             plex.importer("machine::1", self.user, "new")
 
@@ -660,6 +680,372 @@ class TestPlexImportScenarios(TestCase):
 
         self.assertEqual(result["id"], tmdb_id)
         # Should not raise exception
+
+
+class TestPlexAnimeImportRouting(TestCase):
+    """Regression coverage for Plex imports that mix TV and anime history."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="plexanime")
+        self.account = PlexAccount.objects.create(
+            user=self.user,
+            plex_token="token",
+            plex_username="plexanime",
+            plex_account_id="111",
+        )
+        self.user.plex_usernames = "plexanime"
+        self.user.save()
+
+    def _importer(self):
+        return PlexHistoryImporter(
+            user=self.user,
+            account=self.account,
+            mode="new",
+            library="machine::1",
+        )
+
+    def _record(
+        self,
+        tmdb_id,
+        season,
+        episode,
+        *,
+        tvdb_id=None,
+        title="Episode",
+        series_title="Series",
+        viewed_at=1700000000,
+    ):
+        return {
+            "tmdb_id": str(tmdb_id),
+            "external_ids": {
+                "tmdb_id": str(tmdb_id),
+                "tvdb_id": str(tvdb_id) if tvdb_id else None,
+                "imdb_id": None,
+                "anidb_id": None,
+                "plex_guid": None,
+            },
+            "season_number": season,
+            "episode_number": episode,
+            "watched_at": timezone.datetime.fromtimestamp(
+                viewed_at,
+                tz=timezone.get_current_timezone(),
+            ).replace(second=0, microsecond=0),
+            "viewed_at_ts": viewed_at,
+            "plex_rating_key": f"rk-{tmdb_id}-{season}-{episode}",
+            "rating": None,
+            "title": title,
+            "series_title": series_title,
+            "guid": [{"id": f"tmdb://{tmdb_id}"}],
+        }
+
+    def _metadata(self, tmdb_id, title, *, tvdb_id=None, seasons=None):
+        metadata = {
+            "media_id": str(tmdb_id),
+            "title": title,
+            "original_title": title,
+            "localized_title": title,
+            "image": "https://example.com/show.jpg",
+            "tvdb_id": str(tvdb_id) if tvdb_id else None,
+        }
+        for season, episodes in (seasons or {}).items():
+            metadata[f"season/{season}"] = {
+                "image": f"https://example.com/{tmdb_id}/s{season}.jpg",
+                "max_progress": max(episodes),
+                "episodes": [{"episode_number": episode} for episode in episodes],
+            }
+        return metadata
+
+    def _create_mal_mapping(self, mal_id, provider, provider_id, *, season, offset=0):
+        item = Item.objects.create(
+            media_id=str(mal_id),
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title=f"Anime {mal_id}",
+            image="https://example.com/anime.jpg",
+        )
+        ItemProviderLink.objects.create(
+            item=item,
+            provider=provider,
+            provider_media_id=str(provider_id),
+            provider_media_type=MediaTypes.TV.value,
+            season_number=season,
+            episode_offset=offset,
+        )
+        return item
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    @patch("integrations.imports.plex.app.providers.mal.anime")
+    def test_mixed_tv_and_anime_imports_do_not_share_tv_rows(
+        self,
+        mock_mal,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """A mixed Plex show library should keep TV rows and Anime progress separate."""
+        mock_mal.return_value = {
+            "title": "One Piece Anime",
+            "image": "https://example.com/one-piece-anime.jpg",
+            "max_progress": 37,
+        }
+        self._create_mal_mapping(
+            "21",
+            Sources.TVDB.value,
+            "tvdb-anime",
+            season=2,
+        )
+        importer = self._importer()
+        importer._episode_records = [
+            self._record(
+                "tmdb-live-action",
+                2,
+                episode,
+                title=f"Live Action {episode}",
+                series_title="ONE PIECE",
+                viewed_at=1700000000 + episode,
+            )
+            for episode in range(1, 9)
+        ] + [
+            self._record(
+                "tmdb-anime",
+                2,
+                episode,
+                tvdb_id="tvdb-anime",
+                title=f"Anime {episode}",
+                series_title="One Piece",
+                viewed_at=1700001000 + episode,
+            )
+            for episode in range(1, 9)
+        ]
+        importer._tv_metadata_cache = {
+            "tmdb-live-action": self._metadata(
+                "tmdb-live-action",
+                "ONE PIECE",
+                seasons={2: range(1, 9)},
+            ),
+            "tmdb-anime": self._metadata(
+                "tmdb-anime",
+                "One Piece",
+                tvdb_id="tvdb-anime",
+                seasons={1: range(1, 37)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        self.assertEqual(len(importer.bulk_media[MediaTypes.TV.value]), 1)
+        self.assertEqual(len(importer.bulk_media[MediaTypes.SEASON.value]), 1)
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 8)
+        self.assertEqual(
+            Anime.objects.get(user=self.user, item__media_id="21").progress,
+            8,
+        )
+        self.assertFalse(
+            any("season 2 not found" in warning for warning in importer.warnings),
+        )
+        self.assertFalse(
+            Item.objects.filter(
+                source=Sources.TMDB.value,
+                media_id="tmdb-anime",
+                media_type__in=[MediaTypes.TV.value, MediaTypes.SEASON.value],
+            ).exists(),
+        )
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    @patch("integrations.imports.plex.app.providers.mal.anime")
+    def test_anime_mapping_advances_to_highest_imported_episode(
+        self,
+        mock_mal,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """Multiple Plex anime history rows should not stop at the first episode."""
+        mock_mal.return_value = {
+            "title": "Progress Anime",
+            "image": "https://example.com/progress.jpg",
+            "max_progress": 91,
+        }
+        self._create_mal_mapping("91", Sources.TVDB.value, "tvdb-progress", season=3)
+        importer = self._importer()
+        importer._episode_records = [
+            self._record(
+                "tmdb-progress",
+                3,
+                episode,
+                tvdb_id="tvdb-progress",
+                viewed_at=1700010000 + episode,
+            )
+            for episode in range(1, 90)
+        ]
+        importer._tv_metadata_cache = {
+            "tmdb-progress": self._metadata(
+                "tmdb-progress",
+                "Progress Anime",
+                tvdb_id="tvdb-progress",
+                seasons={1: range(1, 13)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        self.assertEqual(
+            Anime.objects.get(user=self.user, item__media_id="91").progress,
+            89,
+        )
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 0)
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.series_has_anime_genre", return_value=True)
+    @patch("integrations.imports.plex.app.providers.tvdb.tv")
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=True)
+    def test_unmapped_anime_special_is_skipped_without_tv_progress(
+        self,
+        _mock_tvdb_enabled,
+        mock_tvdb_tv,
+        _mock_has_anime_genre,
+        _mock_mapping_data,
+    ):
+        """Season-0 anime rows need explicit mapping and should not corrupt TV rows."""
+        mock_tvdb_tv.return_value = {
+            "title": "Special Anime",
+            "genres": ["Anime"],
+            "provider_external_ids": {"mal_id": "999"},
+        }
+        importer = self._importer()
+        importer._episode_records = [
+            self._record(
+                "tmdb-special",
+                0,
+                1,
+                tvdb_id="tvdb-special",
+                title="Special",
+                series_title="Special Anime",
+            )
+        ]
+        importer._tv_metadata_cache = {
+            "tmdb-special": self._metadata(
+                "tmdb-special",
+                "Special Anime",
+                tvdb_id="tvdb-special",
+                seasons={0: [1]},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        self.assertFalse(Anime.objects.filter(user=self.user).exists())
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 0)
+        self.assertIn("no MAL episode mapping found", "\n".join(importer.warnings))
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    def test_normal_tv_import_creates_all_history_episodes(
+        self,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """A normal TV show with 16 watched entries should import all 16 episodes."""
+        importer = self._importer()
+        importer._episode_records = [
+            self._record(
+                "tmdb-tv",
+                1,
+                episode,
+                title=f"Episode {episode}",
+                series_title="Sixteen Episode Show",
+                viewed_at=1700020000 + episode,
+            )
+            for episode in range(1, 17)
+        ]
+        importer._tv_metadata_cache = {
+            "tmdb-tv": self._metadata(
+                "tmdb-tv",
+                "Sixteen Episode Show",
+                seasons={1: range(1, 17)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        self.assertEqual(len(importer.bulk_media[MediaTypes.TV.value]), 1)
+        self.assertEqual(len(importer.bulk_media[MediaTypes.SEASON.value]), 1)
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 16)
+        self.assertFalse(Anime.objects.filter(user=self.user).exists())
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    @patch("integrations.imports.plex.plex_api.fetch_section_all_items")
+    def test_library_ratings_do_not_mark_unwatched_movies_completed(
+        self,
+        mock_fetch_section_items,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """Ratings/collection scans alone must not create watched Movie rows."""
+        mock_fetch_section_items.return_value = (
+            [
+                {
+                    "title": "Unwatched Rated Movie",
+                    "userRating": 8,
+                    "Guid": [{"id": "com.plexapp.agents.themoviedb://12345?lang=en"}],
+                }
+            ],
+            1,
+        )
+        importer = self._importer()
+        importer._import_ratings_from_library(
+            {
+                "id": "1",
+                "key": "1",
+                "title": "Movies",
+                "type": "movie",
+            },
+            "http://plex",
+            token="token",
+        )
+        importer._build_bulk_media()
+
+        self.assertFalse(Movie.objects.filter(user=self.user).exists())
+        self.assertEqual(
+            importer._library_ratings[("tmdb", "12345")],
+            8,
+        )
+
+
+class TestPlexPostImportSideEffects(TestCase):
+    """Plex imports should refresh dependent caches and queue collection refresh."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="plexsideeffects")
+
+    @patch("integrations.tasks.update_collection_metadata_from_plex.apply_async")
+    @patch("app.statistics_cache.schedule_all_ranges_refresh")
+    @patch("integrations.tasks.history_cache.invalidate_history_cache")
+    @patch("integrations.tasks.events.tasks.reload_calendar.delay")
+    @patch("integrations.imports.plex.importer")
+    def test_plex_import_schedules_history_statistics_and_collection_refresh(
+        self,
+        mock_importer,
+        mock_reload_calendar,
+        mock_invalidate_history,
+        mock_schedule_stats,
+        mock_collection_refresh,
+    ):
+        mock_importer.return_value = ({"created": 1}, "")
+
+        result = tasks.import_media(mock_importer, "all", self.user.id, "new")
+
+        self.assertIn("1 created", result)
+        mock_reload_calendar.assert_called_once()
+        mock_invalidate_history.assert_called_once_with(self.user.id, force=True)
+        mock_schedule_stats.assert_called_once_with(self.user.id)
+        mock_collection_refresh.assert_called_once_with(
+            args=("all", self.user.id),
+            countdown=60,
+        )
 
 
 class TestPlexMultiServerImport(TestCase):
