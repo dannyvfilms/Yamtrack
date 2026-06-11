@@ -6,7 +6,7 @@
     {% with item|alternative_title:user as resolved_alt_title %}
   <div class="flex items-center p-4 gap-4">
     <div class="shrink-0 relative">
-      <a href="{{ item|media_url }}">
+      <a href="{{ item|media_url }}" hx-boost="true">
         <img alt="{{ resolved_item_title|default:title }}"
              class="lazyload w-16 h-24 object-cover rounded shadow-md bg-[#3e454d]"
              data-src="{{ item.image }}"
@@ -19,6 +19,7 @@
         <div class="flex-1 min-w-0">
           <h3 class="text-lg font-semibold text-white mb-2 line-clamp-2">
             <a href="{{ item|media_url }}"
+               hx-boost="true"
                class="hover:text-indigo-400 transition-colors">{{ resolved_item_title|default:title }}</a>
             {% if resolved_alt_title %}
               <span class="inline-flex items-center ml-1 align-middle relative"

@@ -2,6 +2,7 @@
 
 <article class="w-36 shrink-0 snap-start sm:w-40 md:w-44">
   <a href="{{ candidate|media_url }}"
+     hx-boost="true"
      class="block overflow-hidden rounded-lg border border-[#3a4047] bg-[#2a2f35] transition-colors hover:border-indigo-500">
     <img src="{{ candidate.image|default:IMG_NONE }}"
          alt="{{ candidate|display_title:user }}"

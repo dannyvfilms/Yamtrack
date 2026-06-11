@@ -25,6 +25,14 @@
     <link rel="stylesheet" type="text/css" href="{% static 'css/main.css' %}{% get_static_file_mtime 'css/main.css' %}">
 
     <script src="{% static 'js/libraries/htmx-2.0.4.min.js' %}"></script>
+    <script>
+      // Boosted navigation: never serve history entries from the local
+      // snapshot cache; back/forward instead does a normal full page load.
+      if (window.htmx) {
+        htmx.config.historyCacheSize = 0;
+        htmx.config.refreshOnHistoryMiss = true;
+      }
+    </script>
     <script defer src="{% static 'js/libraries/alpinejs-3.14.9.min.js' %}"></script>
     <script src="{% static 'js/libraries/lazysizes-5.3.2.min.js' %}" async></script>
 

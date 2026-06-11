@@ -1,6 +1,7 @@
 {% load app_tags %}
 <div class="flex justify-between items-center">
   <a href="{{ media.item|media_url }}"
+     hx-boost="true"
      class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.item }}</a>
 
   {% if media.repeats > 1 %}

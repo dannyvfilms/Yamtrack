@@ -10,7 +10,8 @@
     <div class="flex flex-col md:flex-row gap-8">
       <div class="md:w-64 shrink-0">
         <div class="bg-[#2a2f35] rounded-lg overflow-hidden sticky top-20">
-          <nav class="p-2 space-y-1">
+          {# hx-boost: swap the body instead of reloading on settings navigation #}
+          <nav class="p-2 space-y-1" hx-boost="true">
             {% url 'account' as account_url %}
             <a href="{{ account_url }}"
                class="w-full flex items-center space-x-3 px-2 py-2 rounded-md transition-colors text-left border-l-2 cursor-pointer text-sm {% if request.path == account_url %}bg-[#39404b] text-white border-indigo-500{% else %}text-gray-400 border-transparent hover:bg-[#313842] hover:text-white{% endif %}">

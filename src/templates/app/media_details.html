@@ -128,6 +128,7 @@
                   <div class="max-h-[300px] overflow-y-auto">
                     {% for tv_season in tv.related.seasons %}
                       <a href="{% if parent_media_type == MediaTypes.ANIME.value %}{% url 'anime_season_details' source=media.source media_id=media.media_id title=media.title|slug season_number=tv_season.season_number %}{% else %}{% url 'season_details' source=media.source media_id=media.media_id title=media.title|slug season_number=tv_season.season_number %}{% endif %}"
+                         hx-boost="true"
                          class="w-full px-4 py-3 flex items-center space-x-3 hover:bg-gray-700 transition-colors duration-200 cursor-pointer {% if tv_season.season_number == media.season_number %}bg-[#343a40]{% endif %}">
                         <div class="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-600 text-white">
                           {{ tv_season.season_number }}
