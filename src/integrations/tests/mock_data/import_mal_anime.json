@@ -47,7 +47,12 @@
           "large": "https://cdn.myanimelist.net/images/anime/7/77356l.jpg",
           "medium": "https://cdn.myanimelist.net/images/anime/7/77356.jpg"
         },
-        "title": "FLCL"
+        "title": "FLCL",
+        "alternative_titles": {
+          "synonyms": [],
+          "en": "FLCL",
+          "ja": "フリクリ"
+        }
       }
     },
     {
@@ -69,6 +74,30 @@
           "medium": "https://cdn.myanimelist.net/images/anime/13/50521.jpg"
         },
         "title": "Hyouka"
+      }
+    }
+    ,{
+      "list_status": {
+        "is_rewatching": false,
+        "num_episodes_watched": 12,
+        "score": 9,
+        "status": "completed",
+        "updated_at": "2023-05-10T14:00:00+00:00",
+        "num_times_rewatched": 0,
+        "comments": ""
+      },
+      "node": {
+        "id": 31043,
+        "main_picture": {
+          "large": "https://cdn.myanimelist.net/images/anime/1555/106759l.jpg",
+          "medium": "https://cdn.myanimelist.net/images/anime/1555/106759.jpg"
+        },
+        "title": "Boku dake ga Inai Machi",
+        "alternative_titles": {
+          "synonyms": [],
+          "en": "Erased",
+          "ja": "僕だけがいない街"
+        }
       }
     }
   ],

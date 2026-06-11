@@ -50,7 +50,7 @@ class ImportMAL(TestCase):
         mock_request.side_effect = [anime_mock, manga_mock]
 
         mal.importer("bloodthirstiness", self.user, "new")
-        self.assertEqual(Anime.objects.filter(user=self.user).count(), 5)
+        self.assertEqual(Anime.objects.filter(user=self.user).count(), 6)
         self.assertEqual(Manga.objects.filter(user=self.user).count(), 3)
 
         self.assertEqual(
@@ -81,6 +81,15 @@ class ImportMAL(TestCase):
             .history_date,
             datetime(2022, 12, 28, 19, 20, 54, tzinfo=UTC),
         )
+
+        erased_item = Item.objects.get(
+            media_id="31043",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+        )
+        self.assertEqual(erased_item.title, "Erased")
+        self.assertEqual(erased_item.localized_title, "Erased")
+        self.assertEqual(erased_item.original_title, "Boku dake ga Inai Machi")
 
     def test_user_not_found(self):
         """Test that an error is raised if the user is not found."""

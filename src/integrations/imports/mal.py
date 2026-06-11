@@ -9,6 +9,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 import app
+import app.providers.mal
 from app.models import MediaTypes, Sources, Status
 from integrations.imports import helpers
 from integrations.imports.helpers import MediaImportError, MediaImportUnexpectedError
@@ -151,7 +152,7 @@ class MyAnimeListImporter:
             source=Sources.MAL.value,
             media_type=media_type,
             defaults={
-                **app.models.Item.title_fields_from_metadata(content["node"]),
+                **app.providers.mal.get_title_fields(content["node"]),
                 "image": image_url,
             },
         )
