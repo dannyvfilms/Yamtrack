@@ -924,10 +924,14 @@ def sync_artist_discography(artist: Artist, force: bool = False) -> int:
                     "title": album_data.get("title", "Unknown Album"),
                     "musicbrainz_release_id": album_data.get("release_id"),
                     "release_date": release_date,
-                    "image": album_data.get("image", ""),
                     "release_type": album_data.get("release_type", ""),
                 },
+                create_defaults={"image": ""},
             )
+            # Reset IMG_NONE sentinel so re-synced albums rejoin the prefetch queue
+            if not created and album.image == settings.IMG_NONE:
+                album.image = ""
+                album.save(update_fields=["image"])
 
             if created:
                 logger.debug("Created album: %s", album.title)

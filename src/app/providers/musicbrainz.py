@@ -1026,7 +1026,7 @@ def get_artist_discography(artist_id, skip_cover_art=False):
             "primary_type": primary_type,
             "secondary_types": secondary_types,
             "release_id": None,  # Will be filled if we fetch releases
-            "image": settings.IMG_NONE,  # Will be filled later
+            "image": "",  # Will be filled later
         })
 
     # Now fetch actual releases to get release IDs for cover art
