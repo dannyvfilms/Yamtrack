@@ -76,7 +76,7 @@ def _audiobookshelf_book(media_id):
         "media_type": MediaTypes.BOOK.value,
         "title": title,
         "image": image,
-        "max_progress": runtime_minutes,
+        "max_progress": None,
         "synopsis": "",
         "genres": genres,
         "related": {},

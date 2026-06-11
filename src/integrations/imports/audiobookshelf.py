@@ -303,7 +303,9 @@ class AudiobookshelfImporter:
         progress_minutes = max(0, progress_seconds // 60)
         is_finished = self._is_finished_progress_entry(progress_entry)
 
-        if is_finished and runtime_minutes:
+        if is_finished and progress_minutes == 0 and runtime_minutes:
+            # ABS commonly resets currentTime to 0 after completion; use full runtime
+            # as a fallback so completed books don't show zero progress.
             progress_minutes = runtime_minutes
 
         if is_finished:
@@ -476,9 +478,10 @@ class AudiobookshelfImporter:
         if item is None:
             return True
 
+        image = item.image or ""
         return any(
             (
-                self._should_prefer_provider_cover(item.image),
+                self._is_stale_abs_cover(image),
                 not item.authors,
                 not item.isbn,
                 not item.publishers,
@@ -488,6 +491,26 @@ class AudiobookshelfImporter:
                 not item.localized_title,
                 item.metadata_fetched_at is None,
             ),
+        )
+
+    def _is_stale_abs_cover(self, image_url: str) -> bool:
+        """Return True for ABS-hosted URLs that are not the proper API cover endpoint.
+
+        These are filesystem paths that were mapped to HTTP URLs before the URL
+        normalisation fix and need to be re-normalised on the next repair pass.
+        Using this instead of _should_prefer_provider_cover in the repair check
+        avoids infinite re-repair for items whose provider enrichment failed and
+        are left with the /api/items/{id}/cover fallback URL.
+        """
+        if not image_url or image_url == settings.IMG_NONE:
+            return False
+        parsed = urlparse(image_url)
+        if parsed.scheme not in {"http", "https"}:
+            return False
+        abs_host = urlparse(self.account.base_url).netloc.lower()
+        return (
+            parsed.netloc.lower() == abs_host
+            and not ("/api/items/" in parsed.path and "/cover" in parsed.path)
         )
 
     def _extract_author_names(self, metadata: dict[str, Any]):

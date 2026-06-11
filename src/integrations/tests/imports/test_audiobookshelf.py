@@ -592,7 +592,7 @@ class AudiobookshelfImporterTests(TestCase):
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
     def test_completed_book_progress_set_to_runtime_minutes(self, mock_me, mock_item):
-        """Finished books with partial currentTime should have progress = runtime_minutes."""
+        """Finished books preserve actual listened time; runtime_minutes only fills in when currentTime is zero."""
         mock_me.return_value = {
             "mediaProgress": [
                 {
@@ -623,7 +623,69 @@ class AudiobookshelfImporterTests(TestCase):
         self.assertEqual(warnings, "")
         media = Book.objects.get(user=self.user)
         self.assertEqual(media.status, Status.COMPLETED.value)
-        self.assertEqual(media.progress, media.item.runtime_minutes)
+        # currentTime=3400s → 56 min; actual listened time is preserved, not overridden to runtime_minutes
+        self.assertEqual(media.progress, 3_400 // 60)
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_stale_filesystem_cover_triggers_backfill_repair(self, mock_me, mock_item):
+        """Items with old metadata-path cover URLs should be repaired on next sync."""
+        account = self.user.audiobookshelf_account
+        account.last_sync_ms = 9_000
+        account.save(update_fields=["last_sync_ms", "updated_at"])
+
+        importer = AudiobookshelfImporter(self.user)
+        media_id = importer._stable_media_id(account.base_url, "stale-cover-item")
+        Item.objects.create(
+            media_id=media_id,
+            source=Sources.AUDIOBOOKSHELF.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Stale Cover Book",
+            original_title="Stale Cover Book",
+            localized_title="Stale Cover Book",
+            # Stale URL stored before the URL normalisation fix
+            image="https://abs.example.com/metadata/items/stale-cover-item/cover.jpg",
+            authors=["Test Author"],
+            isbn=["9780000000000"],
+            publishers="Test Publisher",
+            genres=["Fiction"],
+            release_datetime=timezone.now(),
+            format="audiobook",
+        )
+
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "stale-cover-item",
+                    "currentTime": 1_200,
+                    "duration": 3_600,
+                    "lastUpdate": 5_000,  # < last_sync_ms → unchanged entry
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 3_600,
+                "metadata": {
+                    "title": "Stale Cover Book",
+                    "authors": [{"name": "Test Author"}],
+                },
+            },
+            "coverPath": "/api/items/stale-cover-item/cover",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        mock_item.assert_called_once_with("stale-cover-item")
+        item = Book.objects.get(user=self.user).item
+        # URL should be normalised to the proper API endpoint
+        self.assertEqual(
+            item.image,
+            "https://abs.example.com/api/items/stale-cover-item/cover",
+        )
 
     @patch("integrations.imports.audiobookshelf.services.get_media_metadata")
     @patch("integrations.imports.audiobookshelf.services.search")
