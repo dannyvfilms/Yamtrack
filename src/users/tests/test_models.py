@@ -559,11 +559,11 @@ class UserGetImportTasksTests(TestCase):
         self.assertEqual(len(import_tasks["results"]), 0)
 
     @patch("users.helpers.process_task_result")
-    def test_get_import_tasks_uses_direct_audiobookshelf_results(
+    def test_get_import_tasks_includes_recurring_audiobookshelf_results(
         self,
         mock_process_task_result,
     ):
-        """Recurring wrapper results should not replace real Audiobookshelf imports."""
+        """Both direct and recurring Audiobookshelf task results should appear in history."""
         mock_task = MagicMock()
         mock_task.summary = "Imported 1 book"
         mock_task.errors = None
@@ -583,15 +583,15 @@ class UserGetImportTasksTests(TestCase):
             task_kwargs=(f'{{"user_id": {self.user.id}}}'),
             status="SUCCESS",
             date_done=timezone.now() - timedelta(minutes=1),
-            result='["child-task-id", null]',
+            result='"Imported 1 book"',
         )
 
         import_tasks = self.user.get_import_tasks()
 
-        self.assertEqual(len(import_tasks["results"]), 1)
+        self.assertEqual(len(import_tasks["results"]), 2)
         self.assertEqual(import_tasks["results"][0]["source"], "audiobookshelf")
-        self.assertEqual(import_tasks["results"][0]["summary"], "Imported 1 book")
-        mock_process_task_result.assert_called_once()
+        self.assertEqual(import_tasks["results"][1]["source"], "audiobookshelf")
+        self.assertEqual(mock_process_task_result.call_count, 2)
 
     @patch("users.helpers.process_task_result")
     def test_get_import_tasks_maps_goodreads_legacy_and_canonical_results(
@@ -735,6 +735,93 @@ class UserGetImportTasksTests(TestCase):
         self.assertEqual(len(import_tasks["results"]), 1)
         self.assertEqual(import_tasks["results"][0]["source"], "hardcover")
         self.assertEqual(import_tasks["results"][0]["summary"], "Imported 3 books.")
+
+    @patch("users.helpers.process_task_result")
+    def test_get_import_tasks_includes_recurring_radarr_sonarr_results(
+        self,
+        mock_process_task_result,
+    ):
+        """Recurring Radarr and Sonarr task results should appear in import history."""
+        processed_task = MagicMock()
+        processed_task.summary = "Synced collection."
+        processed_task.errors = None
+        mock_process_task_result.return_value = processed_task
+
+        TaskResult.objects.create(
+            task_id="task-radarr-recurring",
+            task_name="Import from Radarr (Recurring)",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now() - timedelta(minutes=5),
+            result='"Synced collection."',
+        )
+        TaskResult.objects.create(
+            task_id="task-sonarr-recurring",
+            task_name="Import from Sonarr (Recurring)",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result='"Synced collection."',
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(
+            [r["source"] for r in import_tasks["results"]],
+            ["sonarr", "radarr"],
+        )
+        self.assertEqual(mock_process_task_result.call_count, 2)
+
+    def test_get_import_tasks_lastfm_periodic_sync_within_7_days(self):
+        """A Last.fm account synced within 7 days should produce a synthetic history entry."""
+        from integrations.models import LastFMAccount
+
+        LastFMAccount.objects.create(
+            user=self.user,
+            lastfm_username="testlistener",
+            last_sync_at=timezone.now() - timedelta(hours=2),
+            connection_broken=False,
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        lastfm_results = [r for r in import_tasks["results"] if r["source"] == "lastfm"]
+        self.assertEqual(len(lastfm_results), 1)
+        self.assertEqual(lastfm_results[0]["status"], "SUCCESS")
+        self.assertEqual(lastfm_results[0]["summary"], "Automatic Last.fm sync completed.")
+        self.assertIsNone(lastfm_results[0]["errors"])
+
+    def test_get_import_tasks_lastfm_periodic_sync_older_than_7_days(self):
+        """A Last.fm account synced more than 7 days ago should not appear in history."""
+        from integrations.models import LastFMAccount
+
+        LastFMAccount.objects.create(
+            user=self.user,
+            lastfm_username="testlistener",
+            last_sync_at=timezone.now() - timedelta(days=8),
+            connection_broken=False,
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        lastfm_results = [r for r in import_tasks["results"] if r["source"] == "lastfm"]
+        self.assertEqual(len(lastfm_results), 0)
+
+    def test_get_import_tasks_lastfm_no_sync_at_produces_no_synthetic_entry(self):
+        """A Last.fm account with no last_sync_at should not appear in history."""
+        from integrations.models import LastFMAccount
+
+        LastFMAccount.objects.create(
+            user=self.user,
+            lastfm_username="testlistener",
+            last_sync_at=None,
+            connection_broken=False,
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        lastfm_results = [r for r in import_tasks["results"] if r["source"] == "lastfm"]
+        self.assertEqual(len(lastfm_results), 0)
 
 
 class UserResolveWatchDateTests(TestCase):

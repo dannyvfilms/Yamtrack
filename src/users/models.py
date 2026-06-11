@@ -1409,10 +1409,10 @@ class User(AbstractUser):
                 "integrations.tasks.import_goodreads",
             ],
             "plex": ["Import from Plex", "Sync Plex Watchlist"],
-            "radarr": ["Import from Radarr"],
-            "sonarr": ["Import from Sonarr"],
-            "audiobookshelf": ["Import from Audiobookshelf"],
-            "pocketcasts": ["Import from Pocket Casts"],
+            "radarr": ["Import from Radarr", "Import from Radarr (Recurring)"],
+            "sonarr": ["Import from Sonarr", "Import from Sonarr (Recurring)"],
+            "audiobookshelf": ["Import from Audiobookshelf", "Import from Audiobookshelf (Recurring)"],
+            "pocketcasts": ["Import from Pocket Casts", "Import from Pocket Casts (Recurring)"],
             "lastfm": ["Import from Last.fm History"],
             "hardcover": ["Import from Hardcover"],
         }
@@ -1483,6 +1483,27 @@ class User(AbstractUser):
                     "errors": processed_task.errors,
                 },
             )
+
+        # Synthetic history entry for Last.fm automatic polling (global task has no per-user result)
+        if (
+            hasattr(self, "lastfm_account")
+            and self.lastfm_account
+            and self.lastfm_account.is_connected
+            and self.lastfm_account.last_sync_at
+            and self.lastfm_account.last_sync_at >= seven_days_ago
+        ):
+            results.append(
+                {
+                    "task": None,
+                    "source": "lastfm",
+                    "date": self.lastfm_account.last_sync_at,
+                    "status": states.SUCCESS,
+                    "summary": "Automatic Last.fm sync completed.",
+                    "errors": None,
+                },
+            )
+
+        results.sort(key=lambda r: r["date"] or seven_days_ago, reverse=True)
 
         # Get periodic tasks with their crontab schedules
         # Match both "user_id": X, (with comma) and "user_id": X} (without comma, last field)

@@ -363,7 +363,7 @@ def import_radarr(user_id, mode="new", username=None):  # noqa: ARG001
 @shared_task(name="Import from Radarr (Recurring)")
 def import_radarr_recurring(user_id):
     """Recurring import task for Radarr."""
-    return import_radarr.delay(user_id=user_id, mode="new")
+    return _run_arr_import("Radarr", radarr.importer, user_id, "new")
 
 
 @shared_task(name="Import from Sonarr")
@@ -375,7 +375,7 @@ def import_sonarr(user_id, mode="new", username=None):  # noqa: ARG001
 @shared_task(name="Import from Sonarr (Recurring)")
 def import_sonarr_recurring(user_id):
     """Recurring import task for Sonarr."""
-    return import_sonarr.delay(user_id=user_id, mode="new")
+    return _run_arr_import("Sonarr", sonarr.importer, user_id, "new")
 
 
 @shared_task(name="Sync Plex Watchlist")
@@ -426,7 +426,7 @@ def import_audiobookshelf(user_id, mode="new"):
 @shared_task(name="Import from Audiobookshelf (Recurring)")
 def import_audiobookshelf_recurring(user_id):
     """Recurring import task for Audiobookshelf."""
-    return import_audiobookshelf.delay(user_id=user_id, mode="new")
+    return import_media(audiobookshelf.importer, None, user_id, "new")
 
 @shared_task(name="Import from Pocket Casts")
 def import_pocketcasts(user_id, mode="new"):
@@ -444,7 +444,14 @@ def import_pocketcasts(user_id, mode="new"):
 @shared_task(name="Import from Pocket Casts (Recurring)")
 def import_pocketcasts_history(user_id):
     """Recurring import task for Pocket Casts (called every 2 hours via Celery beat)."""
-    return import_pocketcasts.delay(user_id, mode="new")
+    lock_key = f"pocketcasts_import_lock_{user_id}"
+    if not cache.add(lock_key, "1", timeout=600):
+        logger.info("Pocket Casts import already running for user %s, skipping", user_id)
+        return "Skipped: import already in progress"
+    try:
+        return import_media(pocketcasts.importer, None, user_id, "new")
+    finally:
+        cache.delete(lock_key)
 
 
 LASTFM_PARTIAL_SYNC_ERROR = (
