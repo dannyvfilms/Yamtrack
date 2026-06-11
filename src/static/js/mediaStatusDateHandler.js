@@ -352,11 +352,17 @@ window.clearTrackModalDate = function clearTrackModalDate(button, fieldName) {
   input.value = "";
   const form = button.closest("form");
   trackModalClearAutoFilledField(form, fieldName);
-  if (fieldName === "start_date" && form && window.Alpine) {
-    try {
-      Alpine.$data(form).manualStartDate = false;
-    } catch {
-      // Ignore Alpine lookup failures.
+  if (fieldName === "start_date" && form) {
+    if (window.Alpine) {
+      try {
+        Alpine.$data(form).manualStartDate = false;
+      } catch {
+        // Ignore Alpine lookup failures.
+      }
+    }
+    const sentinel = form.querySelector('[name="start_date_cleared"]');
+    if (sentinel) {
+      sentinel.value = "1";
     }
   }
   trackModalDispatchInputEvents(input);
@@ -546,6 +552,12 @@ document.addEventListener("alpine:init", () => {
           this.manualStartDate = Boolean(startDateField.value);
           if (this.manualStartDate) {
             this.autoFilled.start_date = false;
+            const sentinel =
+              this.$el.querySelector('[name="start_date_cleared"]') ??
+              this.$el.closest("form")?.querySelector('[name="start_date_cleared"]');
+            if (sentinel) {
+              sentinel.value = "";
+            }
           }
         });
 

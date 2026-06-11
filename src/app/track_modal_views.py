@@ -415,6 +415,7 @@ def _render_standard_track_modal(
         "source",
         "media_id",
         "season_number",
+        "start_date_cleared",
     }
     metadata_field_names = {"image_url"}
     field_groups = _track_modal_field_groups(

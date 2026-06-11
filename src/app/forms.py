@@ -428,6 +428,7 @@ class GameForm(MediaForm):
         widget=forms.TextInput(attrs={"placeholder": "hh:mm or 111 minutes"}),
         label="Progress (Time Played)",
     )
+    start_date_cleared = forms.CharField(required=False, widget=forms.HiddenInput())
 
     class Meta(MediaForm.Meta):
         """Bind form to model."""
@@ -440,9 +441,12 @@ class GameForm(MediaForm):
         start_date = cleaned_data.get("start_date")
         end_date = cleaned_data.get("end_date")
         progress = cleaned_data.get("progress")
+        start_date_cleared = cleaned_data.get("start_date_cleared") == "1"
 
         if (
             not start_date
+            and not start_date_cleared
+            and not self.instance.start_date
             and isinstance(end_date, datetime)
             and progress
             and progress > 0
