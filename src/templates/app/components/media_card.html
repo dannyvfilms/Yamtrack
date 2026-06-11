@@ -192,6 +192,22 @@
             {% endif %}
           {% endif %}
 
+          {# Inset progress bar at the bottom edge of the poster for in-progress/paused media (gated by the per-user progress_bar preference) #}
+          {% if media and user.progress_bar %}
+            {% with bar_status=media.aggregated_status|default:media.status %}
+              {% if bar_status == Status.IN_PROGRESS.value or bar_status == Status.PAUSED.value %}
+                {% if resolved_media_type != MediaTypes.MOVIE.value and media.max_progress and media.progress %}
+                  {% widthratio media.progress media.max_progress 100 as progress_percent %}
+                  {# Any overshoot (progress > max) renders as a full bar — the card's overflow-hidden clips it. #}
+                  <div class="media-card-progress-bar absolute bottom-0 left-0 right-0 h-1 bg-gray-900/60 z-20">
+                    <div class="h-full {% if bar_status == Status.PAUSED.value %}bg-indigo-500/40{% else %}bg-indigo-500{% endif %} transition-[width] duration-300 ease-out"
+                         style="width: {{ progress_percent }}%"></div>
+                  </div>
+                {% endif %}
+              {% endif %}
+            {% endwith %}
+          {% endif %}
+
           {% if not recommend_mode and not public_view|default:False %}
             <div class="media-card-overlay absolute inset-0 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200 ease-in-out{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
               {# Darkening background layer #}

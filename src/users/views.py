@@ -672,6 +672,7 @@ def preferences(request):
         anime_library_mode = request.POST.get("anime_library_mode")
         hide_completed_recommendations_raw = request.POST.get("hide_completed_recommendations")
         hide_zero_rating_raw = request.POST.get("hide_zero_rating")
+        progress_bar_raw = request.POST.get("progress_bar")
         _qsu_raw = request.POST.get("quick_season_update_mobile", "none")
         from users.models import QuickSeasonUpdateChoices
         quick_season_update_mobile = (
@@ -790,6 +791,12 @@ def preferences(request):
             if request.user.hide_zero_rating != hide_zero_rating:
                 request.user.hide_zero_rating = hide_zero_rating
                 fields_to_update.append("hide_zero_rating")
+
+        if progress_bar_raw is not None:
+            progress_bar = progress_bar_raw == "1"
+            if request.user.progress_bar != progress_bar:
+                request.user.progress_bar = progress_bar
+                fields_to_update.append("progress_bar")
 
         if request.user.quick_season_update_mobile != quick_season_update_mobile:
             request.user.quick_season_update_mobile = quick_season_update_mobile
