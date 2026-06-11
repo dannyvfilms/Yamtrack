@@ -29,6 +29,9 @@
     <link rel="stylesheet"
           type="text/css"
           href="{% static 'css/main.css' %}{% get_static_file_mtime 'css/main.css' %}">
+    {% if debug %}
+    <link rel="stylesheet" href="{% static 'debug_toolbar/css/toolbar.css' %}">
+    {% endif %}
 
     <script src="{% static 'js/libraries/htmx-2.0.4.min.js' %}"></script>
     <script>
