@@ -1,0 +1,8 @@
+{% load app_tags %}
+{% if media.album.artist %}
+  <a href="{{ media.album.artist|music_artist_url }}"
+     hx-boost="true"
+     class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.album.artist.name }}</a>
+{% else %}
+  <span class="text-gray-500">-</span>
+{% endif %}

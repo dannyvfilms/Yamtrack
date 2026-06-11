@@ -1,0 +1,4 @@
+{% load app_tags %}
+<a href="{{ media.album|music_album_url }}"
+   hx-boost="true"
+   class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.album.title }}</a>
