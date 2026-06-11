@@ -912,11 +912,13 @@ def create_album_from_search(request, musicbrainz_release_id):
     """Create an Album from MusicBrainz search and redirect to album page."""
     from app.providers import musicbrainz
 
+    release_data = musicbrainz.get_release(musicbrainz_release_id)
+    release_group_id = release_data.get("release_group_id")
+    release_type = release_data.get("release_type", "")
+
     album = Album.objects.filter(
         musicbrainz_release_id=musicbrainz_release_id,
     ).first()
-
-    release_data = musicbrainz.get_release(musicbrainz_release_id)
 
     if not album:
         artist = None
@@ -972,41 +974,59 @@ def create_album_from_search(request, musicbrainz_release_id):
             if artist:
                 created_artists.append((artist, 0, ""))
 
-        release_date = None
-        date_str = release_data.get("release_date", "")
-        if date_str:
-            try:
-                from datetime import datetime
+        # If a discography sync already created this album via release-group,
+        # reuse it rather than creating a duplicate with an unknown type.
+        if release_group_id and artist:
+            album = Album.objects.filter(
+                artist=artist,
+                musicbrainz_release_group_id=release_group_id,
+            ).first()
+            if album:
+                update_fields = []
+                if not album.musicbrainz_release_id:
+                    album.musicbrainz_release_id = musicbrainz_release_id
+                    update_fields.append("musicbrainz_release_id")
+                if update_fields:
+                    album.save(update_fields=update_fields)
 
-                if len(date_str) == 4:
-                    release_date = datetime.strptime(date_str, "%Y").date()
-                elif len(date_str) == 7:
-                    release_date = datetime.strptime(date_str, "%Y-%m").date()
-                elif len(date_str) >= 10:
-                    release_date = datetime.strptime(
-                        date_str[:10],
-                        "%Y-%m-%d",
-                    ).date()
-            except ValueError:
-                pass
+        if not album:
+            release_date = None
+            date_str = release_data.get("release_date", "")
+            if date_str:
+                try:
+                    from datetime import datetime
 
-        album = Album.objects.create(
-            title=release_data.get("title", "Unknown Album"),
-            musicbrainz_release_id=musicbrainz_release_id,
-            artist=artist,
-            release_date=release_date,
-            image=release_data.get("image", ""),
-            genres=release_data.get("genres", []),
-        )
-        from app.models import AlbumArtist
+                    if len(date_str) == 4:
+                        release_date = datetime.strptime(date_str, "%Y").date()
+                    elif len(date_str) == 7:
+                        release_date = datetime.strptime(date_str, "%Y-%m").date()
+                    elif len(date_str) >= 10:
+                        release_date = datetime.strptime(
+                            date_str[:10],
+                            "%Y-%m-%d",
+                        ).date()
+                except ValueError:
+                    pass
 
-        for credit_artist, position, join_phrase in created_artists:
-            AlbumArtist.objects.get_or_create(
-                album=album,
-                artist=credit_artist,
-                defaults={"position": position, "join_phrase": join_phrase},
+            album = Album.objects.create(
+                title=release_data.get("title", "Unknown Album"),
+                musicbrainz_release_id=musicbrainz_release_id,
+                musicbrainz_release_group_id=release_group_id,
+                release_type=release_type,
+                artist=artist,
+                release_date=release_date,
+                image=release_data.get("image", ""),
+                genres=release_data.get("genres", []),
             )
-        logger.info("Created album %s from MusicBrainz", album.title)
+            from app.models import AlbumArtist
+
+            for credit_artist, position, join_phrase in created_artists:
+                AlbumArtist.objects.get_or_create(
+                    album=album,
+                    artist=credit_artist,
+                    defaults={"position": position, "join_phrase": join_phrase},
+                )
+            logger.info("Created album %s from MusicBrainz", album.title)
     else:
         if not album.artist_credits.exists() and album.artist:
             from app.models import AlbumArtist

@@ -1150,8 +1150,14 @@ def get_release(release_id, skip_cover_art: bool = False):
     title = response.get("title", "Unknown")
     date = response.get("date", "")
 
-    # Get release group ID for cover art fallback
-    release_group_id = response.get("release-group", {}).get("id")
+    # Get release group info for cover art fallback and type classification
+    release_group = response.get("release-group", {})
+    release_group_id = release_group.get("id")
+    primary_type = release_group.get("primary-type", "")
+    secondary_types = release_group.get("secondary-types", [])
+    release_type = primary_type
+    if secondary_types:
+        release_type = f"{primary_type} + {', '.join(secondary_types)}"
 
     # Get artist info
     artist_credits = response.get("artist-credit", [])
@@ -1213,6 +1219,8 @@ def get_release(release_id, skip_cover_art: bool = False):
 
     result = {
         "release_id": release_id,
+        "release_group_id": release_group_id,
+        "release_type": release_type,
         "title": title,
         "artist_name": artist_name,
         "artist_id": artist_id,

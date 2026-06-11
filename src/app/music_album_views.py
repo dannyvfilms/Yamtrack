@@ -360,7 +360,44 @@ def sync_album_metadata_view(request, album_id):
 
     if album.musicbrainz_release_id:
         try:
+            from django.core.cache import cache as django_cache
+            django_cache.delete(f"musicbrainz_release_{album.musicbrainz_release_id}")
             release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+
+            # If this album is missing its release-group ID (e.g. created via
+            # search before the fix), check whether a canonical album already
+            # exists for that release-group and merge into it.
+            fetched_release_group_id = release_data.get("release_group_id")
+            if fetched_release_group_id and album.artist_id:
+                needs_group_id = not album.musicbrainz_release_group_id
+                canonical = (
+                    Album.objects.filter(
+                        artist_id=album.artist_id,
+                        musicbrainz_release_group_id=fetched_release_group_id,
+                    )
+                    .exclude(pk=album.pk)
+                    .first()
+                )
+                if canonical:
+                    # Re-point any user Music entries to the canonical album.
+                    Music.objects.filter(album=album).update(album=canonical)
+                    # Ensure canonical has a release_id for track fetching.
+                    if not canonical.musicbrainz_release_id:
+                        canonical.musicbrainz_release_id = album.musicbrainz_release_id
+                        canonical.save(update_fields=["musicbrainz_release_id"])
+                    album.delete()
+                    messages.success(request, f"Merged duplicate into {canonical.title}")
+                    # Use HX-Redirect so HTMX performs a full browser navigation
+                    # (plain redirect() returns 302, which HTMX follows internally
+                    # but doesn't update the browser URL or stop the spinner).
+                    response = HttpResponse(status=204)
+                    response["HX-Redirect"] = _music_album_detail_url(canonical)
+                    return response
+                elif needs_group_id:
+                    # No duplicate — just backfill the missing fields.
+                    album.musicbrainz_release_group_id = fetched_release_group_id
+                    album.release_type = release_data.get("release_type", "")
+                    album.save(update_fields=["musicbrainz_release_group_id", "release_type"])
 
             new_image = release_data.get("image", "")
             if new_image and new_image != settings.IMG_NONE:
