@@ -167,6 +167,75 @@
           </div>
         {% endif %}
 
+        {% component_id 'tag-preview' media as detail_tag_preview_id %}
+        {% component_id 'tag-preview-genres' media as detail_tag_preview_genres_id %}
+        {% component_id 'tag-preview-implied-genres' media as detail_tag_preview_implied_genres_id %}
+        <div x-data="{ tagsOpen: false, tagsPreviewOpen: false, hasTagPreview() { return this.$refs.tagsPreviewHost?.firstElementChild?.dataset.hasPreview === 'true' }, clampTagsPopup() { const el = this.$refs.tagsPopup; if (!el) return; el.style.left = '0'; const over = el.getBoundingClientRect().right - (window.innerWidth - 16); if (over > 0) el.style.left = (-over) + 'px'; } }"
+             class="relative"
+             @mouseenter="if (hasTagPreview()) tagsPreviewOpen = true"
+             @mouseleave="tagsPreviewOpen = false"
+             x-effect="if (tagsPreviewOpen) $nextTick(() => clampTagsPopup())">
+          <input id="{{ detail_tag_preview_genres_id }}"
+                 type="hidden"
+                 name="preview_genres_json"
+                 value="{{ detail_tag_preview_genres_json|escape }}">
+          <input id="{{ detail_tag_preview_implied_genres_id }}"
+                 type="hidden"
+                 name="preview_implied_genres_json"
+                 value="{{ detail_tag_preview_implied_genres_json|default:'[]'|escape }}">
+          <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                  x-ref="manageTagsButton"
+                  title="Manage tags"
+                  hx-get="{% media_view_url 'tags_modal' media %}"
+                  hx-include="#{{ detail_tag_preview_genres_id }},#{{ detail_tag_preview_implied_genres_id }}"
+                  hx-target="#{% component_id 'tags' media %}"
+                  hx-trigger="click once"
+                  @click="tagsOpen = true">{% include "app/icons/tag.svg" with classes="w-4 h-4" %}</button>
+
+          <div x-show="tagsPreviewOpen && hasTagPreview()"
+               x-ref="tagsPopup"
+               x-cloak
+               x-transition:enter="transition ease-out duration-150"
+               x-transition:enter-start="opacity-0 -translate-y-1"
+               x-transition:enter-end="opacity-100 translate-y-0"
+               x-transition:leave="transition ease-in duration-100"
+               x-transition:leave-start="opacity-100 translate-y-0"
+               x-transition:leave-end="opacity-0 -translate-y-1"
+               class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#20252b]/95 p-3 shadow-2xl backdrop-blur-sm">
+            <div x-ref="tagsPreviewHost">
+              {% include "app/components/detail_tag_preview.html" with preview_id=detail_tag_preview_id detail_tag_sections=detail_tag_sections only %}
+            </div>
+          </div>
+
+          <div x-show="tagsOpen"
+               @keydown.escape.window="tagsOpen = false"
+               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                 @click.outside="tagsOpen = false">
+              <div id="{% component_id 'tags' media %}"></div>
+            </div>
+          </div>
+        </div>
+
+        <div x-data="{ listsOpen: false }">
+          <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                  title="Add to custom lists"
+                  hx-get="{% media_view_url 'lists_modal' media %}"
+                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                  hx-target="#{% component_id 'lists' media %}"
+                  hx-trigger="click once"
+                  @click="listsOpen = true">{% include "app/icons/list-add.svg" with classes="w-4 h-4" %}</button>
+
+          <div x-show="listsOpen"
+               @keydown.escape.window="listsOpen = false"
+               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                 @click.outside="listsOpen = false">
+              <div id="{% component_id 'lists' media %}"></div>
+            </div>
+          </div>
+        </div>
+
         {% for action in detail_secondary_actions %}
           {% if action.kind == "link" %}
             <a class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"

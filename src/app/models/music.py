@@ -100,6 +100,11 @@ class Album(models.Model):
         blank=True,
         help_text="Genres/tags from MusicBrainz release",
     )
+    implied_genres = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Derived parent genres from MusicBrainz genre relationships",
+    )
     tracks_populated = models.BooleanField(
         default=False,
         help_text="Whether tracks have been fetched from MusicBrainz",

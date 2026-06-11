@@ -289,6 +289,9 @@ def media_list(request, media_type):
         progress_filter = "all"
 
     genre_filter = (request.GET.get("genre") or "").strip()
+    implied_genre_filter = (request.GET.get("implied_genre") or "").strip()
+    if media_type != MediaTypes.MUSIC.value:
+        implied_genre_filter = ""
     year_filter = (request.GET.get("year") or "").strip()
     release_filter = (request.GET.get("release") or "all").strip().lower()
     valid_release_filters = {"all", "released", "not_released"}
@@ -772,6 +775,7 @@ def media_list(request, media_type):
         from app.models import Sources
 
         genres_set = set()
+        implied_genres_set = set()
         years_set = set()
         sources_set = set()
         languages_set = set()
@@ -788,6 +792,10 @@ def media_list(request, media_type):
                 genre_value = str(genre).strip()
                 if genre_value:
                     genres_set.add(genre_value)
+            for genre in getattr(item, "implied_genres", None) or []:
+                genre_value = str(genre).strip()
+                if genre_value:
+                    implied_genres_set.add(genre_value)
             release_dt = getattr(item, "release_datetime", None)
             if release_dt and getattr(release_dt, "year", None):
                 years_set.add(release_dt.year)
@@ -812,6 +820,7 @@ def media_list(request, media_type):
                 formats_set.update(item_formats)
 
         genres = sorted(genres_set, key=lambda value: value.lower())
+        implied_genres = sorted(implied_genres_set, key=lambda value: value.lower())
         years = [
             {"value": str(year), "label": str(year)}
             for year in sorted(years_set, reverse=True)
@@ -855,6 +864,7 @@ def media_list(request, media_type):
         ]
         return {
             "genres": genres,
+            "implied_genres": implied_genres,
             "years": years,
             "sources": sources,
             "languages": languages,
@@ -880,6 +890,7 @@ def media_list(request, media_type):
 
     list_sql_filters = {
         "genre": genre_filter,
+        "implied_genre": implied_genre_filter,
         "year": year_filter,
         "release": release_filter,
         "source": source_filter,
@@ -1000,6 +1011,13 @@ def media_list(request, media_type):
                 if not any(
                     _normalize_filter_value(genre) == normalized_genre
                     for genre in (getattr(item, "genres", None) or [])
+                ):
+                    continue
+            if implied_genre_filter:
+                normalized_implied_genre = _normalize_filter_value(implied_genre_filter)
+                if not any(
+                    _normalize_filter_value(genre) == normalized_implied_genre
+                    for genre in (getattr(item, "implied_genres", None) or [])
                 ):
                     continue
             normalized_year = _normalize_filter_value(year_filter)
@@ -1381,6 +1399,7 @@ def media_list(request, media_type):
         "current_collection": collection_filter,
         "current_progress": progress_filter,
         "current_genre": genre_filter,
+        "current_implied_genre": implied_genre_filter,
         "current_year": year_filter,
         "current_release": release_filter,
         "current_source": source_filter,
@@ -1582,6 +1601,7 @@ def media_list(request, media_type):
             "current_rating": rating_filter,
             "current_collection": collection_filter,
             "current_genre": genre_filter,
+            "current_implied_genre": implied_genre_filter,
             "current_year": year_filter,
             "current_release": release_filter,
             "current_source": source_filter,
@@ -2111,4 +2131,3 @@ def update_table_columns(request, media_type):
     response = HttpResponse(status=204)
     response["HX-Trigger"] = json.dumps({"refreshTableColumns": True})
     return response
-

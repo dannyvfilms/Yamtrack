@@ -34,10 +34,17 @@
     query: '{{ active_smart_rules.search|default:''|escapejs }}',
     status: '{{ active_smart_rules.status|default:'all'|escapejs }}',
     rating: '{{ active_smart_rules.rating|default:'all'|escapejs }}',
+    rating_min: '{{ active_smart_rules.rating_min|default:''|escapejs }}',
+    rating_max: '{{ active_smart_rules.rating_max|default:''|escapejs }}',
     collection: '{{ active_smart_rules.collection|default:'all'|escapejs }}',
     genre: '{{ active_smart_rules.genre|default:''|escapejs }}',
+    implied_genre: '{{ active_smart_rules.implied_genre|default:''|escapejs }}',
     year: '{{ active_smart_rules.year|default:''|escapejs }}',
     release: '{{ active_smart_rules.release|default:'all'|escapejs }}',
+    release_date_from: '{{ active_smart_rules.release_date_from|default:''|escapejs }}',
+    release_date_to: '{{ active_smart_rules.release_date_to|default:''|escapejs }}',
+    date_added_from: '{{ active_smart_rules.date_added_from|default:''|escapejs }}',
+    date_added_to: '{{ active_smart_rules.date_added_to|default:''|escapejs }}',
     source: '{{ active_smart_rules.source|default:''|escapejs }}',
     language: '{{ active_smart_rules.language|default:''|escapejs }}',
     country: '{{ active_smart_rules.country|default:''|escapejs }}',
@@ -90,6 +97,7 @@
         this.sort = value;
         this.direction = 'asc';
         this.isOrderEditing = false;
+        if (this.editMode) this.onRuleChange(350);
         return;
       }
       this.direction = (this.sort === value)
@@ -97,6 +105,37 @@
         : this.defaultDirection(value);
       this.sort = value;
       this.isOrderEditing = false;
+      if (this.editMode) this.onRuleChange(350);
+    },
+    formatRangeLabel(minValue, maxValue) {
+      if (minValue && maxValue) {
+        return `${minValue}-${maxValue}`;
+      }
+      if (minValue) {
+        return `>=${minValue}`;
+      }
+      if (maxValue) {
+        return `<=${maxValue}`;
+      }
+      return '';
+    },
+    formatDateRangeLabel(prefix, fromValue, toValue) {
+      const labelPrefix = prefix ? `${prefix} ` : '';
+      if (!fromValue && !toValue) {
+        return '';
+      }
+      const fromYearMatch = /^(\d{4})-01-01$/.exec(fromValue || '');
+      const toYearMatch = /^(\d{4})-12-31$/.exec(toValue || '');
+      if (fromYearMatch && toYearMatch) {
+        return `${fromYearMatch[1]}-${toYearMatch[1]}`;
+      }
+      if (fromValue && toValue) {
+        return `${labelPrefix}${fromValue}-${toValue}`;
+      }
+      if (fromValue) {
+        return `${labelPrefix}>=${fromValue}`;
+      }
+      return `${labelPrefix}<=${toValue}`;
     },
     init() {
       if (this.selectedTypes.length === 0 && this.availableMediaTypes.length > 0) {
@@ -150,17 +189,32 @@
       if (this.rating && this.rating !== 'all') {
         labels.push(this.ratingLabels[this.rating] || 'Rated');
       }
+      const ratingRangeLabel = this.formatRangeLabel(this.rating_min, this.rating_max);
+      if (ratingRangeLabel) {
+        labels.push(ratingRangeLabel);
+      }
       if (this.collection && this.collection !== 'all') {
         labels.push(this.collectionLabels[this.collection] || 'Collected');
       }
       if (this.genre) {
         labels.push(this.genre);
       }
+      if (this.implied_genre) {
+        labels.push('Implied: ' + this.implied_genre);
+      }
       if (this.year) {
         labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year);
       }
       if (this.release && this.release !== 'all') {
         labels.push(this.releaseLabels[this.release] || 'Released');
+      }
+      const releaseDateLabel = this.formatDateRangeLabel('Release', this.release_date_from, this.release_date_to);
+      if (releaseDateLabel) {
+        labels.push(releaseDateLabel);
+      }
+      const dateAddedLabel = this.formatDateRangeLabel('Added', this.date_added_from, this.date_added_to);
+      if (dateAddedLabel) {
+        labels.push(dateAddedLabel);
       }
       if (this.source) {
         labels.push(this.source.toUpperCase());
@@ -196,10 +250,17 @@
     },
     clearFilters() {
       this.rating = 'all';
+      this.rating_min = '';
+      this.rating_max = '';
       this.collection = 'all';
       this.genre = '';
+      this.implied_genre = '';
       this.year = '';
       this.release = 'all';
+      this.release_date_from = '';
+      this.release_date_to = '';
+      this.date_added_from = '';
+      this.date_added_to = '';
       this.source = '';
       this.language = '';
       this.country = '';
@@ -227,10 +288,16 @@
         media_types: this.selectedTypesForSubmit(),
         status: this.status,
         rating: this.rating,
+        rating_min: this.rating_min,
+        rating_max: this.rating_max,
         collection: this.collection,
         genre: this.genre,
         year: this.year,
         release: this.release,
+        release_date_from: this.release_date_from,
+        release_date_to: this.release_date_to,
+        date_added_from: this.date_added_from,
+        date_added_to: this.date_added_to,
         source: this.source,
         language: this.language,
         country: this.country,
@@ -240,6 +307,8 @@
         tag: this.tag,
         tag_exclude: this.tag_exclude,
         search: this.query,
+        sort: this.sort,
+        sort_direction: this.direction,
       };
 
       const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
@@ -648,6 +717,7 @@
         open: false,
         view: 'root',
         genreSearch: '',
+        impliedGenreSearch: '',
         yearSearch: '',
         sourceSearch: '',
         languageSearch: '',
@@ -657,6 +727,7 @@
         formatSearch: '',
         tagSearch: '',
         genres: data.genres || [],
+        impliedGenres: data.implied_genres || [],
         years: data.years || [],
         sources: data.sources || [],
         languages: data.languages || [],
@@ -667,6 +738,7 @@
         tags: data.tags || [],
         resetSearch() {
           this.genreSearch = '';
+          this.impliedGenreSearch = '';
           this.yearSearch = '';
           this.sourceSearch = '';
           this.languageSearch = '';
@@ -682,6 +754,13 @@
             return this.genres;
           }
           return this.genres.filter((genre) => genre.toLowerCase().includes(term));
+        },
+        filteredImpliedGenres() {
+          const term = this.impliedGenreSearch.toLowerCase();
+          if (!term) {
+            return this.impliedGenres;
+          }
+          return this.impliedGenres.filter((genre) => genre.toLowerCase().includes(term));
         },
         filteredYears() {
           const term = this.yearSearch.toLowerCase();

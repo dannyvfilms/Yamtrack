@@ -488,6 +488,7 @@
 
             {% component_id 'tag-preview' media as detail_tag_preview_id %}
             {% component_id 'tag-preview-genres' media as detail_tag_preview_genres_id %}
+            {% component_id 'tag-preview-implied-genres' media as detail_tag_preview_implied_genres_id %}
             <div x-data="{ tagsOpen: false, tagsPreviewOpen: false, hasTagPreview() { return this.$refs.tagsPreviewHost?.firstElementChild?.dataset.hasPreview === 'true' }, clampTagsPopup() { const el = this.$refs.tagsPopup; if (!el) return; el.style.left = '0'; const over = el.getBoundingClientRect().right - (window.innerWidth - 16); if (over > 0) el.style.left = (-over) + 'px'; } }"
                  class="relative flex-1 sm:flex-none"
                  @mouseenter="if (hasTagPreview()) tagsPreviewOpen = true"
@@ -497,11 +498,15 @@
                      type="hidden"
                      name="preview_genres_json"
                      value="{{ detail_tag_preview_genres_json|escape }}">
+              <input id="{{ detail_tag_preview_implied_genres_id }}"
+                     type="hidden"
+                     name="preview_implied_genres_json"
+                     value="{{ detail_tag_preview_implied_genres_json|default:'[]'|escape }}">
               <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
                       x-ref="manageTagsButton"
                       title="Manage tags"
                       hx-get="{% media_view_url 'tags_modal' media %}"
-                      hx-include="#{{ detail_tag_preview_genres_id }}"
+                      hx-include="#{{ detail_tag_preview_genres_id }},#{{ detail_tag_preview_implied_genres_id }}"
                       hx-target="#{% component_id 'tags' media %}"
                       hx-trigger="click once"
                       @click="tagsOpen = true">{% include "app/icons/tag.svg" with classes="w-4 h-4" %}</button>

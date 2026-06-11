@@ -4,10 +4,17 @@
   <input type="hidden" name="layout" x-model="layout">
   <input type="hidden" name="status" x-model="status">
   <input type="hidden" name="rating" x-model="rating">
+  <input type="hidden" name="rating_min" x-model="rating_min">
+  <input type="hidden" name="rating_max" x-model="rating_max">
   <input type="hidden" name="collection" x-model="collection">
   <input type="hidden" name="genre" x-model="genre">
+  <input type="hidden" name="implied_genre" x-model="implied_genre">
   <input type="hidden" name="year" x-model="year">
   <input type="hidden" name="release" x-model="release">
+  <input type="hidden" name="release_date_from" x-model="release_date_from">
+  <input type="hidden" name="release_date_to" x-model="release_date_to">
+  <input type="hidden" name="date_added_from" x-model="date_added_from">
+  <input type="hidden" name="date_added_to" x-model="date_added_to">
   <input type="hidden" name="source" x-model="source">
   <input type="hidden" name="language" x-model="language">
   <input type="hidden" name="country" x-model="country">
@@ -157,6 +164,15 @@
               <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
             </button>
           {% endif %}
+          {% if smart_filter_data.implied_genres %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'impliedGenre'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Implied Genre</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="implied_genre || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
 
           {% if smart_filter_data.years %}
             <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
@@ -169,11 +185,29 @@
           {% endif %}
 
           <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                  @click="view = 'releaseDate'"
+                  type="button">
+            <span class="flex-shrink-0 mr-3">Release Date</span>
+            <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                  x-text="formatDateRangeLabel('', release_date_from, release_date_to) || 'Any'"></span>
+            <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+          </button>
+
+          <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
                   @click="view = 'release'"
                   type="button">
             <span class="flex-shrink-0 mr-3">Released</span>
             <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
                   x-text="releaseLabels[release] || 'Any'"></span>
+            <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+          </button>
+
+          <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                  @click="view = 'dateAdded'"
+                  type="button">
+            <span class="flex-shrink-0 mr-3">Date Added</span>
+            <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                  x-text="formatDateRangeLabel('', date_added_from, date_added_to) || 'Any'"></span>
             <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
           </button>
 
@@ -301,6 +335,51 @@
           </div>
         </div>
 
+        <div x-show="view === 'impliedGenre'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Implied Genre</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="impliedGenreSearch"
+                   placeholder="Filter Implied Genre"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{% url 'list_detail' custom_list.public_reference %}"
+                    hx-target="#items-view"
+                    hx-include="#smart-filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="implied_genre = ''; open = false; view = 'root'; onRuleChange()"
+                    type="button">
+              <span>All Implied Genres</span>
+              <span class="ml-auto" x-show="implied_genre === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredImpliedGenres()" :key="option">
+              <button hx-get="{% url 'list_detail' custom_list.public_reference %}"
+                      hx-target="#items-view"
+                      hx-include="#smart-filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="implied_genre = option; open = false; view = 'root'; onRuleChange()"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
+                <span class="ml-auto" x-show="implied_genre === option">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
         <div x-show="view === 'rating'" x-cloak class="p-2">
           <div class="flex items-center gap-2 px-2 py-1">
             <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
@@ -347,6 +426,74 @@
                 {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
               </span>
             </button>
+            <div class="border-t border-gray-700 my-2"></div>
+            <div class="px-4 py-3">
+              <div class="mb-2 text-xs uppercase tracking-wide text-gray-400">Score Range</div>
+              <div class="grid grid-cols-2 gap-2">
+                <input type="number"
+                       x-model="rating_min"
+                       min="0"
+                       max="10"
+                       step="0.1"
+                       placeholder="Min"
+                       class="w-full rounded-md border border-gray-700 bg-[#2a2f35] px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                       @input.debounce.400ms="onRuleChange()">
+                <input type="number"
+                       x-model="rating_max"
+                       min="0"
+                       max="10"
+                       step="0.1"
+                       placeholder="Max"
+                       class="w-full rounded-md border border-gray-700 bg-[#2a2f35] px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                       @input.debounce.400ms="onRuleChange()">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div x-show="view === 'releaseDate'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Release Date</div>
+          </div>
+          <div class="px-4 py-3">
+            <div class="grid grid-cols-1 gap-2">
+              <input type="date"
+                     x-model="release_date_from"
+                     class="w-full rounded-md border border-gray-700 bg-[#2a2f35] px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                     @input.debounce.400ms="onRuleChange()">
+              <input type="date"
+                     x-model="release_date_to"
+                     class="w-full rounded-md border border-gray-700 bg-[#2a2f35] px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                     @input.debounce.400ms="onRuleChange()">
+            </div>
+          </div>
+        </div>
+
+        <div x-show="view === 'dateAdded'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Date Added</div>
+          </div>
+          <div class="px-4 py-3">
+            <div class="grid grid-cols-1 gap-2">
+              <input type="date"
+                     x-model="date_added_from"
+                     class="w-full rounded-md border border-gray-700 bg-[#2a2f35] px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                     @input.debounce.400ms="onRuleChange()">
+              <input type="date"
+                     x-model="date_added_to"
+                     class="w-full rounded-md border border-gray-700 bg-[#2a2f35] px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                     @input.debounce.400ms="onRuleChange()">
+            </div>
           </div>
         </div>
 

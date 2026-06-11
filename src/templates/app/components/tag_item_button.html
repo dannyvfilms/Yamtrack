@@ -1,7 +1,7 @@
 {% if has_tag %}
   <button hx-post="{% url 'tag_item_toggle' %}"
           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-          hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}"}'
+          hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}", "preview_implied_genres_json": "{{ preview_implied_genres_json|default:'[]'|escapejs }}"}'
           hx-swap="outerHTML"
           class="inline-flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-violet-300 hover:bg-violet-500/10 hover:text-violet-200 transition-colors focus:outline-none focus:ring-2 focus:ring-violet-500/50 cursor-pointer"
           title="Remove tag from this item"
@@ -11,7 +11,7 @@
 {% else %}
   <button hx-post="{% url 'tag_item_toggle' %}"
           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-          hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}"}'
+          hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}", "preview_implied_genres_json": "{{ preview_implied_genres_json|default:'[]'|escapejs }}"}'
           hx-swap="outerHTML"
           class="inline-flex h-8 items-center justify-center rounded-md px-3 text-sm font-medium text-gray-200 hover:bg-white/10 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400/50 cursor-pointer"
           title="Add tag to this item"

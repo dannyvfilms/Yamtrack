@@ -3,6 +3,9 @@
   <input type="hidden"
          name="preview_genres_json"
          value="{{ preview_genres_json|default:'[]'|escape }}">
+  <input type="hidden"
+         name="preview_implied_genres_json"
+         value="{{ preview_implied_genres_json|default:'[]'|escape }}">
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-2xl font-bold text-white">Tags</h2>
     <button class="text-gray-400 hover:text-white cursor-pointer"
@@ -17,7 +20,7 @@
           <button type="button"
                   hx-post="{% url 'tag_delete' %}"
                   hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                  hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}"}'
+                  hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}", "preview_genres_json": "{{ preview_genres_json|default:'[]'|escapejs }}", "preview_implied_genres_json": "{{ preview_implied_genres_json|default:'[]'|escapejs }}"}'
                   hx-target="closest .tag-modal-shell"
                   hx-swap="outerHTML"
                   hx-confirm="Delete the &quot;{{ tag.name|escape }}&quot; tag from your library? This removes it from every item."
@@ -42,6 +45,9 @@
     <input type="hidden"
            name="preview_genres_json"
            value="{{ preview_genres_json|default:'[]'|escape }}">
+    <input type="hidden"
+           name="preview_implied_genres_json"
+           value="{{ preview_implied_genres_json|default:'[]'|escape }}">
     <input type="text" name="name"
            placeholder="New tag..."
            maxlength="50"

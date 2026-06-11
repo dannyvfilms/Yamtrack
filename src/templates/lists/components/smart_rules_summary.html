@@ -33,6 +33,12 @@
         <span x-text="genre"></span>
       </span>
 
+      <span x-show="implied_genre"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Implied Genre:</span>
+        <span x-text="implied_genre"></span>
+      </span>
+
       <span x-show="year"
             class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
         <span class="text-gray-400">Year:</span>
@@ -113,6 +119,10 @@
 
       {% if saved_smart_rules.genre %}
         <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Genre:</span> {{ saved_smart_rules.genre }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.implied_genre %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Implied Genre:</span> {{ saved_smart_rules.implied_genre }}</span>
       {% endif %}
 
       {% if saved_smart_rules.year %}

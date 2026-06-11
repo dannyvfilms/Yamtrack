@@ -49,6 +49,7 @@ class Item(CalendarTriggerMixin, models.Model):
     number_of_pages = models.PositiveIntegerField(null=True, blank=True, help_text="Number of pages for books")
     release_datetime = models.DateTimeField(null=True, blank=True)
     genres = models.JSONField(default=list, blank=True)
+    implied_genres = models.JSONField(default=list, blank=True)
     # Metadata fields for filtering, sorting, and statistics
     country = models.CharField(max_length=255, blank=True, default="", help_text="Origin country")
     languages = models.JSONField(default=list, blank=True, help_text="Array of languages")

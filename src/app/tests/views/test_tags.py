@@ -107,6 +107,23 @@ class TagItemToggleViewTest(TestCase):
         self.assertContains(response, "Tags")
         self.assertContains(response, "Favorite")
 
+    def test_toggle_preserves_implied_genres_in_preview(self):
+        """Toggle response should keep implied genres in the hover preview."""
+        url = reverse("tag_item_toggle")
+        response = self.client.post(
+            url,
+            {
+                "tag_id": self.tag.id,
+                "item_id": self.item.id,
+                "preview_genres_json": json.dumps(["Drama"]),
+                "preview_implied_genres_json": json.dumps(["Crime"]),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Implied Genres")
+        self.assertContains(response, "Crime")
+
     def test_remove_tag_from_item(self):
         """Toggle removes tag when already present."""
         ItemTag.objects.create(tag=self.tag, item=self.item)

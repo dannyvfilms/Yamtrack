@@ -1,3 +1,4 @@
+import datetime
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -11,6 +12,7 @@ from app.models import (
     Game,
     Item,
     MediaTypes,
+    Music,
     Movie,
     Sources,
     Status,
@@ -264,6 +266,52 @@ class CustomListManagerTest(TestCase):
         smart_list.sync_smart_items()
         self.assertTrue(smart_list.items.filter(id=item.id).exists())
 
+    def test_smart_list_implied_genre_filter_matches_item_implied_genres(self):
+        """Implied genre rules should match only the implied_genres field."""
+        item = Item.objects.create(
+            title="Genre Album Track",
+            media_id="music-1",
+            media_type=MediaTypes.MUSIC.value,
+            source=Sources.MUSICBRAINZ.value,
+            image="https://example.com/music.jpg",
+            genres=["Krautrock"],
+            implied_genres=["Rock"],
+        )
+        Music.objects.create(item=item, user=self.user, status=Status.COMPLETED.value)
+
+        normalized_rules = smart_rules.normalize_rule_payload(
+            {
+                "media_types": [MediaTypes.MUSIC.value],
+                "implied_genre": "Rock",
+            },
+            self.user,
+        )
+
+        matched_ids = smart_rules.collect_matching_item_ids(self.user, normalized_rules)
+
+        self.assertEqual(matched_ids, {item.id})
+
+    def test_build_rule_filter_data_keeps_direct_and_implied_genres_separate(self):
+        item = Item.objects.create(
+            title="Music Item",
+            media_id="music-2",
+            media_type=MediaTypes.MUSIC.value,
+            source=Sources.MUSICBRAINZ.value,
+            genres=["Art Rock"],
+            implied_genres=["Rock"],
+        )
+        Music.objects.create(item=item, user=self.user, status=Status.COMPLETED.value)
+
+        filter_data = smart_rules.build_rule_filter_data(
+            self.user,
+            [MediaTypes.MUSIC.value],
+            "all",
+            "",
+        )
+
+        self.assertEqual(filter_data["genres"], ["Art Rock"])
+        self.assertEqual(filter_data["implied_genres"], ["Rock"])
+
     def test_smart_list_platform_filter(self):
         """Platform filter should match game platform metadata."""
         item = Item.objects.create(
@@ -373,6 +421,132 @@ class CustomListManagerTest(TestCase):
         )
 
         self.assertFalse(smart_list.items.filter(id=item.id).exists())
+
+    def test_smart_list_rating_range_filter(self):
+        """Rating min/max should constrain matched tracked items."""
+        low_item = Item.objects.create(
+            title="Low Rated Movie",
+            media_id="1500",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/low-rated.jpg",
+        )
+        high_item = Item.objects.create(
+            title="High Rated Movie",
+            media_id="1501",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/high-rated.jpg",
+        )
+        Movie.objects.create(
+            item=low_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            score=6.4,
+        )
+        Movie.objects.create(
+            item=high_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            score=8.2,
+        )
+
+        smart_list = CustomList.objects.create(
+            name="Highly Rated Movies",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"rating_min": "7.0"},
+        )
+
+        smart_list.sync_smart_items()
+
+        self.assertFalse(smart_list.items.filter(id=low_item.id).exists())
+        self.assertTrue(smart_list.items.filter(id=high_item.id).exists())
+
+    def test_smart_list_release_date_range_filter(self):
+        """Release date min/max should match item release dates."""
+        older_item = Item.objects.create(
+            title="Nineties Movie",
+            media_id="1600",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/nineties.jpg",
+            release_datetime=timezone.make_aware(datetime.datetime(1999, 6, 1, 12, 0)),
+        )
+        newer_item = Item.objects.create(
+            title="Two Thousands Movie",
+            media_id="1601",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/twothousands.jpg",
+            release_datetime=timezone.make_aware(datetime.datetime(2005, 6, 1, 12, 0)),
+        )
+        Movie.objects.create(item=older_item, user=self.user, status=Status.COMPLETED.value)
+        Movie.objects.create(item=newer_item, user=self.user, status=Status.COMPLETED.value)
+
+        smart_list = CustomList.objects.create(
+            name="2000s Movies",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={
+                "release_date_from": "2000-01-01",
+                "release_date_to": "2009-12-31",
+            },
+        )
+
+        smart_list.sync_smart_items()
+
+        self.assertFalse(smart_list.items.filter(id=older_item.id).exists())
+        self.assertTrue(smart_list.items.filter(id=newer_item.id).exists())
+
+    def test_smart_list_date_added_range_filter(self):
+        """Date-added min/max should filter against tracker row created_at."""
+        older_item = Item.objects.create(
+            title="Older Added Movie",
+            media_id="1700",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/older-added.jpg",
+        )
+        newer_item = Item.objects.create(
+            title="Newer Added Movie",
+            media_id="1701",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/newer-added.jpg",
+        )
+        older_movie = Movie.objects.create(
+            item=older_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        newer_movie = Movie.objects.create(
+            item=newer_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        older_created_at = timezone.now() - timedelta(days=30)
+        newer_created_at = timezone.now() - timedelta(days=2)
+        Movie.objects.filter(pk=older_movie.pk).update(created_at=older_created_at)
+        Movie.objects.filter(pk=newer_movie.pk).update(created_at=newer_created_at)
+
+        smart_list = CustomList.objects.create(
+            name="Recent Adds",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={
+                "date_added_from": (timezone.localdate() - timedelta(days=7)).isoformat(),
+                "date_added_to": timezone.localdate().isoformat(),
+            },
+        )
+
+        smart_list.sync_smart_items()
+
+        self.assertFalse(smart_list.items.filter(id=older_item.id).exists())
+        self.assertTrue(smart_list.items.filter(id=newer_item.id).exists())
 
     def test_smart_list_updates_on_media_status_and_delete(self):
         """Media save/delete events should incrementally add/remove smart memberships."""

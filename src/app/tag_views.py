@@ -43,7 +43,37 @@ def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
     return genres
 
 
-def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None):
+def _resolve_detail_tag_implied_genres(
+    media_metadata,
+    item,
+    fallback_implied_genres=None,
+):
+    """Return implied genres sourced from metadata, request state, or stored item data."""
+    implied_genres = []
+    if isinstance(media_metadata, dict):
+        details = media_metadata.get("details")
+        implied_genres = stats._coerce_genre_list(
+            media_metadata.get("implied_genres")
+            or (
+                details.get("implied_genres")
+                if isinstance(details, dict)
+                else None
+            ),
+        )
+    if not implied_genres and fallback_implied_genres:
+        implied_genres = stats._coerce_genre_list(fallback_implied_genres)
+    if not implied_genres and item is not None:
+        implied_genres = list(getattr(item, "implied_genres", None) or [])
+    return implied_genres
+
+
+def _build_detail_tag_sections(
+    media_metadata,
+    item,
+    user,
+    fallback_genres=None,
+    fallback_implied_genres=None,
+):
     """Return grouped genre and tag preview sections for the media detail action row."""
     sections = []
 
@@ -63,6 +93,25 @@ def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None)
                         "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
                     }
                     for genre in genres
+                ],
+            }
+        )
+
+    implied_genres = _resolve_detail_tag_implied_genres(
+        media_metadata,
+        item,
+        fallback_implied_genres=fallback_implied_genres,
+    )
+    if implied_genres:
+        sections.append(
+            {
+                "title": "Implied Genres",
+                "entries": [
+                    {
+                        "label": genre,
+                        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
+                    }
+                    for genre in implied_genres
                 ],
             }
         )
@@ -90,14 +139,15 @@ def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None)
         )
 
     tag_names = []
-    is_authenticated_user = item is not None and getattr(user, "is_authenticated", False)
+    is_authenticated_user = getattr(user, "is_authenticated", False)
     if is_authenticated_user:
-        tag_names = list(
-            ItemTag.objects.filter(item=item, tag__user=user)
-            .select_related("tag")
-            .order_by("tag__name")
-            .values_list("tag__name", flat=True)
-        )
+        if item is not None:
+            tag_names = list(
+                ItemTag.objects.filter(item=item, tag__user=user)
+                .select_related("tag")
+                .order_by("tag__name")
+                .values_list("tag__name", flat=True)
+            )
 
     if is_authenticated_user:
         tag_section = {
@@ -149,7 +199,12 @@ def _user_tags_for_item(user, item):
     )
 
 
-def _render_tag_modal_response(request, item, preview_genres):
+def _render_tag_modal_response(
+    request,
+    item,
+    preview_genres,
+    preview_implied_genres=None,
+):
     """Render the tag modal plus OOB preview refresh for the current item."""
     modal_html = render_to_string(
         "app/components/fill_tags.html",
@@ -157,6 +212,7 @@ def _render_tag_modal_response(request, item, preview_genres):
             "item": item,
             "user_tags": _user_tags_for_item(request.user, item),
             "preview_genres_json": json.dumps(preview_genres),
+            "preview_implied_genres_json": json.dumps(preview_implied_genres or []),
         },
         request=request,
     )
@@ -169,6 +225,7 @@ def _render_tag_modal_response(request, item, preview_genres):
                 item,
                 request.user,
                 fallback_genres=preview_genres,
+                fallback_implied_genres=preview_implied_genres,
             ),
             "swap_oob": True,
         },
@@ -225,8 +282,22 @@ def tags_modal(
     preview_genres = _parse_detail_tag_preview_genres(
         request.GET.get("preview_genres_json"),
     )
+    preview_implied_genres = _parse_detail_tag_preview_genres(
+        request.GET.get("preview_implied_genres_json"),
+    )
     if not preview_genres:
         preview_genres = _resolve_detail_tag_genres({}, item)
+    if not preview_implied_genres:
+        preview_implied_genres = _resolve_detail_tag_implied_genres({}, item)
+    item_updates = []
+    if preview_genres and list(item.genres or []) != list(preview_genres):
+        item.genres = list(preview_genres)
+        item_updates.append("genres")
+    if preview_implied_genres and list(getattr(item, "implied_genres", None) or []) != list(preview_implied_genres):
+        item.implied_genres = list(preview_implied_genres)
+        item_updates.append("implied_genres")
+    if item_updates:
+        item.save(update_fields=item_updates)
 
     return render(
         request,
@@ -235,6 +306,7 @@ def tags_modal(
             "item": item,
             "user_tags": _user_tags_for_item(request.user, item),
             "preview_genres_json": json.dumps(preview_genres),
+            "preview_implied_genres_json": json.dumps(preview_implied_genres),
         },
     )
 
@@ -259,11 +331,15 @@ def tag_item_toggle(request):
     preview_genres = _parse_detail_tag_preview_genres(
         request.POST.get("preview_genres_json"),
     )
+    preview_implied_genres = _parse_detail_tag_preview_genres(
+        request.POST.get("preview_implied_genres_json"),
+    )
     preview_sections = _build_detail_tag_sections(
         {},
         item,
         request.user,
         fallback_genres=preview_genres,
+        fallback_implied_genres=preview_implied_genres,
     )
     button_html = render_to_string(
         "app/components/tag_item_button.html",
@@ -272,6 +348,7 @@ def tag_item_toggle(request):
             "item": item,
             "has_tag": has_tag,
             "preview_genres_json": json.dumps(preview_genres),
+            "preview_implied_genres_json": json.dumps(preview_implied_genres),
         },
         request=request,
     )
@@ -316,7 +393,15 @@ def tag_create(request):
         preview_genres = _parse_detail_tag_preview_genres(
             request.POST.get("preview_genres_json"),
         )
-        return _render_tag_modal_response(request, item, preview_genres)
+        preview_implied_genres = _parse_detail_tag_preview_genres(
+            request.POST.get("preview_implied_genres_json"),
+        )
+        return _render_tag_modal_response(
+            request,
+            item,
+            preview_genres,
+            preview_implied_genres,
+        )
 
     return HttpResponse(status=204)
 
@@ -342,6 +427,14 @@ def tag_delete(request):
         preview_genres = _parse_detail_tag_preview_genres(
             request.POST.get("preview_genres_json"),
         )
-        return _render_tag_modal_response(request, item, preview_genres)
+        preview_implied_genres = _parse_detail_tag_preview_genres(
+            request.POST.get("preview_implied_genres_json"),
+        )
+        return _render_tag_modal_response(
+            request,
+            item,
+            preview_genres,
+            preview_implied_genres,
+        )
 
     return HttpResponse(status=204)

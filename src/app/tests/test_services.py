@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -16,12 +17,19 @@ from app.models import (
     Item,
     MediaTypes,
     Movie,
+    Music,
     Season,
     Sources,
     Status,
+    Track,
 )
 from app.services.auto_pause import auto_pause_stale_items
-from app.services.music import canonicalize_album, sync_album_artist_credits
+from app.services.music import (
+    canonicalize_album,
+    populate_album_implied_genres,
+    populate_album_tracks,
+    sync_album_artist_credits,
+)
 
 
 class AutoPauseServiceTests(TestCase):
@@ -266,3 +274,95 @@ class MusicServiceTests(TestCase):
             list(canonical.artist_credits.values_list("artist__name", flat=True)),
             ["Brian Eno", "David Byrne"],
         )
+
+    @patch("app.providers.musicbrainz.get_genre_parents", return_value=["Rock", "Electronic"])
+    @patch("app.providers.musicbrainz.get_release_group_genres", return_value=["Krautrock"])
+    @patch("app.providers.musicbrainz.get_release")
+    def test_populate_album_tracks_falls_back_and_syncs_implied_genres(
+        self,
+        mock_get_release,
+        _mock_release_group_genres,
+        _mock_genre_parents,
+    ):
+        artist = Artist.objects.create(name="Brian Eno")
+        album = Album.objects.create(
+            title="My Life in the Bush of Ghosts",
+            artist=artist,
+            musicbrainz_release_id="release-mbid",
+            musicbrainz_release_group_id="release-group-mbid",
+        )
+        item = Item.objects.create(
+            media_id="track-mbid",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Track",
+            image="https://example.com/track.jpg",
+        )
+        Music.objects.create(
+            item=item,
+            user=get_user_model().objects.create_user(
+                username="music-item-user",
+                password="pass12345",
+            ),
+            album=album,
+            artist=artist,
+            status=Status.COMPLETED.value,
+        )
+        mock_get_release.return_value = {
+            "artist_credits": [],
+            "genres": [],
+            "tracks": [
+                {
+                    "disc_number": 1,
+                    "track_number": 1,
+                    "title": "America Is Waiting",
+                    "recording_id": "track-mbid",
+                    "duration_ms": 123000,
+                    "genres": [],
+                },
+            ],
+            "image": "https://example.com/album.jpg",
+        }
+
+        created_count = populate_album_tracks(album)
+
+        self.assertEqual(created_count, 1)
+        album.refresh_from_db()
+        item.refresh_from_db()
+        self.assertEqual(album.genres, ["Krautrock"])
+        self.assertEqual(album.implied_genres, ["Rock", "Electronic"])
+        self.assertEqual(item.genres, ["Krautrock"])
+        self.assertEqual(item.implied_genres, ["Rock", "Electronic"])
+        self.assertTrue(
+            Track.objects.filter(album=album, musicbrainz_recording_id="track-mbid").exists(),
+        )
+
+    @patch("app.providers.musicbrainz.get_genre_parents", return_value=["Experimental Rock", "Rock"])
+    def test_populate_album_implied_genres_excludes_direct_genres(self, _mock_genre_parents):
+        artist = Artist.objects.create(name="Test Artist")
+        album = Album.objects.create(
+            title="Genre Album",
+            artist=artist,
+            genres=["Krautrock", "Rock"],
+        )
+
+        updated = populate_album_implied_genres(album)
+
+        album.refresh_from_db()
+        self.assertTrue(updated)
+        self.assertEqual(album.implied_genres, ["Experimental Rock"])
+
+    @patch("app.providers.musicbrainz.get_genre_parents", return_value=[])
+    def test_populate_album_implied_genres_capitalizes_existing_direct_genres(self, _mock_genre_parents):
+        artist = Artist.objects.create(name="Test Artist")
+        album = Album.objects.create(
+            title="Genre Album",
+            artist=artist,
+            genres=["art rock", "post-industrial"],
+        )
+
+        updated = populate_album_implied_genres(album)
+
+        album.refresh_from_db()
+        self.assertTrue(updated)
+        self.assertEqual(album.genres, ["Art Rock", "Post-Industrial"])

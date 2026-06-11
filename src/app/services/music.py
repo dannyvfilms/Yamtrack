@@ -10,9 +10,103 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from app.log_safety import exception_summary
-from app.models import Album, AlbumArtist, Artist, Track
+from app.models import Album, AlbumArtist, Artist, Item, Music, Track
 
 logger = logging.getLogger(__name__)
+
+
+def _dedupe_display_values(values) -> list[str]:
+    """Return case-insensitive deduped display values preserving first-seen casing."""
+    deduped = {}
+    for value in values or []:
+        normalized = str(value or "").strip()
+        if not normalized:
+            continue
+        deduped.setdefault(normalized.lower(), normalized)
+    return list(deduped.values())
+
+
+def _album_direct_genres(album: Album, release_data: dict | None = None) -> list[str]:
+    """Return normalized direct genres for an album from release or release-group data."""
+    from app.providers import musicbrainz
+
+    direct_genres = _dedupe_display_values(
+        [
+            musicbrainz.capitalize_genre(str(genre).strip())
+            for genre in ((release_data or {}).get("genres") or album.genres or [])
+            if str(genre or "").strip()
+        ],
+    )
+    if not direct_genres and album.musicbrainz_release_group_id:
+        direct_genres = _dedupe_display_values(
+            musicbrainz.get_release_group_genres(album.musicbrainz_release_group_id),
+        )
+    return direct_genres
+
+
+def _album_implied_genres(direct_genres: list[str]) -> list[str]:
+    """Return normalized implied parent genres for a direct genre list."""
+    from app.providers import musicbrainz
+
+    if not direct_genres:
+        return []
+
+    direct_lookup = {genre.lower() for genre in direct_genres}
+    implied = []
+    for genre in direct_genres:
+        implied.extend(musicbrainz.get_genre_parents(genre))
+    return [
+        genre
+        for genre in _dedupe_display_values(implied)
+        if genre.lower() not in direct_lookup
+    ]
+
+
+def _sync_album_music_item_genres(album: Album) -> int:
+    """Propagate album direct/implied genres to linked music Items."""
+    update_count = 0
+    if not album.id:
+        return update_count
+
+    for music in Music.objects.filter(album=album).select_related("item"):
+        item = getattr(music, "item", None)
+        if not item:
+            continue
+
+        update_fields = []
+        if item.genres != list(album.genres or []):
+            item.genres = list(album.genres or [])
+            update_fields.append("genres")
+        if item.implied_genres != list(album.implied_genres or []):
+            item.implied_genres = list(album.implied_genres or [])
+            update_fields.append("implied_genres")
+
+        if update_fields:
+            item.save(update_fields=update_fields)
+            update_count += 1
+
+    return update_count
+
+
+def sync_music_item_genres_from_album(item: Item, album: Album | None) -> list[str]:
+    """Copy album direct/implied genres onto a music Item and save if changed."""
+    if not item or not album:
+        return []
+
+    update_fields = []
+    direct_genres = list(album.genres or [])
+    implied_genres = list(album.implied_genres or [])
+
+    if item.genres != direct_genres:
+        item.genres = direct_genres
+        update_fields.append("genres")
+    if item.implied_genres != implied_genres:
+        item.implied_genres = implied_genres
+        update_fields.append("implied_genres")
+
+    if update_fields:
+        item.save(update_fields=update_fields)
+    return update_fields
 
 
 def get_artist_hero_image(artist: Artist) -> str:
@@ -1012,8 +1106,12 @@ def merge_album_records(source_album: Album, target_album: Album) -> Album:
     if not target_album.genres and source_album.genres:
         target_album.genres = source_album.genres
         updates.add("genres")
+    if not target_album.implied_genres and source_album.implied_genres:
+        target_album.implied_genres = source_album.implied_genres
+        updates.add("implied_genres")
     if updates:
         target_album.save(update_fields=list(updates))
+        _sync_album_music_item_genres(target_album)
 
     for credit in source_album.artist_credits.select_related("artist"):
         AlbumArtist.objects.get_or_create(
@@ -1220,6 +1318,26 @@ def album_has_musicbrainz_id(album: Album) -> bool:
     return bool(album.musicbrainz_release_id or album.musicbrainz_release_group_id)
 
 
+def populate_album_implied_genres(album: Album) -> bool:
+    """Populate implied parent genres for an album and sync linked music items."""
+    direct_genres = _album_direct_genres(album)
+    implied_genres = _album_implied_genres(direct_genres)
+
+    update_fields = []
+    if album.genres != direct_genres:
+        album.genres = direct_genres
+        update_fields.append("genres")
+    if album.implied_genres != implied_genres:
+        album.implied_genres = implied_genres
+        update_fields.append("implied_genres")
+
+    if update_fields:
+        album.save(update_fields=update_fields)
+
+    _sync_album_music_item_genres(album)
+    return bool(update_fields)
+
+
 def populate_album_tracks(album: Album) -> int:
     """Populate Track rows for an album from MusicBrainz and mark tracks_populated."""
     from app.providers import musicbrainz
@@ -1237,10 +1355,13 @@ def populate_album_tracks(album: Album) -> int:
         release_data = musicbrainz.get_release(album.musicbrainz_release_id)
         sync_album_artist_credits(album, release_data)
         tracks_data = release_data.get("tracks", [])
+        direct_genres = _album_direct_genres(album, release_data)
+        implied_genres = _album_implied_genres(direct_genres)
 
-        # Update genres from release if album lacks them
-        if release_data.get("genres") and not album.genres:
-            album.genres = release_data.get("genres")
+        if album.genres != direct_genres:
+            album.genres = direct_genres
+        if album.implied_genres != implied_genres:
+            album.implied_genres = implied_genres
 
         created_or_updated = 0
         for track_data in tracks_data:
@@ -1252,7 +1373,9 @@ def populate_album_tracks(album: Album) -> int:
                     "title": track_data.get("title", "Unknown Track"),
                     "musicbrainz_recording_id": track_data.get("recording_id"),
                     "duration_ms": track_data.get("duration_ms"),
-                    "genres": track_data.get("genres", []) or release_data.get("genres", []),
+                    "genres": _dedupe_display_values(
+                        track_data.get("genres", []) or direct_genres,
+                    ),
                 },
             )
             if created:
@@ -1263,7 +1386,15 @@ def populate_album_tracks(album: Album) -> int:
             album.image = release_data["image"]
 
         album.tracks_populated = True
-        album.save(update_fields=["tracks_populated", "image", "genres"])
+        album.save(
+            update_fields=[
+                "tracks_populated",
+                "image",
+                "genres",
+                "implied_genres",
+            ],
+        )
+        _sync_album_music_item_genres(album)
         logger.info("Populated %d tracks for album %s", len(tracks_data), album.title)
         return len(tracks_data)
     except Exception as exc:  # pragma: no cover - defensive

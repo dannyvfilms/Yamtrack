@@ -461,6 +461,30 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None, f
             include_podcasts = False
             include_episodes = False
 
+    def _matches_genre_filters(item, *, album=None):
+        active_filters = filters or {}
+        genre_filter = active_filters.get("genre")
+        if genre_filter:
+            requested = {g.strip().lower() for g in genre_filter.split(",") if g.strip()}
+            values = getattr(item, "genres", None) or []
+            if album is not None:
+                values = list(values) + list(getattr(album, "genres", None) or [])
+            if not ({str(g).lower() for g in values} & requested):
+                return False
+        implied_genre_filter = active_filters.get("implied_genre")
+        if implied_genre_filter:
+            requested = {
+                g.strip().lower()
+                for g in implied_genre_filter.split(",")
+                if g.strip()
+            }
+            values = getattr(item, "implied_genres", None) or []
+            if album is not None:
+                values = list(values) + list(getattr(album, "implied_genres", None) or [])
+            if not ({str(g).lower() for g in values} & requested):
+                return False
+        return True
+
     start_date = None
     end_date = None
     if date_filters:
@@ -489,6 +513,8 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None, f
         for media in queryset:
             item = getattr(media, "item", None)
             if not item or item.id in seen_item_ids:
+                continue
+            if not _matches_genre_filters(item):
                 continue
             seen_item_ids.add(item.id)
             release_dt = getattr(item, "release_datetime", None)
@@ -535,6 +561,11 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None, f
             episode_item = getattr(episode, "item", None)
             if not episode_item or episode_item.id in seen_item_ids:
                 continue
+            if not _matches_genre_filters(
+                episode_item,
+                album=None,
+            ):
+                continue
             seen_item_ids.add(episode_item.id)
             release_dt = getattr(episode_item, "release_datetime", None)
             localized = stats._localize_datetime(release_dt) if release_dt else None
@@ -578,6 +609,8 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None, f
         for podcast in podcast_qs:
             item = getattr(podcast, "item", None)
             if not item or item.id in seen_item_ids:
+                continue
+            if not _matches_genre_filters(item):
                 continue
             release_dt = getattr(getattr(podcast, "episode", None), "published", None)
             localized = stats._localize_datetime(release_dt) if release_dt else None
@@ -630,6 +663,8 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None, f
         for podcast in podcast_fallback_qs:
             item = getattr(podcast, "item", None)
             if not item or item.id in seen_item_ids:
+                continue
+            if not _matches_genre_filters(item):
                 continue
             release_dt = getattr(item, "release_datetime", None)
             localized = stats._localize_datetime(release_dt) if release_dt else None
@@ -753,6 +788,17 @@ def _cached_history_entry_matches_filters(entry, filters):
         item_genre_set = {str(g).lower() for g in genres}
         if not (item_genre_set & genre_filters):
             return False
+    implied_genre_filter = filters.get("implied_genre")
+    if implied_genre_filter:
+        implied_genre_filters = {
+            g.strip().lower()
+            for g in implied_genre_filter.split(",")
+            if g.strip()
+        }
+        implied_genres = entry.get("implied_genres") or item.get("implied_genres") or []
+        item_implied_genre_set = {str(g).lower() for g in implied_genres}
+        if not (item_implied_genre_set & implied_genre_filters):
+            return False
 
     album_filter = filters.get("album")
     if album_filter is not None:
@@ -822,6 +868,7 @@ def history_genres(request):
         return bool(s) and not s.lstrip("-").isdigit()
 
     genres: set[str] = set()
+    implied_genres: set[str] = set()
     # Book, Comic, and Manga use Library of Congress subject headings in their genres
     # field rather than real genre names, so exclude them from the genre list.
     for ModelClass in [Movie, Game, Music, BoardGame, Podcast]:
@@ -830,6 +877,13 @@ def history_genres(request):
         ):
             if genres_list:
                 genres.update(str(g).strip() for g in genres_list if _is_valid_genre(g))
+        for implied_genres_list in ModelClass.objects.filter(user=request.user).values_list(
+            "item__implied_genres", flat=True,
+        ):
+            if implied_genres_list:
+                implied_genres.update(
+                    str(g).strip() for g in implied_genres_list if _is_valid_genre(g)
+                )
 
     for genres_list in Episode.objects.filter(
         related_season__user=request.user
@@ -838,7 +892,13 @@ def history_genres(request):
             genres.update(str(g).strip() for g in genres_list if _is_valid_genre(g))
 
     genres.discard("")
-    return JsonResponse({"genres": sorted(genres, key=str.lower)})
+    implied_genres.discard("")
+    return JsonResponse(
+        {
+            "genres": sorted(genres, key=str.lower),
+            "implied_genres": sorted(implied_genres, key=str.lower),
+        },
+    )
 
 
 @require_GET
@@ -854,6 +914,7 @@ def history(request):
         int_params = ["album", "artist", "tv", "season", "season_number", "podcast_show"]
         str_params = [
             "genre",
+            "implied_genre",
             "media_type",
             "media_id",
             "source",

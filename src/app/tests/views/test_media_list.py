@@ -13,6 +13,7 @@ from app.models import (
     Album,
     Anime,
     Artist,
+    ArtistTracker,
     Book,
     Comic,
     CollectionEntry,
@@ -525,6 +526,24 @@ class MediaListViewTests(TestCase):
             ),
             rendered_cell,
         )
+
+    def test_music_media_list_keeps_artist_genres_as_primary_filter_data(self):
+        artist = Artist.objects.create(
+            name="Genre Artist",
+            genres=["Art Rock"],
+            country="gb",
+        )
+        ArtistTracker.objects.create(
+            user=self.user,
+            artist=artist,
+            status=Status.COMPLETED.value,
+        )
+
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MUSIC.value]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["filter_data"]["genres"], ["Art Rock"])
+        self.assertNotIn("implied_genres", response.context["filter_data"])
 
     def test_movie_grid_aggregates_duplicate_completed_plays(self):
         """Grid cards should show total plays across duplicate completed movie entries."""

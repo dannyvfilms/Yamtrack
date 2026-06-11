@@ -1,3 +1,4 @@
+import json
 import logging
 from uuid import uuid4
 
@@ -29,6 +30,7 @@ from app.models import (
 from app.services import bulk_music_tracking
 from app.services import music as sync_services
 from app.signals import suppress_media_cache_change_signals
+from app.tag_views import _build_detail_tag_sections
 from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
@@ -622,40 +624,23 @@ def _render_music_album_details(request, artist, album):
                 exc,
             )
 
+    album_metadata_updated = False
+    if album.musicbrainz_release_id or album.musicbrainz_release_group_id:
+        try:
+            album_metadata_updated = sync_services.populate_album_implied_genres(album)
+        except Exception as exc:
+            logger.warning(
+                "Failed to refresh album genres for %s: %s",
+                album.title,
+                exc,
+            )
+
     if not album.tracks_populated and has_mb_identity:
         try:
             if album.musicbrainz_release_id:
-                release_data = album_release_data or musicbrainz.get_release(
-                    album.musicbrainz_release_id,
-                )
-                sync_services.sync_album_artist_credits(album, release_data)
-                tracks_data = release_data.get("tracks", [])
-
-                if release_data.get("genres") and not album.genres:
-                    album.genres = release_data.get("genres")
-                    album.save(update_fields=["genres"])
-
-                for track_data in tracks_data:
-                    Track.objects.update_or_create(
-                        album=album,
-                        disc_number=track_data.get("disc_number", 1),
-                        track_number=track_data.get("track_number"),
-                        defaults={
-                            "title": track_data.get("title", "Unknown Track"),
-                            "musicbrainz_recording_id": track_data.get("recording_id"),
-                            "duration_ms": track_data.get("duration_ms"),
-                            "genres": track_data.get("genres", [])
-                            or release_data.get("genres", []),
-                        },
-                    )
-
-                if not album.image:
-                    new_image = release_data.get("image", "")
-                    if new_image and new_image != settings.IMG_NONE:
-                        album.image = new_image
-
-                album.tracks_populated = True
-                album.save(update_fields=["tracks_populated", "image"])
+                if album_release_data is not None:
+                    sync_services.sync_album_artist_credits(album, album_release_data)
+                sync_services.populate_album_tracks(album)
             else:
                 logger.warning(
                     "Album %s has release_group but no release found for tracks",
@@ -667,6 +652,8 @@ def _render_music_album_details(request, artist, album):
                 album.title,
                 exc,
             )
+    elif album_metadata_updated:
+        album.refresh_from_db(fields=["genres", "implied_genres"])
 
     all_tracks = Track.objects.filter(album=album).order_by(
         "disc_number",
@@ -794,6 +781,22 @@ def _render_music_album_details(request, artist, album):
         "active": bool(album_tracker),
     }
     detail_history_url = f"{reverse('history')}?album={album.id}"
+    detail_item = Item.objects.filter(
+        media_type=MediaTypes.MUSIC.value,
+        source=Sources.MUSICBRAINZ.value,
+        media_id=(
+            album.musicbrainz_release_id
+            or album.musicbrainz_release_group_id
+            or f"album-{album.id}"
+        ),
+    ).first()
+    detail_tag_sections = _build_detail_tag_sections(
+        {},
+        detail_item,
+        request.user,
+        fallback_genres=album.genres,
+        fallback_implied_genres=album.implied_genres,
+    )
 
     context = {
         "user": request.user,
@@ -839,6 +842,9 @@ def _render_music_album_details(request, artist, album):
         ),
         "detail_collection_mode": "music_album",
         "detail_link_sections": detail_link_sections,
+        "detail_tag_sections": detail_tag_sections,
+        "detail_tag_preview_genres_json": json.dumps(album.genres or []),
+        "detail_tag_preview_implied_genres_json": json.dumps(album.implied_genres or []),
         "notes_entry": notes_entry,
     }
     return render(request, "app/media_details.html", context)
@@ -1020,9 +1026,10 @@ def create_album_from_search(request, musicbrainz_release_id):
             album.image = new_image
             album.save(update_fields=["image"])
             logger.info("Updated album %s image", album.title)
-        if not album.genres and release_data.get("genres"):
+        if release_data.get("genres"):
             album.genres = release_data.get("genres", [])
             album.save(update_fields=["genres"])
+        sync_services.populate_album_implied_genres(album)
 
     return redirect(_music_album_detail_url(album))
 

@@ -38,14 +38,20 @@ from app.models import (
 
 def _start_model_metadata_patches(test_case):
     """Prevent history view tests from making provider calls during model saves."""
-    mock_get_media_metadata = patch(
-        "app.models.providers.services.get_media_metadata",
+    mock_item_media_metadata = patch(
+        "app.models.item.providers.services.get_media_metadata",
+        return_value={"max_progress": 1},
+    )
+    mock_media_media_metadata = patch(
+        "app.models.media.providers.services.get_media_metadata",
         return_value={"max_progress": 1},
     )
     mock_fetch_releases = patch("app.models.Item.fetch_releases")
-    mock_get_media_metadata.start()
+    mock_item_media_metadata.start()
+    mock_media_media_metadata.start()
     mock_fetch_releases.start()
-    test_case.addCleanup(mock_get_media_metadata.stop)
+    test_case.addCleanup(mock_item_media_metadata.stop)
+    test_case.addCleanup(mock_media_media_metadata.stop)
     test_case.addCleanup(mock_fetch_releases.stop)
 
 
@@ -1472,3 +1478,80 @@ class HistoryViewAuthorFilterTests(TestCase):
             for entry in day.get("entries", [])
         ]
         self.assertNotIn("Credited Book", titles)
+
+
+class HistoryImpliedGenreFilterTests(TestCase):
+    def setUp(self):
+        _start_model_metadata_patches(self)
+        self.credentials = {"username": "history-music-user", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+        now = timezone.now()
+        self.artist = Artist.objects.create(name="History Artist")
+        self.album = Album.objects.create(
+            title="History Album",
+            artist=self.artist,
+            implied_genres=["Rock"],
+        )
+        self.track = Track.objects.create(
+            album=self.album,
+            title="History Track",
+            track_number=1,
+            duration_ms=180000,
+        )
+        self.music_item = Item.objects.create(
+            media_id="recording-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="History Track",
+            image="http://example.com/track.jpg",
+            genres=["Krautrock"],
+            implied_genres=["Rock"],
+        )
+        Music.objects.create(
+            item=self.music_item,
+            user=self.user,
+            artist=self.artist,
+            album=self.album,
+            track=self.track,
+            status=Status.COMPLETED.value,
+            start_date=now - timedelta(minutes=3),
+            end_date=now,
+        )
+
+        movie_item = Item.objects.create(
+            media_id="movie-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Other Movie",
+            image="http://example.com/movie.jpg",
+            genres=["Drama"],
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=now - timedelta(days=1),
+            end_date=now - timedelta(days=1),
+        )
+        history_cache.invalidate_history_cache(self.user.id)
+
+    def test_history_genres_api_returns_direct_and_implied_music_genres(self):
+        response = self.client.get(reverse("history_genres"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["genres"], ["Drama", "Krautrock"])
+        self.assertEqual(response.json()["implied_genres"], ["Rock"])
+
+    def test_history_implied_genre_filter_limits_results(self):
+        response = self.client.get(reverse("history"), {"implied_genre": "Rock"})
+
+        self.assertEqual(response.status_code, 200)
+        titles = [
+            entry["title"]
+            for day in response.context["history_days"]
+            for entry in day.get("entries", [])
+        ]
+        self.assertEqual(titles, ["History Album"])

@@ -26,7 +26,7 @@ def _coerce_timedelta(value, default):
         return default
 
 
-HISTORY_CACHE_VERSION = 18
+HISTORY_CACHE_VERSION = 19
 HISTORY_INDEX_PREFIX = f"history_index_v{HISTORY_CACHE_VERSION}"
 HISTORY_DAY_PREFIX = f"history_day_v{HISTORY_CACHE_VERSION}"
 HISTORY_CACHE_PREFIX = HISTORY_INDEX_PREFIX
@@ -224,6 +224,17 @@ def _resolve_genres(*items):
         genres = getattr(item, "genres", None)
         if genres:
             return _coerce_genre_list(genres)
+    return []
+
+
+def _resolve_implied_genres(*items):
+    """Pick the first usable implied-genres value from the provided items."""
+    for item in items:
+        if not item:
+            continue
+        implied_genres = getattr(item, "implied_genres", None)
+        if implied_genres:
+            return _coerce_genre_list(implied_genres)
     return []
 
 

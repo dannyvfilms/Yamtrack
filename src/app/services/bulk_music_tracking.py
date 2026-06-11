@@ -314,6 +314,8 @@ def _get_or_create_music_item(album: Album, track: Track):
     if update_fields:
         item.save(update_fields=update_fields)
 
+    music_services.sync_music_item_genres_from_album(item, album)
+
     return item, created
 
 

@@ -560,13 +560,18 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     # Helper function to check if entry matches genre filter by checking metadata.
     # Uses a cache to avoid repeated metadata lookups for the same media item.
     genre_filter = filters.get("genre")
+    implied_genre_filter = filters.get("implied_genre")
     # Support comma-separated genres — match if item has ANY selected genre (OR logic)
     genre_filters = (
         [g.strip().lower() for g in genre_filter.split(",") if g.strip()]
         if genre_filter
         else []
     )
-    genre_filter_lower = genre_filters[0] if len(genre_filters) == 1 else None
+    implied_genre_filters = (
+        [g.strip().lower() for g in implied_genre_filter.split(",") if g.strip()]
+        if implied_genre_filter
+        else []
+    )
     genre_cache = {}  # Cache: (media_type, media_id) -> bool (matches genre or None if not checked)
 
     def matches_genre(media_entry, media_type):
@@ -644,6 +649,21 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         genres = _resolve_genres(item)
         item_genre_set = {str(g).lower() for g in genres}
         return bool(item_genre_set & set(genre_filters))
+
+    def entry_matches_implied_genre(entry):
+        """Check if a built entry matches the implied-genre filter."""
+        if not implied_genre_filters:
+            return True
+        item = entry.get("item") or {}
+        if isinstance(item, dict):
+            implied_genres = item.get("implied_genres") or []
+        else:
+            implied_genres = getattr(item, "implied_genres", None) or []
+        entry_implied_genres = entry.get("implied_genres") or implied_genres
+        return bool(
+            {str(genre).lower() for genre in entry_implied_genres}
+            & set(implied_genre_filters),
+        )
 
     # Build a lookup of episode titles from stored items to avoid provider calls
     # Only if we're processing episodes
@@ -1237,6 +1257,9 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             game_logging_style,
             (time.perf_counter() - games_start) * 1000,
         )
+
+    if implied_genre_filters:
+        entries = [entry for entry in entries if entry_matches_implied_genre(entry)]
 
     entries.sort(key=lambda entry: entry["played_at_local"], reverse=True)
 
@@ -2718,5 +2741,4 @@ def repair_history_day_cache_coverage(
         "remaining": remaining,
         "days": len(index_day_keys),
     }
-
 

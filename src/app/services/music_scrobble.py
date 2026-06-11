@@ -29,6 +29,7 @@ from app.services.music import (
     get_artist_hero_image,
     prefetch_album_covers,
     refresh_album_cover_art,
+    sync_music_item_genres_from_album,
     sync_artist_discography,
 )
 
@@ -902,6 +903,8 @@ def _get_or_create_item(
 
     if changed_fields:
         item.save(update_fields=changed_fields)
+
+    sync_music_item_genres_from_album(item, album)
 
     return item
 

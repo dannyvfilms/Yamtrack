@@ -1399,6 +1399,29 @@ class ListDetailViewTests(TestCase):
             ["Test TV Show", "Test Movie", "Test Anime"],
         )
 
+    def test_smart_list_uses_saved_sort_defaults(self):
+        """Smart-list detail should default to the saved sort and direction."""
+        Movie.objects.create(item=self.movie_item, status=Status.COMPLETED.value, user=self.user, score=8.0)
+        TV.objects.create(item=self.tv_item, status=Status.IN_PROGRESS.value, user=self.user)
+
+        smart_list = CustomList.objects.create(
+            name="Sorted Smart List",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value, MediaTypes.TV.value],
+            smart_filters={
+                "status": "all",
+                "sort": "rating",
+                "sort_direction": "asc",
+            },
+        )
+
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "rating")
+        self.assertEqual(response.context["current_direction"], "asc")
+
 
     @patch("app.providers.services.get_media_metadata")
     @patch.object(get_user_model(), "update_preference")
@@ -1676,6 +1699,37 @@ class SmartRulesUpdateViewTest(TestCase):
         self.assertEqual(self.smart_list.smart_media_types, [MediaTypes.MOVIE.value])
         self.assertEqual(self.smart_list.smart_filters["search"], "Smart")
         self.assertTrue(self.smart_list.items.filter(id=self.item.id).exists())
+
+    def test_owner_can_update_smart_rules_with_ranges_and_sort(self):
+        self.client.login(username="owner", password="12345")
+        response = self.client.post(
+            reverse("list_smart_rules_update", args=[self.smart_list.id]),
+            data=json.dumps(
+                {
+                    "media_types": [MediaTypes.MOVIE.value],
+                    "rating_min": "7.0",
+                    "rating_max": "9.0",
+                    "release_date_from": "2000-01-01",
+                    "release_date_to": "2009-12-31",
+                    "date_added_from": "2026-01-01",
+                    "date_added_to": "2026-01-31",
+                    "sort": "rating",
+                    "sort_direction": "desc",
+                },
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.smart_list.refresh_from_db()
+        self.assertEqual(self.smart_list.smart_filters["rating_min"], "7.0")
+        self.assertEqual(self.smart_list.smart_filters["rating_max"], "9.0")
+        self.assertEqual(self.smart_list.smart_filters["release_date_from"], "2000-01-01")
+        self.assertEqual(self.smart_list.smart_filters["release_date_to"], "2009-12-31")
+        self.assertEqual(self.smart_list.smart_filters["date_added_from"], "2026-01-01")
+        self.assertEqual(self.smart_list.smart_filters["date_added_to"], "2026-01-31")
+        self.assertEqual(self.smart_list.smart_filters["sort"], "rating")
+        self.assertEqual(self.smart_list.smart_filters["sort_direction"], "desc")
 
     def test_collaborator_can_update_smart_rules(self):
         self.client.login(username="collab", password="12345")

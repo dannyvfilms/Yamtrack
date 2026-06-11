@@ -437,11 +437,16 @@
   historyModeLabel: 'Activity (watched)',
   historyModeOpen: false,
   selectedGenres: [],
+  selectedImpliedGenres: [],
   genreOpen: false,
+  impliedGenreOpen: false,
   genreSearch: '',
+  impliedGenreSearch: '',
   genresLoading: false,
   availableGenres: [],
+  availableImpliedGenres: [],
   genreDropdownStyle: {},
+  impliedGenreDropdownStyle: {},
   mediaTypeOptions: [
     { value: '', label: 'All types' },
     { value: 'tv', label: 'TV Show' },
@@ -456,7 +461,7 @@
     { value: 'boardgame', label: 'Board Game' },
   ],
   get activeCount() {
-    return [this.startDate, this.endDate, this.mediaType, this.historyMode === 'release', this.selectedGenres.length > 0].filter(Boolean).length;
+    return [this.startDate, this.endDate, this.mediaType, this.historyMode === 'release', this.selectedGenres.length > 0, this.selectedImpliedGenres.length > 0].filter(Boolean).length;
   },
   init() {
     const p = new URLSearchParams(window.location.search);
@@ -465,25 +470,28 @@
     this.mediaType = p.get('media_type') || '';
     this.historyMode = p.get('history_mode') || '';
     const genreParam = p.get('genre') || '';
+    const impliedGenreParam = p.get('implied_genre') || '';
     this.selectedGenres = genreParam ? genreParam.split(',').map(g => g.trim()).filter(Boolean) : [];
+    this.selectedImpliedGenres = impliedGenreParam ? impliedGenreParam.split(',').map(g => g.trim()).filter(Boolean) : [];
     const mt = this.mediaTypeOptions.find(o => o.value === this.mediaType);
     if (mt) this.mediaTypeLabel = mt.label;
     if (this.historyMode === 'release') this.historyModeLabel = 'Release dates';
   },
   apply() {
     const p = new URLSearchParams(window.location.search);
-    ['start-date', 'end-date', 'media_type', 'history_mode', 'genre', 'page'].forEach(k => p.delete(k));
+    ['start-date', 'end-date', 'media_type', 'history_mode', 'genre', 'implied_genre', 'page'].forEach(k => p.delete(k));
     if (this.startDate) p.set('start-date', this.startDate);
     if (this.endDate)   p.set('end-date', this.endDate);
     if (this.mediaType) p.set('media_type', this.mediaType);
     if (this.historyMode && this.historyMode !== 'activity') p.set('history_mode', this.historyMode);
     if (this.selectedGenres.length) p.set('genre', this.selectedGenres.join(','));
+    if (this.selectedImpliedGenres.length) p.set('implied_genre', this.selectedImpliedGenres.join(','));
     const qs = p.toString();
     window.location.href = '{% url 'history' %}' + (qs ? '?' + qs : '');
   },
   clear() {
     const p = new URLSearchParams(window.location.search);
-    ['start-date', 'end-date', 'media_type', 'history_mode', 'genre', 'page'].forEach(k => p.delete(k));
+    ['start-date', 'end-date', 'media_type', 'history_mode', 'genre', 'implied_genre', 'page'].forEach(k => p.delete(k));
     const qs = p.toString();
     window.location.href = '{% url 'history' %}' + (qs ? '?' + qs : '');
   },
@@ -510,10 +518,29 @@
       const resp = await fetch('{% url 'history_genres' %}');
       const data = await resp.json();
       this.availableGenres = data.genres || [];
+      this.availableImpliedGenres = data.implied_genres || [];
     } catch (e) {
       this.availableGenres = [];
+      this.availableImpliedGenres = [];
     }
     this.genresLoading = false;
+  },
+  openImpliedGenreDropdown() {
+    this.impliedGenreOpen = !this.impliedGenreOpen;
+    if (this.impliedGenreOpen) {
+      const rect = this.$refs.impliedGenreTrigger.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom - 12;
+      this.impliedGenreDropdownStyle = {
+        position: 'fixed',
+        top: (rect.bottom + 4) + 'px',
+        left: rect.left + 'px',
+        width: rect.width + 'px',
+        maxHeight: Math.min(340, Math.max(160, spaceBelow)) + 'px',
+      };
+      if (this.availableGenres.length === 0 && !this.genresLoading) {
+        this.loadGenres();
+      }
+    }
   },
   toggleGenre(g) {
     const idx = this.selectedGenres.indexOf(g);
@@ -523,10 +550,23 @@
       this.selectedGenres.push(g);
     }
   },
+  toggleImpliedGenre(g) {
+    const idx = this.selectedImpliedGenres.indexOf(g);
+    if (idx >= 0) {
+      this.selectedImpliedGenres.splice(idx, 1);
+    } else {
+      this.selectedImpliedGenres.push(g);
+    }
+  },
   filteredAvailableGenres() {
     const term = this.genreSearch.toLowerCase();
     if (!term) return this.availableGenres;
     return this.availableGenres.filter(g => g.toLowerCase().includes(term));
+  },
+  filteredAvailableImpliedGenres() {
+    const term = this.impliedGenreSearch.toLowerCase();
+    if (!term) return this.availableImpliedGenres;
+    return this.availableImpliedGenres.filter(g => g.toLowerCase().includes(term));
   }
 }">
   {# FAB button #}
@@ -686,6 +726,56 @@
                           class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white cursor-pointer">
                     <span class="flex-1 min-w-0 truncate" x-text="g"></span>
                     <span x-show="selectedGenres.includes(g)" class="ml-2 shrink-0">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="mediaType === '' || mediaType === 'music'">
+            <label class="block text-sm font-medium text-gray-300 mb-1">Implied Genre</label>
+            <button type="button"
+                    x-ref="impliedGenreTrigger"
+                    @click="openImpliedGenreDropdown()"
+                    @keydown.escape.window="impliedGenreOpen = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer text-left"
+                    :class="selectedImpliedGenres.length ? 'text-gray-200' : 'text-gray-500'">
+              <span class="truncate" x-text="selectedImpliedGenres.length ? selectedImpliedGenres.join(', ') : 'All implied genres'"></span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400 shrink-0 ml-2"><path d="m6 9 6 6 6-6"></path></svg>
+            </button>
+            <div x-show="impliedGenreOpen"
+                 x-cloak
+                 :style="impliedGenreDropdownStyle"
+                 @click.outside="impliedGenreOpen = false"
+                 @resize.window="impliedGenreOpen = false"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="z-[70] flex flex-col bg-[#272c31] rounded-md shadow-lg border border-gray-600">
+              <div class="px-2 pt-2 pb-1 shrink-0">
+                <input type="text"
+                       x-model="impliedGenreSearch"
+                       placeholder="Filter implied genres…"
+                       class="w-full px-3 py-1.5 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              </div>
+              <div class="overflow-y-auto flex-1 py-1">
+                <template x-if="genresLoading">
+                  <div class="px-4 py-3 text-sm text-gray-400 text-center">Loading…</div>
+                </template>
+                <template x-if="!genresLoading && filteredAvailableImpliedGenres().length === 0">
+                  <div class="px-4 py-3 text-sm text-gray-400 text-center">No implied genres found</div>
+                </template>
+                <template x-for="g in filteredAvailableImpliedGenres()" :key="g">
+                  <button type="button"
+                          @click="toggleImpliedGenre(g)"
+                          class="flex w-full items-center px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#39404b] hover:text-white">
+                    <span class="truncate" x-text="g"></span>
+                    <span x-show="selectedImpliedGenres.includes(g)" class="ml-2 shrink-0">
                       {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
                     </span>
                   </button>

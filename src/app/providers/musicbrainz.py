@@ -2,6 +2,8 @@
 
 import logging
 import time
+from collections import OrderedDict
+from urllib.parse import quote
 
 import requests
 from django.conf import settings
@@ -23,6 +25,75 @@ _last_request_time = 0
 
 # User-Agent required by MusicBrainz API
 USER_AGENT = "Yamtrack/1.0 (https://github.com/FuzzyGrim/Yamtrack)"
+_GENRE_ACRONYMS = frozenset({"ebm", "edm", "idm", "ndw", "nsbm", "nwobhm", "usbm"})
+_GENRE_PARENT_SUFFIXES = {
+    "rock": "Rock",
+    "metal": "Metal",
+    "jazz": "Jazz",
+    "folk": "Folk",
+    "country": "Country",
+    "blues": "Blues",
+    "punk": "Punk",
+    "rap": "Rap",
+}
+_GENRE_PARENT_TOKENS = {
+    "experimental": "Experimental",
+}
+_GENRE_PARENT_EXACT_FALLBACKS = {
+    "plunderphonics": ["Experimental"],
+}
+
+
+def capitalize_genre(name: str) -> str:
+    """Return a display-friendly MusicBrainz genre name."""
+    if not name:
+        return name
+
+    normalized = str(name).strip()
+    if not normalized:
+        return normalized
+
+    lowered = normalized.lower()
+    if lowered in _GENRE_ACRONYMS:
+        return lowered.upper()
+
+    if "-" in normalized:
+        return "-".join(capitalize_genre(part) for part in normalized.split("-"))
+
+    return normalized.title()
+
+
+def _normalize_musicbrainz_genre_names(values) -> list[str]:
+    """Normalize raw MusicBrainz genre/tag payloads into deduped display names."""
+    normalized = OrderedDict()
+    for value in values or []:
+        if isinstance(value, dict):
+            value = value.get("name")
+        name = capitalize_genre(str(value).strip()) if value else ""
+        if name:
+            normalized.setdefault(name.lower(), name)
+    return list(normalized.values())
+
+
+def _infer_genre_parents(genre_name: str) -> list[str]:
+    """Infer broad parent genres when MusicBrainz cannot return genre relations."""
+    normalized_name = capitalize_genre(str(genre_name or "").strip())
+    if not normalized_name:
+        return []
+
+    lowered_name = normalized_name.lower()
+    inferred = []
+    inferred.extend(_GENRE_PARENT_EXACT_FALLBACKS.get(lowered_name, []))
+
+    for token, parent in _GENRE_PARENT_TOKENS.items():
+        if token in lowered_name and lowered_name != parent.lower():
+            inferred.append(parent)
+
+    for suffix, parent in _GENRE_PARENT_SUFFIXES.items():
+        if lowered_name.endswith(f" {suffix}") and lowered_name != parent.lower():
+            inferred.append(parent)
+
+    return _normalize_musicbrainz_genre_names(inferred)
 
 
 def get_wikipedia_data(title):
@@ -455,6 +526,143 @@ def recording(media_id):
 
     cache.set(cache_key, result, 60 * 60 * 24 * 7)  # Cache for 7 days
     return result
+
+
+def get_release_group_genres(release_group_id: str) -> list[str]:
+    """Return normalized release-group genres/tags for a MusicBrainz release group."""
+    if not release_group_id:
+        return []
+
+    cache_key = f"musicbrainz_release_group_genres_{release_group_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        response = _mb_request(
+            f"release-group/{release_group_id}",
+            {"inc": "genres+tags"},
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug(
+            "Failed to fetch release-group genres for %s: %s",
+            release_group_id,
+            exception_summary(exc),
+        )
+        return []
+
+    genres = _normalize_musicbrainz_genre_names(response.get("genres"))
+    if not genres:
+        genres = _normalize_musicbrainz_genre_names(response.get("tags"))
+
+    cache.set(cache_key, genres, 60 * 60 * 24 * 7)
+    return genres
+
+
+def get_genre_mbid(genre_name: str) -> str:
+    """Return the MusicBrainz genre MBID for a display name, or an empty string."""
+    normalized_name = str(genre_name or "").strip()
+    if not normalized_name:
+        return ""
+
+    cache_key = f"musicbrainz_genre_mbid_v3_{normalized_name.lower()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    query = f'name:"{normalized_name}"'
+    try:
+        response = _mb_request(
+            "genre",
+            {"query": query},
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug(
+            "Failed to resolve MusicBrainz genre MBID for %s: %s",
+            normalized_name,
+            exception_summary(exc),
+        )
+        return ""
+
+    mbid = ""
+    for genre in response.get("genres", []):
+        candidate_name = str(genre.get("name") or "").strip()
+        if candidate_name.lower() == normalized_name.lower():
+            mbid = genre.get("id") or ""
+            break
+    if not mbid and response.get("genres"):
+        mbid = response["genres"][0].get("id") or ""
+
+    cache.set(cache_key, mbid, 60 * 60 * 24 * 30)
+    return mbid
+
+
+def get_genre_parents(genre_name: str, *, max_depth: int = 3) -> list[str]:
+    """Return deduped implied parent genres for a MusicBrainz genre name."""
+    normalized_name = capitalize_genre(str(genre_name or "").strip())
+    if not normalized_name or max_depth < 1:
+        return []
+
+    cache_key = f"musicbrainz_genre_parents_v3_{normalized_name.lower()}_{max_depth}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    mbid = get_genre_mbid(normalized_name)
+    if not mbid:
+        inferred = _infer_genre_parents(normalized_name)
+        cache.set(cache_key, inferred, 60 * 60 * 24 * 30)
+        return inferred
+
+    seen = set()
+
+    def _walk(current_mbid: str, depth: int) -> list[str]:
+        if depth >= max_depth or not current_mbid or current_mbid in seen:
+            return []
+
+        seen.add(current_mbid)
+        try:
+            response = _mb_request(
+                f"genre/{quote(current_mbid)}",
+                {"inc": "genre-rels"},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug(
+                "Failed to fetch MusicBrainz genre parents for %s: %s",
+                current_mbid,
+                exception_summary(exc),
+            )
+            return []
+
+        matching_relations = [
+            relation
+            for relation in response.get("relations", [])
+            if relation.get("type") == "subgenre of"
+        ]
+        forward_relations = [
+            relation
+            for relation in matching_relations
+            if relation.get("direction") == "forward"
+        ]
+        parent_relations = forward_relations or matching_relations
+
+        parents = []
+        for relation in parent_relations:
+            parent_payload = relation.get("genre") or {}
+            parent_name = capitalize_genre(str(parent_payload.get("name") or "").strip())
+            parent_mbid = parent_payload.get("id") or ""
+            if parent_name:
+                parents.append(parent_name)
+            if parent_mbid:
+                parents.extend(_walk(parent_mbid, depth + 1))
+        return parents
+
+    normalized = _normalize_musicbrainz_genre_names(_walk(mbid, 0))
+    normalized = [value for value in normalized if value.lower() != normalized_name.lower()]
+    if not normalized:
+        normalized = _infer_genre_parents(normalized_name)
+    cache.set(cache_key, normalized, 60 * 60 * 24 * 30)
+    return normalized
 
 
 def search_artists(query, page=1):
@@ -975,16 +1183,9 @@ def get_release(release_id, skip_cover_art: bool = False):
     image = settings.IMG_NONE if skip_cover_art else _get_cover_art(release_id, release_group_id)
 
     # Genres/tags (prefer official genres)
-    genres = []
-    for g in response.get("genres", []):
-        name = g.get("name")
-        if name:
-            genres.append(name)
+    genres = _normalize_musicbrainz_genre_names(response.get("genres"))
     if not genres:
-        for t in response.get("tags", []):
-            name = t.get("name")
-            if name:
-                genres.append(name)
+        genres = _normalize_musicbrainz_genre_names(response.get("tags"))
 
     # Get tracks
     media_list = response.get("media", [])

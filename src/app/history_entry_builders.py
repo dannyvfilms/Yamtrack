@@ -10,6 +10,7 @@ from app.history_cache_utils import (
     _coerce_genre_list,
     _localize_datetime,
     _resolve_genres,
+    _resolve_implied_genres,
     _resolve_music_genres,
 )
 from app.models import MediaTypes
@@ -50,6 +51,9 @@ def _serialize_item(item):
     genres = _coerce_genre_list(getattr(item, "genres", None))
     if genres:
         data["genres"] = genres
+    implied_genres = _coerce_genre_list(getattr(item, "implied_genres", None))
+    if implied_genres:
+        data["implied_genres"] = implied_genres
     provider_external_ids = getattr(item, "provider_external_ids", None)
     if provider_external_ids:
         data["provider_external_ids"] = dict(provider_external_ids)
@@ -184,6 +188,7 @@ def _build_episode_entry(episode, episode_title_map=None):
         tv_item,
     )
     genres = _resolve_genres(episode_item, season_item, tv_item)
+    implied_genres = _resolve_implied_genres(episode_item, season_item, tv_item)
 
     display_title = _get_episode_display_title(episode, episode_title_map)
     title = ""
@@ -217,6 +222,8 @@ def _build_episode_entry(episode, episode_title_map=None):
     _attach_entry_score(entry, episode)
     if genres:
         entry["genres"] = genres
+    if implied_genres:
+        entry["implied_genres"] = implied_genres
     return entry
 
 
@@ -227,6 +234,7 @@ def _build_movie_entry(movie):
 
     runtime_minutes = _resolve_runtime_minutes(movie.item)
     genres = _resolve_genres(movie.item)
+    implied_genres = _resolve_implied_genres(movie.item)
 
     entry = {
         "media_type": MediaTypes.MOVIE.value,
@@ -247,6 +255,8 @@ def _build_movie_entry(movie):
     _attach_entry_score(entry, movie)
     if genres:
         entry["genres"] = genres
+    if implied_genres:
+        entry["implied_genres"] = implied_genres
     return entry
 
 
@@ -360,6 +370,7 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     instance_id = primary_music.id if primary_music else None
     track = getattr(primary_music, "track", None) if primary_music else None
     genres = _resolve_music_genres(album=album, artist=album.artist if album else None, track=track)
+    implied_genres = _coerce_genre_list(getattr(album, "implied_genres", None))
     entry_key = f"{album.id if album else 'album'}-{day_date.strftime('%Y%m%d')}"
 
     # Get album score if available
@@ -388,4 +399,6 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     }
     if genres:
         entry["genres"] = genres
+    if implied_genres:
+        entry["implied_genres"] = implied_genres
     return entry

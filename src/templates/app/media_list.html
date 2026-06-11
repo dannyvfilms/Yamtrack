@@ -76,6 +76,7 @@
     collection: '{{ current_collection }}',
     progress: '{{ current_progress|default:'all' }}',
     genre: '{{ current_genre|default:'' }}',
+    impliedGenre: '{{ current_implied_genre|default:'' }}',
     year: '{{ current_year|default:'' }}',
     release: '{{ current_release|default:'all' }}',
     source: '{{ current_source|default:'' }}',
@@ -167,6 +168,9 @@
       if (this.genre) {
         labels.push(this.genre);
       }
+      if (this.impliedGenre) {
+        labels.push('Implied: ' + this.impliedGenre);
+      }
       if (this.year) {
         labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year);
       }
@@ -213,6 +217,7 @@
       this.collection = 'all';
       this.progress = 'all';
       this.genre = '';
+      this.impliedGenre = '';
       this.year = '';
       this.release = 'all';
       this.source = '';
@@ -236,6 +241,7 @@
       <input type="hidden" name="collection" x-model="collection">
       <input type="hidden" name="progress" x-model="progress">
       <input type="hidden" name="genre" x-model="genre">
+      <input type="hidden" name="implied_genre" x-model="impliedGenre">
       <input type="hidden" name="year" x-model="year">
       <input type="hidden" name="release" x-model="release">
       <input type="hidden" name="source" x-model="source">
@@ -332,6 +338,15 @@
                         type="button">
                   <span class="flex-shrink-0 mr-3">Genre</span>
                   <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="genre || 'Any'"></span>
+                  <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+                </button>
+              {% endif %}
+              {% if filter_data.implied_genres %}
+                <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="view = 'impliedGenre'; resetSearch()"
+                        type="button">
+                  <span class="flex-shrink-0 mr-3">Implied Genre</span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="impliedGenre || 'Any'"></span>
                   <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
                 </button>
               {% endif %}
@@ -481,6 +496,51 @@
                           type="button">
                     <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
                     <span class="ml-auto" x-show="genre === option">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <div x-show="view === 'impliedGenre'" x-cloak class="p-2">
+              <div class="flex items-center gap-2 px-2 py-1">
+                <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                        @click="view = 'root'"
+                        type="button">
+                  {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+                </button>
+                <div class="text-xs uppercase tracking-wide text-gray-300">Implied Genre</div>
+              </div>
+              <div class="px-2 py-2">
+                <input type="text"
+                       x-model="impliedGenreSearch"
+                       placeholder="Filter Implied Genre"
+                       class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              </div>
+              <div class="max-h-64 overflow-y-auto">
+                <button hx-get="{% url 'medialist' media_type %}"
+                        {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="impliedGenre = ''; open = false; view = 'root'"
+                        type="button">
+                  <span>All Implied Genres</span>
+                  <span class="ml-auto" x-show="impliedGenre === ''">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
+                <template x-for="option in filteredImpliedGenres()" :key="option">
+                  <button hx-get="{% url 'medialist' media_type %}"
+                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                          @click="impliedGenre = option; open = false; view = 'root'"
+                          type="button">
+                    <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
+                    <span class="ml-auto" x-show="impliedGenre === option">
                       {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
                     </span>
                   </button>
@@ -1318,6 +1378,7 @@
         open: false,
         view: 'root',
         genreSearch: '',
+        impliedGenreSearch: '',
         yearSearch: '',
         sourceSearch: '',
         languageSearch: '',
@@ -1328,6 +1389,7 @@
         authorSearch: '',
         tagSearch: '',
         genres: data.genres || [],
+        impliedGenres: data.implied_genres || [],
         years: data.years || [],
         sources: data.sources || [],
         languages: data.languages || [],
@@ -1339,6 +1401,7 @@
         tags: data.tags || [],
         resetSearch() {
           this.genreSearch = '';
+          this.impliedGenreSearch = '';
           this.yearSearch = '';
           this.sourceSearch = '';
           this.languageSearch = '';
@@ -1355,6 +1418,13 @@
             return this.genres;
           }
           return this.genres.filter(genre => genre.toLowerCase().includes(term));
+        },
+        filteredImpliedGenres() {
+          const term = this.impliedGenreSearch.toLowerCase();
+          if (!term) {
+            return this.impliedGenres;
+          }
+          return this.impliedGenres.filter(genre => genre.toLowerCase().includes(term));
         },
         filteredYears() {
           const term = this.yearSearch.toLowerCase();

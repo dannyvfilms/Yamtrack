@@ -14,12 +14,21 @@ from app.models import CollectionEntry, Item, ItemTag, MediaTypes, Sources, Stat
 SMART_FILTER_KEYS = (
     "status",
     "rating",
+    "rating_min",
+    "rating_max",
     "collection",
     "genre",
+    "implied_genre",
     "year",
     "release",
+    "release_date_from",
+    "release_date_to",
+    "date_added_from",
+    "date_added_to",
     "source",
     "search",
+    "sort",
+    "sort_direction",
     "language",
     "country",
     "platform",
@@ -33,12 +42,21 @@ SMART_FILTER_KEYS = (
 SMART_FILTER_DEFAULTS = {
     "status": "all",
     "rating": "all",
+    "rating_min": "",
+    "rating_max": "",
     "collection": "all",
     "genre": "",
+    "implied_genre": "",
     "year": "",
     "release": "all",
+    "release_date_from": "",
+    "release_date_to": "",
+    "date_added_from": "",
+    "date_added_to": "",
     "source": "",
     "search": "",
+    "sort": "",
+    "sort_direction": "",
     "language": "",
     "country": "",
     "platform": "",
@@ -72,6 +90,31 @@ AUTHOR_MEDIA_TYPES = FORMAT_MEDIA_TYPES
 
 def _normalize_filter_value(value) -> str:
     return str(value or "").strip().lower()
+
+
+def _normalize_decimal_value(value) -> str:
+    """Return a rating value string in [0.0, 10.0] or empty string."""
+    if not value and value != 0:
+        return ""
+    try:
+        normalized = round(float(str(value).strip()), 1)
+    except (TypeError, ValueError):
+        return ""
+    if 0.0 <= normalized <= 10.0:
+        return str(normalized)
+    return ""
+
+
+def _normalize_date_filter(value) -> str:
+    """Return a YYYY-MM-DD string or empty string."""
+    if not value:
+        return ""
+    normalized = str(value).strip()
+    try:
+        datetime.date.fromisoformat(normalized)
+    except ValueError:
+        return ""
+    return normalized
 
 
 def _release_date_from_value(value):
@@ -227,6 +270,8 @@ def normalize_rule_payload(payload, owner):
     rating = str(_payload_get(payload, "rating", "all") or "all").strip().lower()
     if rating not in RATING_CHOICES:
         rating = "all"
+    rating_min = _normalize_decimal_value(_payload_get(payload, "rating_min", ""))
+    rating_max = _normalize_decimal_value(_payload_get(payload, "rating_max", ""))
 
     collection = str(_payload_get(payload, "collection", "all") or "all").strip().lower()
     if collection not in COLLECTION_CHOICES:
@@ -235,6 +280,10 @@ def normalize_rule_payload(payload, owner):
     release = str(_payload_get(payload, "release", "all") or "all").strip().lower()
     if release not in RELEASE_CHOICES:
         release = "all"
+    release_date_from = _normalize_date_filter(_payload_get(payload, "release_date_from", ""))
+    release_date_to = _normalize_date_filter(_payload_get(payload, "release_date_to", ""))
+    date_added_from = _normalize_date_filter(_payload_get(payload, "date_added_from", ""))
+    date_added_to = _normalize_date_filter(_payload_get(payload, "date_added_to", ""))
 
     year = str(_payload_get(payload, "year", "") or "").strip().lower()
     if year and year != "unknown" and not year.isdigit():
@@ -243,17 +292,30 @@ def normalize_rule_payload(payload, owner):
     source = str(_payload_get(payload, "source", "") or "").strip().lower()
     if source and source not in Sources.values:
         source = ""
+    sort = str(_payload_get(payload, "sort", "") or "").strip()
+    sort_direction = str(_payload_get(payload, "sort_direction", "") or "").strip().lower()
+    if sort_direction not in {"asc", "desc"}:
+        sort_direction = ""
 
     normalized = {
         "media_types": normalized_media_types,
         "status": status,
         "rating": rating,
+        "rating_min": rating_min,
+        "rating_max": rating_max,
         "collection": collection,
         "genre": str(_payload_get(payload, "genre", "") or "").strip(),
+        "implied_genre": str(_payload_get(payload, "implied_genre", "") or "").strip(),
         "year": year,
         "release": release,
+        "release_date_from": release_date_from,
+        "release_date_to": release_date_to,
+        "date_added_from": date_added_from,
+        "date_added_to": date_added_to,
         "source": source,
         "search": str(_payload_get(payload, "search", "") or "").strip(),
+        "sort": sort,
+        "sort_direction": sort_direction,
         "language": str(_payload_get(payload, "language", "") or "").strip(),
         "country": str(_payload_get(payload, "country", "") or "").strip(),
         "platform": str(_payload_get(payload, "platform", "") or "").strip(),
@@ -298,7 +360,14 @@ def normalize_list_rules(custom_list) -> dict:
     return normalized_rules
 
 
-def _base_media_queryset(owner, media_type: str, status_filter: str = "all", search_query: str = ""):
+def _base_media_queryset(
+    owner,
+    media_type: str,
+    status_filter: str = "all",
+    search_query: str = "",
+    date_added_from: str = "",
+    date_added_to: str = "",
+):
     model = apps.get_model("app", media_type)
     if media_type == MediaTypes.EPISODE.value:
         queryset = model.objects.filter(related_season__user=owner)
@@ -311,6 +380,10 @@ def _base_media_queryset(owner, media_type: str, status_filter: str = "all", sea
 
     if search_query:
         queryset = queryset.filter(item__title__icontains=search_query)
+    if date_added_from:
+        queryset = queryset.filter(created_at__date__gte=date_added_from)
+    if date_added_to:
+        queryset = queryset.filter(created_at__date__lte=date_added_to)
 
     return queryset.select_related("item")
 
@@ -324,6 +397,7 @@ def _target_media_types(owner, rules_media_types: list[str]) -> list[str]:
 
 def _matches_item_filters(item: Item, rules: dict, today) -> bool:
     genre_filter = _normalize_filter_value(rules.get("genre"))
+    implied_genre_filter = _normalize_filter_value(rules.get("implied_genre"))
     year_filter = _normalize_filter_value(rules.get("year"))
     source_filter = _normalize_filter_value(rules.get("source"))
     language_filter = _normalize_filter_value(rules.get("language"))
@@ -335,6 +409,13 @@ def _matches_item_filters(item: Item, rules: dict, today) -> bool:
     if genre_filter:
         item_genres = getattr(item, "genres", None) or []
         if not any(_normalize_filter_value(genre) == genre_filter for genre in item_genres):
+            return False
+    if implied_genre_filter:
+        item_implied_genres = getattr(item, "implied_genres", None) or []
+        if not any(
+            _normalize_filter_value(genre) == implied_genre_filter
+            for genre in item_implied_genres
+        ):
             return False
 
     if year_filter == "unknown":
@@ -348,6 +429,25 @@ def _matches_item_filters(item: Item, rules: dict, today) -> bool:
 
     if source_filter and _normalize_filter_value(getattr(item, "source", "")) != source_filter:
         return False
+
+    release_date_from = rules.get("release_date_from")
+    release_date_to = rules.get("release_date_to")
+    if release_date_from or release_date_to:
+        item_release = _release_date_from_value(getattr(item, "release_datetime", None))
+        if item_release is None:
+            return False
+        if release_date_from:
+            try:
+                if item_release < datetime.date.fromisoformat(release_date_from):
+                    return False
+            except ValueError:
+                pass
+        if release_date_to:
+            try:
+                if item_release > datetime.date.fromisoformat(release_date_to):
+                    return False
+            except ValueError:
+                pass
 
     if release_filter and not _matches_release_filter_value(
         getattr(item, "release_datetime", None),
@@ -401,10 +501,18 @@ def _rules_require_item_scan(normalized_rules: dict) -> bool:
 
     if normalized_rules.get("rating", "all") != "all":
         return True
+    if (
+        _normalize_decimal_value(normalized_rules.get("rating_min"))
+        or _normalize_decimal_value(normalized_rules.get("rating_max"))
+    ):
+        return True
 
     for key in (
         "genre",
+        "implied_genre",
         "year",
+        "release_date_from",
+        "release_date_to",
         "source",
         "language",
         "country",
@@ -517,25 +625,32 @@ def _filter_item_ids_by_rating(
     media_type: str,
     item_ids: Iterable[int],
     rating_filter: str,
+    rating_min: str = "",
+    rating_max: str = "",
 ) -> set[int]:
     """Filter candidate item ids using the same rated/unrated semantics as media lists."""
     candidate_item_ids = {item_id for item_id in item_ids if item_id}
-    if not candidate_item_ids or rating_filter == "all":
+    if not candidate_item_ids or (rating_filter == "all" and not rating_min and not rating_max):
         return candidate_item_ids
 
     model = apps.get_model("app", media_type)
-    rated_item_ids = set(
-        model.objects.filter(
-            user=owner,
-            item_id__in=candidate_item_ids,
-            score__isnull=False,
-        ).values_list("item_id", flat=True),
+    queryset = model.objects.filter(
+        user=owner,
+        item_id__in=candidate_item_ids,
+        score__isnull=False,
     )
+    if rating_min:
+        queryset = queryset.filter(score__gte=float(rating_min))
+    if rating_max:
+        queryset = queryset.filter(score__lte=float(rating_max))
+    rated_item_ids = set(queryset.values_list("item_id", flat=True))
 
-    if rating_filter == "rated":
-        return candidate_item_ids & rated_item_ids
     if rating_filter == "not_rated":
         return candidate_item_ids - rated_item_ids
+    if rating_filter == "rated":
+        return candidate_item_ids & rated_item_ids
+    if rating_min or rating_max:
+        return candidate_item_ids & rated_item_ids
     return candidate_item_ids
 
 
@@ -552,6 +667,9 @@ def collect_matching_item_ids(
 
     collection_filter = normalized_rules.get("collection", "all")
     rating_filter = normalized_rules.get("rating", "all")
+    rating_min = normalized_rules.get("rating_min", "")
+    rating_max = normalized_rules.get("rating_max", "")
+    has_rating_constraints = rating_filter != "all" or bool(rating_min) or bool(rating_max)
     today = timezone.localdate()
     item_scan_required = _rules_require_item_scan(normalized_rules)
 
@@ -586,6 +704,8 @@ def collect_matching_item_ids(
             media_type=media_type,
             status_filter=normalized_rules.get("status", "all"),
             search_query=normalized_rules.get("search", ""),
+            date_added_from=normalized_rules.get("date_added_from", ""),
+            date_added_to=normalized_rules.get("date_added_to", ""),
         )
         queryset_item_ids = set(queryset.values_list("item_id", flat=True))
 
@@ -595,7 +715,7 @@ def collect_matching_item_ids(
                 include_collection_only_untracked
                 and normalized_rules.get("status", "all") == "all"
                 and collection_filter != "not_collected"
-                and rating_filter != "rated"
+                and not has_rating_constraints
             ):
                 matched_ids.update(
                     _collection_only_item_ids(
@@ -607,12 +727,14 @@ def collect_matching_item_ids(
                 )
             continue
 
-        if rating_filter != "all":
+        if has_rating_constraints:
             candidate_item_ids = _filter_item_ids_by_rating(
                 owner,
                 media_type,
                 queryset_item_ids,
                 rating_filter,
+                rating_min,
+                rating_max,
             )
             if not candidate_item_ids:
                 continue
@@ -647,7 +769,7 @@ def collect_matching_item_ids(
             include_collection_only_untracked
             and normalized_rules.get("status", "all") == "all"
             and collection_filter != "not_collected"
-            and rating_filter != "rated"
+            and not has_rating_constraints
         ):
             collection_only_ids = _collection_only_item_ids(
                 owner,
@@ -688,10 +810,21 @@ def item_matches_rules(
         media_type=item.media_type,
         status_filter=normalized_rules.get("status", "all"),
         search_query=normalized_rules.get("search", ""),
+        date_added_from=normalized_rules.get("date_added_from", ""),
+        date_added_to=normalized_rules.get("date_added_to", ""),
     ).filter(item_id=item.id)
 
     rating_filter = normalized_rules.get("rating", "all")
-    if not _filter_item_ids_by_rating(owner, item.media_type, [item.id], rating_filter):
+    rating_min = normalized_rules.get("rating_min", "")
+    rating_max = normalized_rules.get("rating_max", "")
+    if not _filter_item_ids_by_rating(
+        owner,
+        item.media_type,
+        [item.id],
+        rating_filter,
+        rating_min,
+        rating_max,
+    ):
         return False
 
     today = timezone.localdate()
@@ -862,6 +995,7 @@ def build_rule_filter_data(
     }
 
     genres_set = set()
+    implied_genres_set = set()
     years_set = set()
     sources_set = set()
     languages_set = set()
@@ -877,6 +1011,10 @@ def build_rule_filter_data(
             genre_value = str(genre).strip()
             if genre_value:
                 genres_set.add(genre_value)
+        for genre in (getattr(item, "implied_genres", None) or []):
+            genre_value = str(genre).strip()
+            if genre_value:
+                implied_genres_set.add(genre_value)
 
         release_datetime = getattr(item, "release_datetime", None)
         if release_datetime and getattr(release_datetime, "year", None):
@@ -904,6 +1042,7 @@ def build_rule_filter_data(
     source_labels = dict(Sources.choices)
     filter_data = {
         "genres": sorted(genres_set, key=lambda value: value.lower()),
+        "implied_genres": sorted(implied_genres_set, key=lambda value: value.lower()),
         "years": [
             {"value": str(year), "label": str(year)}
             for year in sorted(years_set, reverse=True)

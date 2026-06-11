@@ -404,12 +404,16 @@ def _smart_list_detail_response(
 ):
     """Render smart-list detail page and HTMX partial responses."""
     valid_sorts = [choice[0] for choice in ListDetailSortChoices.choices]
-    sort_by = request.GET.get("sort", ListDetailSortChoices.DATE_ADDED)
+    saved_sort = (custom_list.smart_filters or {}).get("sort") or ListDetailSortChoices.DATE_ADDED
+    if saved_sort not in valid_sorts:
+        saved_sort = ListDetailSortChoices.DATE_ADDED
+    sort_by = request.GET.get("sort", saved_sort)
     if sort_by not in valid_sorts:
         sort_by = ListDetailSortChoices.DATE_ADDED
+    saved_direction = (custom_list.smart_filters or {}).get("sort_direction") or ""
     direction = _resolve_list_sort_direction(
         sort_by,
-        request.GET.get("direction"),
+        request.GET.get("direction", saved_direction) or None,
     )
 
     layout = request.GET.get("layout", "grid")
@@ -454,19 +458,44 @@ def _smart_list_detail_response(
                 "media_types": request_media_types,
                 "status": request.GET.get("status", saved_rules["status"]),
                 "rating": request.GET.get("rating", saved_rules["rating"]),
+                "rating_min": request.GET.get("rating_min", saved_rules["rating_min"]),
+                "rating_max": request.GET.get("rating_max", saved_rules["rating_max"]),
                 "collection": request.GET.get("collection", saved_rules["collection"]),
                 "genre": request.GET.get("genre", saved_rules["genre"]),
+                "implied_genre": request.GET.get(
+                    "implied_genre",
+                    saved_rules["implied_genre"],
+                ),
                 "year": request.GET.get("year", saved_rules["year"]),
                 "release": request.GET.get("release", saved_rules["release"]),
+                "release_date_from": request.GET.get(
+                    "release_date_from",
+                    saved_rules["release_date_from"],
+                ),
+                "release_date_to": request.GET.get(
+                    "release_date_to",
+                    saved_rules["release_date_to"],
+                ),
+                "date_added_from": request.GET.get(
+                    "date_added_from",
+                    saved_rules["date_added_from"],
+                ),
+                "date_added_to": request.GET.get(
+                    "date_added_to",
+                    saved_rules["date_added_to"],
+                ),
                 "source": request.GET.get("source", saved_rules["source"]),
                 "language": request.GET.get("language", saved_rules["language"]),
                 "country": request.GET.get("country", saved_rules["country"]),
                 "platform": request.GET.get("platform", saved_rules["platform"]),
                 "origin": request.GET.get("origin", saved_rules["origin"]),
                 "format": request.GET.get("format", saved_rules["format"]),
+                "author": request.GET.get("author", saved_rules["author"]),
                 "tag": request.GET.get("tag", saved_rules["tag"]),
                 "tag_exclude": request.GET.get("tag_exclude", saved_rules["tag_exclude"]),
                 "search": request.GET.get("q", saved_rules["search"]),
+                "sort": request.GET.get("sort", saved_rules["sort"]),
+                "sort_direction": request.GET.get("direction", saved_rules["sort_direction"]),
             },
             custom_list.owner,
         )
@@ -694,15 +723,23 @@ def _smart_list_detail_response(
         [
             active_rules.get("status") not in {"", "all"},
             active_rules.get("rating") not in {"", "all"},
+            active_rules.get("rating_min"),
+            active_rules.get("rating_max"),
             active_rules.get("collection") not in {"", "all"},
             active_rules.get("genre"),
+            active_rules.get("implied_genre"),
             active_rules.get("year"),
             active_rules.get("release") not in {"", "all"},
+            active_rules.get("release_date_from"),
+            active_rules.get("release_date_to"),
+            active_rules.get("date_added_from"),
+            active_rules.get("date_added_to"),
             active_rules.get("source"),
             active_rules.get("language"),
             active_rules.get("country"),
             active_rules.get("platform"),
             active_rules.get("origin"),
+            active_rules.get("author"),
             active_rules.get("search"),
         ],
     )

@@ -840,6 +840,92 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Artist One</a> &", html=False)
         self.assertContains(response, "Artist Two</a>", html=False)
 
+    @patch("app.services.music_scrobble.is_incomplete_album", return_value=False)
+    @patch("app.services.music_scrobble.dedupe_artist_albums")
+    def test_music_album_details_exposes_direct_and_implied_genres_in_tag_preview(
+        self,
+        _mock_dedupe_artist_albums,
+        _mock_is_incomplete_album,
+    ):
+        artist = Artist.objects.create(name="Genre Artist")
+        album = Album.objects.create(
+            title="Genre Album",
+            artist=artist,
+            tracks_populated=True,
+            genres=["Art Rock"],
+            implied_genres=["Rock"],
+        )
+        detail_item = Item.objects.create(
+            media_id=f"album-{album.id}",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title=album.title,
+            genres=["Art Rock"],
+            implied_genres=["Rock"],
+            image="http://example.com/album.jpg",
+        )
+        tag = Tag.objects.create(user=self.user, name="Favorite")
+        ItemTag.objects.create(item=detail_item, tag=tag)
+
+        response = self.client.get(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "genre-artist",
+                    "album_id": album.id,
+                    "album_slug": "genre-album",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sections = response.context["detail_tag_sections"]
+        section_titles = [section["title"] for section in sections]
+        self.assertEqual(section_titles, ["Genres", "Implied Genres", "Tags"])
+        self.assertEqual(sections[0]["entries"][0]["label"], "Art Rock")
+        self.assertEqual(sections[1]["entries"][0]["label"], "Rock")
+        self.assertEqual(sections[2]["entries"][0]["label"], "Favorite")
+        self.assertContains(response, 'title="Manage tags"', html=False)
+        self.assertContains(response, 'title="Add to custom lists"', html=False)
+
+    @patch("app.services.music_scrobble.is_incomplete_album", return_value=False)
+    @patch("app.services.music_scrobble.dedupe_artist_albums")
+    def test_music_album_details_shows_empty_tags_section_without_album_item(
+        self,
+        _mock_dedupe_artist_albums,
+        _mock_is_incomplete_album,
+    ):
+        artist = Artist.objects.create(name="Genre Artist")
+        album = Album.objects.create(
+            title="Genre Album",
+            artist=artist,
+            tracks_populated=True,
+            genres=["Art Rock"],
+            implied_genres=["Rock"],
+        )
+
+        response = self.client.get(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "genre-artist",
+                    "album_id": album.id,
+                    "album_slug": "genre-album",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sections = response.context["detail_tag_sections"]
+        self.assertEqual(
+            [section["title"] for section in sections],
+            ["Genres", "Implied Genres", "Tags"],
+        )
+        self.assertEqual(sections[2]["entries"], [])
+        self.assertEqual(sections[2]["empty_label"], "Click to add tags")
+
     @patch("app.providers.musicbrainz.get_release")
     @patch("app.services.music_scrobble.is_incomplete_album", return_value=False)
     @patch("app.services.music_scrobble.dedupe_artist_albums")

@@ -118,6 +118,13 @@ class MediaManager(models.Manager):
                 "genres",
                 _normalize_media_list_filter_value(genre),
             )
+        implied_genre = str(filters.get("implied_genre") or "").strip()
+        if implied_genre and media_type == MediaTypes.MUSIC.value:
+            queryset = _filter_queryset_by_item_json_array_ci(
+                queryset,
+                "implied_genres",
+                _normalize_media_list_filter_value(implied_genre),
+            )
 
         year = str(filters.get("year") or "").strip()
         if year:
@@ -1687,5 +1694,4 @@ class MediaManager(models.Manager):
             params["user"] = user
 
         return params
-
 
