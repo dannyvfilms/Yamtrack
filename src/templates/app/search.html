@@ -153,11 +153,11 @@
                       {% endif %}
                     </div>
                     <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-1">
-                      {% if tracker.album.artist %}{{ tracker.album.artist.name }}{% endif %}
-                      {% if tracker.album.release_date %}
-                        {% if tracker.album.artist %} • {% endif %}
-                        {{ tracker.album.release_date|date:"Y" }}
-                      {% endif %}
+                      {% with credits=tracker.album.artist_credits.all %}
+                        {% if credits %}{% for credit in credits %}{{ credit.artist.name }}{{ credit.join_phrase|music_artist_join_phrase }}{% endfor %}
+                        {% elif tracker.album.artist %}{{ tracker.album.artist.name }}{% endif %}
+                        {% if tracker.album.release_date %}{% if credits or tracker.album.artist %} • {% endif %}{{ tracker.album.release_date|date:"Y" }}{% endif %}
+                      {% endwith %}
                     </p>
                   </div>
 

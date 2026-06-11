@@ -188,6 +188,7 @@ def media_search(request):
                         | Q(album__artist__name__icontains=query),
                     )
                     .select_related("album", "album__artist")
+                    .prefetch_related("album__artist_credits__artist")
                 )
                 local_music_albums_total = album_trackers.count()
                 local_music_albums = list(album_trackers.order_by("album__title")[:local_results_limit])

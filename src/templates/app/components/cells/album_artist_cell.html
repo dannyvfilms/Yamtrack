@@ -1,8 +1,14 @@
 {% load app_tags %}
-{% if media.album.artist %}
-  <a href="{{ media.album.artist|music_artist_url }}"
-     hx-boost="true"
-     class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.album.artist.name }}</a>
-{% else %}
-  <span class="text-gray-500">-</span>
-{% endif %}
+{% with credits=media.album.artist_credits.all %}
+  {% if credits %}
+    {% for credit in credits %}<a href="{{ credit.artist|music_artist_url }}"
+       hx-boost="true"
+       class="hover:text-indigo-400 transition-colors line-clamp-1">{{ credit.artist.name }}</a>{{ credit.join_phrase|music_artist_join_phrase }}{% endfor %}
+  {% elif media.album.artist %}
+    <a href="{{ media.album.artist|music_artist_url }}"
+       hx-boost="true"
+       class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.album.artist.name }}</a>
+  {% else %}
+    <span class="text-gray-500">-</span>
+  {% endif %}
+{% endwith %}

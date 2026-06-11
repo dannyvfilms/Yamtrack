@@ -926,7 +926,6 @@ def sync_artist_discography(artist: Artist, force: bool = False) -> int:
                     "release_date": release_date,
                     "release_type": album_data.get("release_type", ""),
                 },
-                create_defaults={"image": ""},
             )
             # Reset IMG_NONE sentinel so re-synced albums rejoin the prefetch queue
             if not created and album.image == settings.IMG_NONE:
@@ -1118,7 +1117,7 @@ def merge_album_records(source_album: Album, target_album: Album) -> Album:
         _sync_album_music_item_genres(target_album)
 
     for credit in source_album.artist_credits.select_related("artist"):
-        AlbumArtist.objects.get_or_create(
+        obj, created = AlbumArtist.objects.get_or_create(
             album=target_album,
             artist=credit.artist,
             defaults={
@@ -1126,6 +1125,9 @@ def merge_album_records(source_album: Album, target_album: Album) -> Album:
                 "join_phrase": credit.join_phrase,
             },
         )
+        if not created and credit.join_phrase and not obj.join_phrase:
+            obj.join_phrase = credit.join_phrase
+            obj.save(update_fields=["join_phrase"])
 
     for tracker in AlbumTracker.objects.filter(album=source_album):
         existing = AlbumTracker.objects.filter(

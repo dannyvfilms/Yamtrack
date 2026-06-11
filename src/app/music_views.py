@@ -1028,7 +1028,11 @@ def create_album_from_search(request, musicbrainz_release_id):
                 )
             logger.info("Created album %s from MusicBrainz", album.title)
     else:
-        if not album.artist_credits.exists() and album.artist:
+        if artist_credits:
+            from app.services import music as sync_services
+
+            sync_services.sync_album_artist_credits(album, release_data)
+        elif not album.artist_credits.exists() and album.artist:
             from app.models import AlbumArtist
 
             AlbumArtist.objects.get_or_create(

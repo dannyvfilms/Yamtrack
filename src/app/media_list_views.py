@@ -1632,6 +1632,7 @@ def media_list(request, media_type):
             album_trackers = (
                 AlbumTracker.objects.filter(user=request.user)
                 .select_related("album", "album__artist")
+                .prefetch_related("album__artist_credits__artist")
             )
 
             if status_filter and status_filter != MediaStatusChoices.ALL:
