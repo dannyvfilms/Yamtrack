@@ -40,9 +40,6 @@ from integrations.plex_watchlist import WATCHLIST_SYNC_INTERVAL_MINUTES, WATCHLI
 from integrations.gpodder_api import GPodderAuthError, GPodderClientError
 from integrations.pocketcasts_api import PocketCastsAuthError
 from integrations.imports.audiobookshelf import AudiobookshelfAuthError, AudiobookshelfClient
-from integrations.webhooks import emby, jellyfin
-from integrations.webhooks import jellyseerr as jellyseerr_webhooks
-from integrations.webhooks import plex as plex_webhooks
 
 logger = logging.getLogger(__name__)
 ARR_SYNC_INTERVAL_HOURS = 2
@@ -1633,16 +1630,13 @@ def jellyfin_webhook(request, token):
         )
         return HttpResponse(status=401)
 
-    # Attach User instance so history_user_id is populated
-    request.user = user
     data = request.body
     if not data:
         logger.warning("Missing payload in Jellyfin webhook request")
         return HttpResponse("Missing payload", status=400)
 
     payload = json.loads(data)
-    processor = jellyfin.JellyfinWebhookProcessor()
-    processor.process_payload(payload, user)
+    tasks.process_webhook.delay("jellyfin", payload, user.id)
     return HttpResponse(status=200)
 
 
@@ -1659,9 +1653,6 @@ def plex_webhook(request, token):
             token,
         )
         return HttpResponse(status=401)
-
-    # Attach User instance so history_user_id is populated
-    request.user = user
 
     # https://support.plex.tv/hc/en-us/articles/115002267687-Webhooks
     # As stated above, the payload is sent in JSON format inside a multipart
@@ -1683,18 +1674,8 @@ def plex_webhook(request, token):
 
     event_type = payload.get("event")
     logger.info("Received Plex webhook request - Event: %s, User: %s", event_type, user.username)
-    
-    processor = plex_webhooks.PlexWebhookProcessor()
-    try:
-        processor.process_payload(payload, user)
-    except Exception:  # pragma: no cover - defensive
-        logger.exception("Error processing Plex webhook payload")
-        user.mark_plex_webhook_error(
-            "Plex webhook processing failed. Check server logs for details.",
-        )
-        return HttpResponse("Webhook processing failed", status=500)
 
-    user.mark_plex_webhook_received()
+    tasks.process_webhook.delay("plex", payload, user.id)
     return HttpResponse(status=200)
 
 
@@ -1712,9 +1693,6 @@ def emby_webhook(request, token):
         )
         return HttpResponse(status=401)
 
-    # Attach User instance so history_user_id is populated
-    request.user = user
-
     # The payload is sent in JSON format inside a multipart
     # HTTP POST request.
 
@@ -1724,8 +1702,7 @@ def emby_webhook(request, token):
         return HttpResponse("Missing payload", status=400)
 
     payload = json.loads(data)
-    processor = emby.EmbyWebhookProcessor()
-    processor.process_payload(payload, user)
+    tasks.process_webhook.delay("emby", payload, user.id)
     return HttpResponse(status=200)
 
 @login_not_required
@@ -1742,9 +1719,6 @@ def jellyseerr_webhook(request, token):
         )
         return HttpResponse(status=401)
 
-    # Attach User instance so history_user_id is populated consistently
-    request.user = user
-
     data = request.body
     if not data:
         logger.warning("Missing payload in Jellyseerr webhook request")
@@ -1756,6 +1730,5 @@ def jellyseerr_webhook(request, token):
         logger.warning("Invalid JSON payload in Jellyseerr webhook request")
         return HttpResponse("Invalid JSON", status=400)
 
-    processor = jellyseerr_webhooks.JellyseerrWebhookProcessor()
-    processor.process_payload(payload, user)
+    tasks.process_webhook.delay("jellyseerr", payload, user.id)
     return HttpResponse(status=200)
