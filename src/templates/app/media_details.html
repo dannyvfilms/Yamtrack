@@ -562,21 +562,22 @@
               {% include "app/icons/history.svg" with classes="w-4 h-4" %}
             </a>
 
-            <button type="button"
-                    title="Sync metadata with provider"
-                    class="inline-flex h-11 w-full flex-1 items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer disabled:opacity-75 sm:size-11 sm:w-11 sm:flex-none"
-                    hx-post="{% media_view_url 'sync_metadata' media %}"
-                    hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                    hx-vals='{"next": "{{ request.get_full_path|urlencode }}"}'
-                    hx-target="body"
-                    hx-swap="none"
-                    x-data="{ loading: false }"
-                    @click="loading = true"
-                    :disabled="loading">
-              <div :class="{ 'animate-spin': loading }">
-                {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4" %}
-              </div>
-            </button>
+            <form method="post"
+                  action="{% media_view_url 'sync_metadata' media %}"
+                  class="flex-1 sm:flex-none"
+                  x-data="{ loading: false }"
+                  @submit="loading = true">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <button type="submit"
+                      title="Sync metadata with provider"
+                      class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer disabled:opacity-75 sm:size-11 sm:w-11"
+                      :disabled="loading">
+                <div :class="{ 'animate-spin': loading }">
+                  {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4" %}
+                </div>
+              </button>
+            </form>
           </div>
         {% if activity_subtitle or media.score_count is not None or trakt_score or user_medias and current_instance %}
             </div>

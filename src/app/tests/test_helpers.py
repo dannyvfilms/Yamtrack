@@ -66,6 +66,25 @@ class HelpersTest(TestCase):
         mock_redirect.assert_called_once_with("home")
         self.assertEqual(result, "home_redirect")
 
+    @patch("app.helpers.url_has_allowed_host_and_scheme")
+    @patch("app.helpers.HttpResponseRedirect")
+    @patch("app.helpers.redirect")
+    def test_redirect_back_uses_post_next(self, _, mock_http_redirect, mock_url_check):
+        """Test redirect_back with a POST-backed 'next' parameter."""
+        mock_url_check.return_value = True
+        mock_http_redirect.return_value = "redirected"
+
+        request = MagicMock()
+        request.GET = {}
+        request.POST = {"next": "/details/tmdb/movie/118340/guardians-of-the-galaxy?page=2"}
+
+        result = redirect_back(request)
+
+        mock_http_redirect.assert_called_once_with(
+            "/details/tmdb/movie/118340/guardians-of-the-galaxy",
+        )
+        self.assertEqual(result, "redirected")
+
     def test_normalize_navigation_url_decodes_encoded_query_separators(self):
         """Navigation URLs from modal forms should restore their query separators."""
         self.assertEqual(

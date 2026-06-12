@@ -92,7 +92,9 @@ def get_tmdb_backdrop_image(media_type, media_id):
 
 def redirect_back(request):
     """Redirect to the previous page, removing the 'page' parameter if present."""
-    next_url = normalize_navigation_url(request.GET.get("next"))
+    next_url = normalize_navigation_url(
+        request.GET.get("next") or request.POST.get("next"),
+    )
     if url_has_allowed_host_and_scheme(next_url, None):
 
         # Parse the URL
