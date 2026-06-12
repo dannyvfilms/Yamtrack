@@ -36,8 +36,8 @@ EPISODES_PER_SEASON = 5
 # Query budgets. Exact counts are pinned so regressions fail loudly;
 # update deliberately when page behavior changes.
 HOME_PAGE_MAX_QUERIES = 106
-TV_LIST_RUNTIME_SORT_MAX_QUERIES = 64
-TV_LIST_TABLE_PAGE_MAX_QUERIES = 61
+TV_LIST_RUNTIME_SORT_MAX_QUERIES = 35
+TV_LIST_TABLE_PAGE_MAX_QUERIES = 32
 
 
 def seed_tv_library(user, show_count=SHOW_COUNT):

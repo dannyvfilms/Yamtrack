@@ -45,6 +45,7 @@ from app.models import (
     Sources,
     Status,
     Tag,
+    prefill_episode_runtime_index,
     Track,
 )
 from app.search_views import _mark_grouped_anime_route
@@ -1231,6 +1232,7 @@ def media_list(request, media_type):
             _tracked_media_entries(media_list),
             media_type,
         )
+        prefill_episode_runtime_index(media_list)
         media_list = sort_media_items_by_runtime(media_list, direction)
     if sort_filter == "plays" and media_type in plays_media_types:
         media_list = sort_media_items_by_plays(media_list, direction)
@@ -1239,6 +1241,7 @@ def media_list(request, media_type):
             _tracked_media_entries(media_list),
             media_type,
         )
+        prefill_episode_runtime_index(media_list)
         media_list = sort_media_items_by_time_watched(media_list, direction)
     if sort_filter == "time_to_beat" and media_type == MediaTypes.GAME.value:
         media_list = sort_media_items_by_game_time_to_beat(media_list, direction)
@@ -1381,6 +1384,9 @@ def media_list(request, media_type):
             _tracked_media_entries(media_page.object_list),
             media_type,
         )
+        # Table runtime/time-watched cells read total_runtime_minutes per row;
+        # prefill so the page renders with one episode-runtime query.
+        prefill_episode_runtime_index(media_page.object_list)
 
     if media_type in author_media_types:
         annotate_media_authors(media_page.object_list)

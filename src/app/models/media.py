@@ -238,6 +238,22 @@ class Media(models.Model):
             return aggregated_progress
         return self.progress or 0
 
+    def _episode_runtime_entries(self):
+        """Return {season_number: [(episode_number, runtime), ...]} for this show.
+
+        Uses the index prefilled by prefill_episode_runtime_index when present
+        (bulk pages); otherwise fetches the whole show in one query and
+        memoizes it, so detail pages issue one query instead of one per season.
+        """
+        index = getattr(self, "_episode_runtime_index", None)
+        if index is None:
+            from app.models.episode_runtimes import build_episode_runtime_index
+
+            key = (self.item.media_id, self.item.source)
+            index = build_episode_runtime_index({key}).get(key, {})
+            self._episode_runtime_index = index
+        return index
+
     def _calc_total_runtime_from_items(self, total_episodes):
         """Estimate full released runtime from stored episode runtimes when possible."""
         if not total_episodes or total_episodes <= 0:
@@ -248,23 +264,17 @@ class Media(models.Model):
             if not breakdown:
                 return None
 
+            season_episodes = self._episode_runtime_entries()
             total_runtime = 0
             episodes_with_data = 0
             for season_num in sorted(breakdown.keys()):
                 released_episode_count = breakdown[season_num]
-                season_runtimes = list(
-                    Item.objects.filter(
-                        media_id=self.item.media_id,
-                        source=self.item.source,
-                        media_type=MediaTypes.EPISODE.value,
-                        season_number=season_num,
-                        episode_number__lte=released_episode_count,
-                        runtime_minutes__isnull=False,
-                    )
-                    .exclude(runtime_minutes=999999)
-                    .exclude(runtime_minutes=999998)
-                    .values_list("runtime_minutes", flat=True),
-                )
+                season_runtimes = [
+                    runtime
+                    for episode_number, runtime in season_episodes.get(season_num, ())
+                    if episode_number is not None
+                    and episode_number <= released_episode_count
+                ]
                 if season_runtimes:
                     total_runtime += sum(season_runtimes)
                     episodes_with_data += len(season_runtimes)
@@ -280,18 +290,12 @@ class Media(models.Model):
         if self.item.media_type != MediaTypes.ANIME.value:
             return None
 
-        episode_runtimes = list(
-            Item.objects.filter(
-                media_id=self.item.media_id,
-                source=self.item.source,
-                media_type=MediaTypes.EPISODE.value,
-                episode_number__lte=total_episodes,
-                runtime_minutes__isnull=False,
-            )
-            .exclude(runtime_minutes=999999)
-            .exclude(runtime_minutes=999998)
-            .values_list("runtime_minutes", flat=True),
-        )
+        episode_runtimes = [
+            runtime
+            for season_entries in self._episode_runtime_entries().values()
+            for episode_number, runtime in season_entries
+            if episode_number is not None and episode_number <= total_episodes
+        ]
         if not episode_runtimes:
             return None
         if len(episode_runtimes) == total_episodes:

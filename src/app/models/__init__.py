@@ -24,6 +24,10 @@ from app.models.discovery import (
     ItemTag,
     Tag,
 )
+from app.models.episode_runtimes import (
+    build_episode_runtime_index,
+    prefill_episode_runtime_index,
+)
 from app.models.item import Item
 from app.models.manager import MediaManager
 from app.models.media import (
@@ -115,4 +119,6 @@ __all__ = [
     "TV",
     "Tag",
     "Track",
+    "build_episode_runtime_index",
+    "prefill_episode_runtime_index",
 ]
