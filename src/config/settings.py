@@ -1045,6 +1045,12 @@ CELERY_TASK_ROUTES = {
     # are never blocked behind long-running background tasks.
     "app.tasks.refresh_statistics_cache_task": {"queue": "interactive"},
     "app.tasks.refresh_history_cache_task": {"queue": "interactive"},
+    # Webhook scrobbles must land right after a play finishes, so they run on the
+    # interactive worker at top priority — never behind imports or backfills.
+    "Process media server webhook": {
+        "queue": "interactive",
+        "priority": CELERY_TASK_PRIORITY_INTERACTIVE,
+    },
 }
 
 

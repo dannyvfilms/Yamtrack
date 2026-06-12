@@ -8,8 +8,9 @@ never block a web worker.
 import json
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.test import Client, TestCase
+from django.test import Client, SimpleTestCase, TestCase
 from django.urls import reverse
 from simple_history.models import HistoricalRecords
 
@@ -139,3 +140,16 @@ class ProcessWebhookTaskTests(TestCase):
         with self.assertLogs("integrations.tasks", level="WARNING") as logs:
             tasks.process_webhook("jellyfin", {"Event": "Stop"}, missing_id)
         self.assertIn("missing user", logs.output[0])
+
+
+class WebhookTaskRoutingTests(SimpleTestCase):
+    """Webhook processing must never wait behind imports or backfills."""
+
+    def test_webhook_task_routes_to_interactive_queue_at_top_priority(self):
+        """The task runs on the interactive worker with interactive priority."""
+        route = settings.CELERY_TASK_ROUTES[tasks.process_webhook.name]
+        self.assertEqual(route["queue"], "interactive")
+        self.assertEqual(
+            route["priority"],
+            settings.CELERY_TASK_PRIORITY_INTERACTIVE,
+        )
