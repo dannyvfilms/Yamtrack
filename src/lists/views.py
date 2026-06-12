@@ -900,7 +900,9 @@ def list_detail(request, list_reference):
         raise Http404(msg)
 
     if custom_list.is_smart:
-        custom_list.sync_smart_items()
+        # Render current membership now; refresh it in the background so the
+        # write-heavy sync never runs inside a GET request.
+        list_tasks.schedule_smart_list_sync(custom_list)
 
     # Determine if this is a public view (anonymous user viewing public list)
     can_edit = custom_list.user_can_edit(request.user)

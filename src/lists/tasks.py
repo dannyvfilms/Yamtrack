@@ -29,6 +29,41 @@ def sync_smart_lists_for_items_task(owner_id: int, item_ids: list) -> None:
             )
 
 
+@shared_task(name="Sync Smart List Items")
+def sync_smart_list_task(list_id: int) -> None:
+    """Sync a smart list's membership in the background."""
+    from lists.models import CustomList
+
+    try:
+        custom_list = CustomList.objects.get(pk=list_id)
+    except CustomList.DoesNotExist:
+        return
+    if not custom_list.is_smart:
+        return
+    try:
+        custom_list.sync_smart_items()
+    except Exception:
+        logger.exception("Smart list sync failed for list_id=%s", list_id)
+        raise
+
+
+def schedule_smart_list_sync(custom_list, debounce_seconds=60):
+    """Queue a background membership sync for a smart list, debounced.
+
+    Used on GET paths so list pages render the current membership without
+    blocking on the (write-heavy) sync; the result lands moments later.
+    """
+    from django.core.cache import cache
+
+    if not custom_list.is_smart:
+        return False
+    lock_key = f"smart_list_sync_scheduled:{custom_list.id}"
+    if not cache.add(lock_key, True, timeout=debounce_seconds):
+        return False
+    sync_smart_list_task.delay(custom_list.id)
+    return True
+
+
 @shared_task(name="Import Trakt Lists")
 def import_trakt_lists_task(user_id, access_token, client_id=None):
     """Celery task for importing Trakt lists asynchronously."""
