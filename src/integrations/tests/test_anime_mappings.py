@@ -11,6 +11,20 @@ from integrations.webhooks import anime_mappings
 class AnimeMappingsTests(TestCase):
     """Tests for AniBridge mapping resolution."""
 
+    def test_find_entries_for_mal_id_skips_malformed_target_descriptors(self):
+        """Reverse lookup ignores malformed target descriptors."""
+        mapping_data = {
+            "tvdb_show:74796:s17": {
+                "mal:53998": {"14-": "1-"},
+                "53998": {"14-": "1-"},
+            },
+        }
+
+        self.assertEqual(
+            anime_mappings.find_entries_for_mal_id(mapping_data, 53998),
+            [{"tvdb_id": "74796", "season_number": 17, "episode_offset": 13}],
+        )
+
     def test_fetch_mapping_data_downloads_mapping_data(self):
         """Test mapping data downloads from AniBridge."""
         mapping_data = anime_mappings.fetch_mapping_data()

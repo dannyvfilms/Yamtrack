@@ -154,7 +154,14 @@ def _get_mal_mapping(mapping_data, source_descriptor, episode_number=None):
 
 def _parse_mal_descriptor(descriptor):
     """Parse MAL ID from an AniBridge target descriptor."""
-    provider, media_id, *_ = descriptor.split(":")
+    if not isinstance(descriptor, str):
+        return None
+
+    parts = descriptor.split(":", 2)
+    if len(parts) < 2:
+        return None
+
+    provider, media_id = parts[:2]
     if provider != "mal":
         return None
     return _parse_mal_id(media_id)
