@@ -29,6 +29,35 @@ class SidebarViewTests(TestCase):
         self.assertIn(MediaTypes.MOVIE.value, response.context["media_types"])
         self.assertNotIn(MediaTypes.EPISODE.value, response.context["media_types"])
 
+    def test_sidebar_get_excludes_comic_issues(self):
+        """Sidebar settings should not expose derived comic issue navigation."""
+        response = self.client.get(reverse("sidebar"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "users/sidebar.html")
+        self.assertIn("media_types", response.context)
+        self.assertNotIn(MediaTypes.COMIC_ISSUE.value, response.context["media_types"])
+        self.assertNotContains(response, "Comic Issues")
+
+    def test_sidebar_post_updates_without_comic_issue_field(self):
+        """Sidebar POST should only save persisted user sidebar fields."""
+        self.user.tv_enabled = True
+        self.user.movie_enabled = True
+        self.user.save(update_fields=["tv_enabled", "movie_enabled"])
+
+        response = self.client.post(
+            reverse("sidebar"),
+            {
+                "media_types_checkboxes": [MediaTypes.TV.value],
+            },
+        )
+
+        self.assertRedirects(response, reverse("sidebar"))
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.tv_enabled)
+        self.assertFalse(self.user.movie_enabled)
+
     def test_sidebar_post_update_preferences(self):
         """Test POST request to update preferences."""
         self.user.tv_enabled = True

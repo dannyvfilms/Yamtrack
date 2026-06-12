@@ -85,6 +85,11 @@ AUTO_PAUSE_MEDIA_TYPES = [
     MediaTypes.COMIC.value,
     MediaTypes.COMIC_ISSUE.value,
 ]
+SIDEBAR_MEDIA_TYPES = [
+    mt.value
+    for mt in MediaTypes
+    if mt.value not in (MediaTypes.EPISODE.value, MediaTypes.COMIC_ISSUE.value)
+]
 
 
 def _normalize_auto_pause_rules(raw_rules: str, allowed_libraries: list[str]) -> list[dict]:
@@ -489,8 +494,7 @@ def test_notification(request):
 @require_http_methods(["GET", "POST"])
 def sidebar(request):
     """Render the sidebar settings page (media types visibility and UI preferences)."""
-    # Get all media types except episode
-    media_types = [mt.value for mt in MediaTypes if mt.value != MediaTypes.EPISODE.value]
+    media_types = SIDEBAR_MEDIA_TYPES
     
     if request.method == "POST":
         # Prevent demo users from updating preferences
