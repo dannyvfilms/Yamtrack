@@ -517,6 +517,15 @@ class MediaDetailsViewTests(TestCase):
                 args=[MediaTypes.COMIC_ISSUE.value, tracked_issue.id],
             ),
         )
+        self.assertContains(response, 'x-data="{ trackOpen: false }"', count=2)
+        self.assertContains(
+            response,
+            'class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"',
+        )
+        self.assertContains(
+            response,
+            'style="width: min(96vw, 72rem);"',
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_related_sections_use_mobile_card_grid_preferences(self, mock_get_metadata):
