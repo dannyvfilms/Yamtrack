@@ -1,5 +1,7 @@
 import logging
+import os
 import re
+import sys
 import time
 from difflib import SequenceMatcher
 
@@ -100,11 +102,41 @@ def get_redis_pool():
     return ConnectionPool.from_url(settings.REDIS_URL)
 
 
+def get_process_role():
+    """Return this process's role for API rate-limit partitioning.
+
+    Roles: "web" (gunicorn), "interactive" (the interactive Celery worker,
+    which handles webhook scrobbles and user-triggered rebuilds), and
+    "background" (the default Celery worker and beat). Set explicitly via
+    YAMTRACK_PROCESS_ROLE in supervisord; unlabeled celery processes fall
+    back to "background" so they can never starve interactive requests.
+    """
+    role = os.environ.get("YAMTRACK_PROCESS_ROLE", "").strip().lower()
+    if role in {"web", "interactive", "background"}:
+        return role
+    argv0 = os.path.basename(sys.argv[0]).lower() if sys.argv and sys.argv[0] else ""
+    if "celery" in argv0:
+        return "background"
+    return "web"
+
+
+PROCESS_ROLE = get_process_role()
+
 redis_pool = get_redis_pool()
 bucket_key = f"{settings.REDIS_PREFIX}_api" if settings.REDIS_PREFIX else "api"
 
+# Background workers draw from their own, smaller bucket so bulk backfills and
+# imports can never exhaust the shared per-second budget that web requests and
+# the interactive worker rely on. Per-host adapters below are in-memory (one
+# per process), so provider-specific ceilings are unaffected by this split.
+if PROCESS_ROLE == "background":
+    bucket_key = f"{bucket_key}_background"
+    _GLOBAL_PER_SECOND = 3
+else:
+    _GLOBAL_PER_SECOND = 5
+
 session = LimiterSession(
-    per_second=5,
+    per_second=_GLOBAL_PER_SECOND,
     bucket_class=RedisBucket,
     bucket_kwargs={"redis_pool": redis_pool, "bucket_name": bucket_key},
 )
