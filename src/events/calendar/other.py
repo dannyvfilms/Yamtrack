@@ -30,17 +30,25 @@ def process_other(item, events_bulk):
 
     date_key = config.get_date_key(item.media_type)
     content_number = metadata["max_progress"]
+    details = metadata["details"]
+    fallback_date_key = None
 
-    if date_key in metadata["details"] and content_number:
-        if metadata["details"][date_key]:
+    if item.media_type == MediaTypes.COMIC_ISSUE.value and not details.get(date_key):
+        fallback_date_key = "cover_date"
+
+    selected_date_key = fallback_date_key or date_key
+    selected_date_value = details.get(selected_date_key)
+
+    if selected_date_key in details and content_number:
+        if selected_date_value:
             try:
-                content_datetime = date_parser(metadata["details"][date_key])
+                content_datetime = date_parser(selected_date_value)
             except ValueError:
                 logger.warning(
                     "Invalid %s date for %s: %s",
-                    date_key,
+                    selected_date_key,
                     item,
-                    metadata["details"][date_key],
+                    selected_date_value,
                 )
                 return
         else:
@@ -59,17 +67,17 @@ def process_other(item, events_bulk):
 
     elif (
         item.media_type == MediaTypes.GAME.value
-        and date_key in metadata["details"]
-        and metadata["details"][date_key]
+        and selected_date_key in details
+        and selected_date_value
     ):
         try:
-            content_datetime = date_parser(metadata["details"][date_key])
+            content_datetime = date_parser(selected_date_value)
         except ValueError:
             logger.warning(
                 "Invalid %s date for %s: %s",
-                date_key,
+                selected_date_key,
                 item,
-                metadata["details"][date_key],
+                selected_date_value,
             )
             return
 

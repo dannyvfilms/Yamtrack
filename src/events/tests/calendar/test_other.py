@@ -51,6 +51,33 @@ class CalendarOtherTests(CalendarFixturesMixin, TestCase):
         self.assertEqual(events_bulk[0].datetime, date_parser("1949-06-08"))
 
     @patch("events.calendar.other.services.get_media_metadata")
+    def test_process_other_comic_issue_prefers_store_date(self, mock_get_media_metadata):
+        """Comic issues should use store_date before cover_date."""
+        comic_issue_item = Item.objects.create(
+            media_id="114214",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC_ISSUE.value,
+            title="Lobster Johnson: The Iron Prometheus #1",
+            image="http://example.com/issue.jpg",
+        )
+
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "details": {
+                "store_date": "2024-10-23",
+                "cover_date": "2024-11-01",
+            },
+        }
+
+        events_bulk = []
+        process_other(comic_issue_item, events_bulk)
+
+        self.assertEqual(len(events_bulk), 1)
+        self.assertEqual(events_bulk[0].item, comic_issue_item)
+        self.assertEqual(events_bulk[0].content_number, 1)
+        self.assertEqual(events_bulk[0].datetime, date_parser("2024-10-23"))
+
+    @patch("events.calendar.other.services.get_media_metadata")
     def test_process_other_manga(self, mock_get_media_metadata):
         """Test process_other for manga."""
         mock_get_media_metadata.return_value = {
