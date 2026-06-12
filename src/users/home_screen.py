@@ -16,7 +16,15 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.helpers import is_caught_up_media
-from app.models import BasicMedia, Episode, Item, MediaTypes, Sources, Status
+from app.models import (
+    BasicMedia,
+    Episode,
+    Item,
+    MediaTypes,
+    Sources,
+    Status,
+    prefill_episode_runtime_index,
+)
 from app.templatetags import app_tags
 from lists import smart_rules
 from lists.models import CustomList
@@ -1672,12 +1680,14 @@ def sort_home_entries(entries: list[HomeRowEntry], sort_by: str, direction: str)
     if sort_by == MediaSortChoices.PROGRESS:
         return _sort_numeric(entries, _entry_progress, direction)
     if sort_by == MediaSortChoices.RUNTIME:
+        prefill_episode_runtime_index([_entry_media(entry) for entry in entries if _entry_media(entry) is not None])
         return _sort_numeric(entries, lambda entry: _coerce_numeric(getattr(_entry_media(entry), "total_runtime_minutes", None)), direction)
     if sort_by == MediaSortChoices.TIME_TO_BEAT:
         return _sort_numeric(entries, lambda entry: _coerce_numeric(getattr(entry.item, "game_time_to_beat_minutes", None)), direction)
     if sort_by == MediaSortChoices.PLAYS:
         return _sort_numeric(entries, _entry_progress, direction)
     if sort_by == MediaSortChoices.TIME_WATCHED:
+        prefill_episode_runtime_index([_entry_media(entry) for entry in entries if _entry_media(entry) is not None])
         return _sort_numeric(entries, lambda entry: _coerce_numeric(getattr(_entry_media(entry), "time_watched_minutes", None)), direction)
     if sort_by == MediaSortChoices.RELEASE_DATE:
         return _sort_numeric(entries, _entry_release_timestamp, direction)
