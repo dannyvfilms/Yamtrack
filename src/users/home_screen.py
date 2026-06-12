@@ -1758,7 +1758,11 @@ def _custom_list_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
     if not custom_list:
         return []
     if custom_list.is_smart:
-        custom_list.sync_smart_items()
+        # Render current membership now; refresh it in the background so the
+        # write-heavy sync never runs inside a GET request.
+        from lists.tasks import schedule_smart_list_sync  # noqa: PLC0415
+
+        schedule_smart_list_sync(custom_list)
         items = list(custom_list.get_smart_items_queryset())
     else:
         items = list(
