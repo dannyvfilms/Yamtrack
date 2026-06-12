@@ -127,7 +127,14 @@ def _collect_reading_activity_day_keys(entries):
 
 def media_list(request, media_type):
     """Return the media list page."""
-    previous_sort = getattr(request.user, f"{media_type}_sort")
+    route_media_type = media_type
+    comic_subview = None
+    if route_media_type == MediaTypes.COMIC.value:
+        comic_subview = request.GET.get("subview", "comics")
+        if comic_subview not in {"comics", "issues"}:
+            comic_subview = "comics"
+
+    previous_sort = getattr(request.user, f"{route_media_type}_sort")
     sorted_media_sort_choices = sorted(
         MediaSortChoices.choices,
         key=lambda choice: str(choice[1]).lower(),
@@ -174,64 +181,70 @@ def media_list(request, media_type):
         MediaTypes.ANIME.value,
     }
     layout = request.user.update_preference(
-        f"{media_type}_layout",
+        f"{route_media_type}_layout",
         request.GET.get("layout"),
     )
     sort_filter = request.user.update_preference(
-        f"{media_type}_sort",
+        f"{route_media_type}_sort",
         request.GET.get("sort"),
     )
     direction_param = request.GET.get("direction")
-    direction_field = f"{media_type}_direction"
+    direction_field = f"{route_media_type}_direction"
 
     # Enforce media-type-specific sort options.
-    if sort_filter == "time_left" and media_type != MediaTypes.TV.value:
+    effective_media_type = (
+        MediaTypes.COMIC_ISSUE.value
+        if route_media_type == MediaTypes.COMIC.value and comic_subview == "issues"
+        else route_media_type
+    )
+
+    if sort_filter == "time_left" and effective_media_type != MediaTypes.TV.value:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
-    elif sort_filter == "runtime" and media_type not in runtime_media_types:
+    elif sort_filter == "runtime" and effective_media_type not in runtime_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
-    elif sort_filter == "time_to_beat" and media_type != MediaTypes.GAME.value:
+    elif sort_filter == "time_to_beat" and effective_media_type != MediaTypes.GAME.value:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
-    elif sort_filter == "plays" and media_type not in plays_media_types:
+    elif sort_filter == "plays" and effective_media_type not in plays_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
-    elif sort_filter == "time_watched" and media_type not in runtime_media_types:
+    elif sort_filter == "time_watched" and effective_media_type not in runtime_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
-    elif sort_filter == "next_episode_air_date" and media_type not in next_episode_air_date_media_types:
+    elif sort_filter == "next_episode_air_date" and effective_media_type not in next_episode_air_date_media_types:
         sort_filter = "title"  # Default fallback
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         direction_param = None
-    elif sort_filter == "author" and media_type not in author_media_types:
+    elif sort_filter == "author" and effective_media_type not in author_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
-    elif sort_filter == "critic_rating" and media_type not in critic_rating_media_types:
+    elif sort_filter == "critic_rating" and effective_media_type not in critic_rating_media_types:
         sort_filter = "title"
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         direction_param = None
-    elif sort_filter == "popularity" and media_type not in popularity_media_types:
+    elif sort_filter == "popularity" and effective_media_type not in popularity_media_types:
         sort_filter = "title"
-        request.user.update_preference(f"{media_type}_sort", "title")
+        request.user.update_preference(f"{route_media_type}_sort", "title")
         direction_param = None
 
     # Resolve and persist sort direction with the same preference flow as sort
@@ -245,17 +258,23 @@ def media_list(request, media_type):
         else:
             direction = BasicMedia.objects.resolve_direction(sort_filter, direction_pref)
         request.user.update_preference(direction_field, direction)
+    media_type = effective_media_type
+
     supports_untracked_status_filter = media_type not in {
         MediaTypes.MUSIC.value,
         MediaTypes.PODCAST.value,
     }
     raw_status_filter = request.GET.get("status")
     valid_statuses = {choice[0] for choice in MediaStatusChoices.choices}
-    persisted_status_filter = getattr(request.user, f"{media_type}_status", MediaStatusChoices.ALL)
+    persisted_status_filter = getattr(
+        request.user,
+        f"{route_media_type}_status",
+        MediaStatusChoices.ALL,
+    )
 
     if raw_status_filter in valid_statuses:
         status_filter = request.user.update_preference(
-            f"{media_type}_status",
+            f"{route_media_type}_status",
             raw_status_filter,
         )
     elif raw_status_filter is None:
@@ -1387,7 +1406,7 @@ def media_list(request, media_type):
 
     context = {
         "user": request.user,
-        "media_type": media_type,
+        "media_type": route_media_type,
         "media_type_plural": app_tags.media_type_readable_plural(media_type).lower(),
         "media_list": media_page,
         "current_layout": layout,
@@ -1419,6 +1438,8 @@ def media_list(request, media_type):
         "is_album_list": False,
         "supports_critic_rating_sort": media_type in critic_rating_media_types,
     }
+    if comic_subview:
+        context["current_subview"] = comic_subview
 
     # For music, show tracked artists instead of individual tracks
     # For podcasts, show tracked shows instead of individual episodes

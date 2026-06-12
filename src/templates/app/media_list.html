@@ -257,6 +257,8 @@
       <input type="hidden" name="layout" x-model="layout">
       {% if media_type == 'music' %}
         <input type="hidden" name="subview" value="{{ current_subview|default:'artists' }}">
+      {% elif media_type == 'comic' %}
+        <input type="hidden" name="subview" value="{{ current_subview|default:'comics' }}">
       {% endif %}
     </form>
 
@@ -305,13 +307,19 @@
                 <span class="ml-auto text-xs text-gray-500" x-show="filterLabel() === 'All'">Active</span>
               </button>
 
-              {% if media_type == 'music' %}
+              {% if media_type == 'music' or media_type == 'comic' %}
                 <div class="border-t border-gray-700 my-1"></div>
                 <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
-                        @click="view = 'musicType'"
+                        @click="view = 'mediaType'"
                         type="button">
                   <span class="flex-shrink-0 mr-3">Media Type</span>
-                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]">{{ current_subview|default:'artists'|title }}</span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]">
+                    {% if media_type == 'music' %}
+                      {{ current_subview|default:'artists'|title }}
+                    {% else %}
+                      {{ current_subview|default:'comics'|title }}
+                    {% endif %}
+                  </span>
                   <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
                 </button>
               {% endif %}
@@ -472,7 +480,7 @@
               {% endif %}
             </div>
 
-            <div x-show="view === 'musicType'" x-cloak>
+            <div x-show="view === 'mediaType'" x-cloak>
               <div class="flex items-center gap-2 px-4 py-2 border-b border-gray-700">
                 <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
                         @click="view = 'root'"
@@ -481,27 +489,44 @@
                 </button>
                 <div class="text-xs uppercase tracking-wide text-gray-300">Media Type</div>
               </div>
-              <a href="{% url 'medialist' media_type %}?subview=artists"
-                 class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
-                <span>Artists</span>
-                {% if current_subview == 'artists' or not current_subview %}
-                  <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
-                {% endif %}
-              </a>
-              <a href="{% url 'medialist' media_type %}?subview=albums"
-                 class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
-                <span>Albums</span>
-                {% if current_subview == 'albums' %}
-                  <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
-                {% endif %}
-              </a>
-              <a href="{% url 'medialist' media_type %}?subview=tracks"
-                 class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
-                <span>Tracks</span>
-                {% if current_subview == 'tracks' %}
-                  <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
-                {% endif %}
-              </a>
+              {% if media_type == 'music' %}
+                <a href="{% url 'medialist' media_type %}?subview=artists"
+                   class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+                  <span>Artists</span>
+                  {% if current_subview == 'artists' or not current_subview %}
+                    <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+                  {% endif %}
+                </a>
+                <a href="{% url 'medialist' media_type %}?subview=albums"
+                   class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+                  <span>Albums</span>
+                  {% if current_subview == 'albums' %}
+                    <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+                  {% endif %}
+                </a>
+                <a href="{% url 'medialist' media_type %}?subview=tracks"
+                   class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+                  <span>Tracks</span>
+                  {% if current_subview == 'tracks' %}
+                    <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+                  {% endif %}
+                </a>
+              {% elif media_type == 'comic' %}
+                <a href="{% url 'medialist' media_type %}?subview=comics"
+                   class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+                  <span>Comics</span>
+                  {% if current_subview == 'comics' or not current_subview %}
+                    <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+                  {% endif %}
+                </a>
+                <a href="{% url 'medialist' media_type %}?subview=issues"
+                   class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+                  <span>Issues</span>
+                  {% if current_subview == 'issues' %}
+                    <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+                  {% endif %}
+                </a>
+              {% endif %}
             </div>
 
             <div x-show="view === 'genre'" x-cloak class="p-2">

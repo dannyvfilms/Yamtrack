@@ -16,6 +16,7 @@ from app.models import (
     ArtistTracker,
     Book,
     Comic,
+    ComicIssue,
     CollectionEntry,
     Episode,
     Game,
@@ -2275,6 +2276,53 @@ class MediaListViewTests(TestCase):
         self.assertContains(
             response,
             "layoutHref(nextLayout) { return buildMediaListHref(this.mediaListUrl, document.getElementById('filter-form'), { layout: nextLayout }); }",
+        )
+
+    def test_comic_media_list_can_switch_to_issue_subview(self):
+        """Comic media list should reuse the music-style subview switch for issues."""
+        comic_item = Item.objects.create(
+            media_id="comic-1",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Volume One",
+            image="http://example.com/comic.jpg",
+        )
+        Comic.objects.create(
+            item=comic_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=3,
+        )
+
+        issue_item = Item.objects.create(
+            media_id="issue-1",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC_ISSUE.value,
+            title="Issue One",
+            image="http://example.com/issue.jpg",
+        )
+        ComicIssue.objects.create(
+            item=issue_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.COMIC.value]) + "?subview=issues",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_subview"], "issues")
+        self.assertEqual(response.context["media_type"], MediaTypes.COMIC.value)
+        self.assertEqual(response.context["media_type_plural"], "comic issues")
+        self.assertContains(response, "?subview=comics")
+        self.assertContains(response, "?subview=issues")
+        self.assertContains(response, "Issue One")
+        self.assertNotContains(response, "Volume One")
+        self.assertEqual(
+            response.context["media_list"].object_list[0].item.media_type,
+            MediaTypes.COMIC_ISSUE.value,
         )
 
     def test_media_list_htmx_request(self):
