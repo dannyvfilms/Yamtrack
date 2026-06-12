@@ -116,7 +116,7 @@ class AppStartupTests(TestCase):
         config._schedule_history_day_coverage_warmup()
 
         mock_apply_async.assert_called_once_with(
-            countdown=120,
+            countdown=300,
             priority=settings.CELERY_TASK_PRIORITY_BACKGROUND,
         )
 

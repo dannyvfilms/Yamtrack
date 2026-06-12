@@ -18,6 +18,30 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
       4) Dropped (episodes_left may be 0 or > 0) newest end_date first
       5) Unreleased/unknown runtime at the very end
     """
+    # Pre-load all episode runtimes for every show in one query so the inner
+    # helpers can avoid per-show/per-season DB hits during the sort.
+    _all_keys = {
+        (m.item.media_id, m.item.source)
+        for m in media_list
+        if getattr(m, "item", None) is not None
+    }
+    _episode_runtime_index: dict[tuple, dict[int, dict[int, int]]] = {}
+    if _all_keys:
+        _all_media_ids = {mid for mid, _ in _all_keys}
+        _all_sources = {src for _, src in _all_keys}
+        _rows = Item.objects.filter(
+            media_type=MediaTypes.EPISODE.value,
+            media_id__in=_all_media_ids,
+            source__in=_all_sources,
+            runtime_minutes__isnull=False,
+        ).exclude(runtime_minutes__in=[999998, 999999]).values(
+            "media_id", "source", "season_number", "episode_number", "runtime_minutes",
+        )
+        for row in _rows:
+            show_key = (row["media_id"], row["source"])
+            _episode_runtime_index.setdefault(show_key, {}).setdefault(
+                row["season_number"], {}
+            )[row["episode_number"]] = row["runtime_minutes"]
 
     def _calc_unwatched_runtime_total(
         media,
@@ -56,21 +80,13 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                 watched_in_season = remaining_progress
                 remaining_progress = 0
 
-                # Query unwatched episodes in this season (episode_number > watched count)
-                unwatched_episodes = Item.objects.filter(
-                    media_id=media.item.media_id,
-                    source=media.item.source,
-                    media_type=MediaTypes.EPISODE.value,
-                    season_number=season_num,
-                    episode_number__gt=watched_in_season,
-                    runtime_minutes__isnull=False,
-                ).exclude(
-                    runtime_minutes=999999,  # Exclude placeholder for unknown runtime
-                ).exclude(
-                    runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
-                ).values_list("runtime_minutes", flat=True)
-
-                runtimes = list(unwatched_episodes)
+                show_key = (media.item.media_id, media.item.source)
+                season_ep_runtimes = _episode_runtime_index.get(show_key, {}).get(season_num, {})
+                runtimes = [
+                    rt
+                    for ep_num, rt in season_ep_runtimes.items()
+                    if ep_num > watched_in_season
+                ]
                 if runtimes:
                     total_runtime += sum(runtimes)
                     episodes_with_runtime_data += len(runtimes)
@@ -96,24 +112,19 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                 logger.debug(f"Skipping invalid runtime marker ({media.item.runtime_minutes}min) for {media.item.title}")
 
         if not runtime_minutes:
-            # SECOND: Check for episode-level runtime data from database
-            # This is the most accurate - uses actual episode runtimes that were saved when viewing season pages
-            episodes_with_runtime = Item.objects.filter(
-                media_id=media.item.media_id,
-                source=media.item.source,
-                media_type=MediaTypes.EPISODE.value,
-                runtime_minutes__isnull=False,
-            ).exclude(
-                runtime_minutes=999999,  # Exclude placeholder for unknown runtime
-            ).exclude(
-                runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
-            ).values_list("runtime_minutes", flat=True)
-
-            if episodes_with_runtime.exists():
-                # Calculate average runtime from actual episodes
-                episode_runtimes = list(episodes_with_runtime)
-                runtime_minutes = round(sum(episode_runtimes) / len(episode_runtimes))
-                logger.debug(f"Using average episode runtime for {media.item.title}: {runtime_minutes}min (from {len(episode_runtimes)} episodes)")
+            # SECOND: Check pre-loaded episode runtime index (avoids per-show DB query)
+            show_key = (media.item.media_id, media.item.source)
+            all_ep_runtimes = [
+                rt
+                for season_data in _episode_runtime_index.get(show_key, {}).values()
+                for rt in season_data.values()
+            ]
+            if all_ep_runtimes:
+                runtime_minutes = round(sum(all_ep_runtimes) / len(all_ep_runtimes))
+                logger.debug(
+                    f"Using average episode runtime for {media.item.title}: "
+                    f"{runtime_minutes}min (from {len(all_ep_runtimes)} episodes)",
+                )
 
         if not runtime_minutes:
             # THIRD: Check cached season data (avg_runtime field from season metadata)

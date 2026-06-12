@@ -412,8 +412,8 @@ def season_details(
                 ["runtime_minutes", "provider_rating", "provider_rating_count"],
                 batch_size=100,
             )
-            # Invalidate time_left cache for all users (runtime affects time calculations)
-            from app.cache_utils import clear_time_left_cache_for_user
+            # Invalidate time_left + media_list cache for all users
+            from app.cache_utils import clear_time_left_cache_for_user, clear_media_list_cache_for_user
             # Get all users who track this show
             tracking_users = BasicMedia.objects.filter(
                 item__media_id=media_id,
@@ -422,6 +422,7 @@ def season_details(
             ).values_list("user_id", flat=True).distinct()
             for user_id in tracking_users:
                 clear_time_left_cache_for_user(user_id)
+                clear_media_list_cache_for_user(user_id)
 
         # Trigger background Trakt episode ratings fetch if not yet populated
         from app.providers import trakt as _trakt_provider  # noqa: PLC0415

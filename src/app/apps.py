@@ -128,7 +128,7 @@ class AppConfig(AppConfig):
         try:
             tasks = import_module("app.tasks")
             tasks.warm_history_day_cache_coverage.apply_async(
-                countdown=120,
+                countdown=300,
                 priority=getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1),
             )
             logger.info("Scheduled history day coverage warmup")

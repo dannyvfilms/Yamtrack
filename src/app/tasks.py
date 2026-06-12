@@ -168,6 +168,8 @@ NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_COUNTDOWN = 60
 DISCOVER_METADATA_REFRESH_DEBOUNCE_SECONDS = 60 * 10
 DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS = 60
 BACKGROUND_TASK_PRIORITY = getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1)
+HISTORY_COVERAGE_REPAIR_REQUEUE_SECONDS = 15
+HISTORY_COVERAGE_REPAIR_INTERACTIVE_RETRY_SECONDS = 60
 
 
 def _release_items_queryset():
@@ -555,6 +557,29 @@ def repair_history_day_cache_coverage_task(
 ):
     """Repair missing persisted history day payloads without blocking navigation."""
     repair_key = history_cache._coverage_repair_key(user_id, logging_style)
+    if interactive_request_active():
+        cache.set(
+            repair_key,
+            {
+                "started_at": timezone.now().isoformat(),
+                "batch_size": batch_size,
+                "deferred_for_interactive_request": True,
+            },
+            history_cache.HISTORY_COVERAGE_REPAIR_LOCK_TTL,
+        )
+        repair_history_day_cache_coverage_task.apply_async(
+            kwargs={
+                "user_id": user_id,
+                "logging_style": logging_style,
+                "batch_size": batch_size,
+            },
+            countdown=HISTORY_COVERAGE_REPAIR_INTERACTIVE_RETRY_SECONDS,
+            priority=BACKGROUND_TASK_PRIORITY,
+        )
+        return {
+            "skipped": True,
+            "reason": "interactive_request_active",
+        }
     result = history_cache.repair_history_day_cache_coverage(
         user_id,
         logging_style=logging_style,
@@ -575,7 +600,7 @@ def repair_history_day_cache_coverage_task(
                 "logging_style": logging_style,
                 "batch_size": batch_size,
             },
-            countdown=5,
+            countdown=HISTORY_COVERAGE_REPAIR_REQUEUE_SECONDS,
             priority=BACKGROUND_TASK_PRIORITY,
         )
     else:

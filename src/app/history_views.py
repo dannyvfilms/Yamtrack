@@ -200,6 +200,7 @@ def delete_history_record(request, media_type, history_id):
             if related_season:
                 related_season._sync_status_after_episode_change()
                 cache_utils.clear_time_left_cache_for_user(related_season.user_id)
+                cache_utils.clear_media_list_cache_for_user(related_season.user_id)
 
             try:
                 model = apps.get_model(app_label="app", model_name=media_type_lower)

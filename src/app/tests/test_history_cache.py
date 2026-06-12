@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from app import history_cache
+from app import history_cache, tasks
 from app.log_safety import stable_hmac
 from app.models import Album, Artist, Item, MediaTypes, Movie, Music, Sources, Status, Track
 
@@ -257,6 +257,59 @@ class HistoryRefreshSchedulingTests(TestCase):
         self.assertEqual(
             mock_apply_async.call_args.kwargs["priority"],
             settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+
+    @patch("app.tasks.repair_history_day_cache_coverage_task.apply_async")
+    @patch("app.tasks.interactive_request_active", return_value=True)
+    def test_repair_history_day_cache_coverage_task_defers_for_interactive_requests(
+        self,
+        _mock_interactive_request_active,
+        mock_apply_async,
+    ):
+        result = tasks.repair_history_day_cache_coverage_task(
+            self.user.id,
+            "repeats",
+            batch_size=25,
+        )
+
+        self.assertEqual(
+            result,
+            {"skipped": True, "reason": "interactive_request_active"},
+        )
+        mock_apply_async.assert_called_once_with(
+            kwargs={
+                "user_id": self.user.id,
+                "logging_style": "repeats",
+                "batch_size": 25,
+            },
+            countdown=tasks.HISTORY_COVERAGE_REPAIR_INTERACTIVE_RETRY_SECONDS,
+            priority=settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+
+    @patch("app.tasks.repair_history_day_cache_coverage_task.apply_async")
+    @patch(
+        "app.history_cache.repair_history_day_cache_coverage",
+        return_value={"remaining": 10},
+    )
+    def test_repair_history_day_cache_coverage_task_uses_slower_requeue_interval(
+        self,
+        _mock_repair_history_day_cache_coverage,
+        mock_apply_async,
+    ):
+        tasks.repair_history_day_cache_coverage_task(
+            self.user.id,
+            "repeats",
+            batch_size=25,
+        )
+
+        mock_apply_async.assert_called_once_with(
+            kwargs={
+                "user_id": self.user.id,
+                "logging_style": "repeats",
+                "batch_size": 25,
+            },
+            countdown=tasks.HISTORY_COVERAGE_REPAIR_REQUEUE_SECONDS,
+            priority=settings.CELERY_TASK_PRIORITY_BACKGROUND,
         )
 
 

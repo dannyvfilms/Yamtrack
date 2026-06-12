@@ -229,6 +229,28 @@ class HomeViewTests(TestCase):
 
         self.assertContains(response, "2026-05-12")
 
+    def test_home_view_prefills_release_years_for_known_dates(self):
+        """Known item release years should render server-side on Home rows."""
+        movie_item = Item.objects.create(
+            media_id="home-prefill-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Home Prefill Movie",
+            image="http://example.com/home-prefill-movie.jpg",
+            release_datetime=datetime(2024, 3, 15, 12, 0, tzinfo=UTC),
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        response = self.client.get(reverse("home"))
+        entry = self._get_media_entry(response, MediaTypes.MOVIE.value, "home-prefill-movie")
+
+        self.assertEqual(entry.item.display_release_year, 2024)
+        self.assertContains(response, "2024", html=False)
+
     def test_home_podcast_cards_use_standard_card_width(self):
         """Podcast Home rows should use the same card width as other media rows."""
         podcast_show = PodcastShow.objects.create(

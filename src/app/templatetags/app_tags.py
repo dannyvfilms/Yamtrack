@@ -641,6 +641,9 @@ def studio_url(studio):
 def release_year(item, media=None):
     """Return a best-effort release year from dicts or model instances."""
     if media and hasattr(media, "item"):
+        display_year = getattr(media.item, "display_release_year", None)
+        if display_year:
+            return display_year
         release_dt = getattr(media.item, "release_datetime", None)
         if release_dt:
             return timezone.localtime(release_dt).year
@@ -658,6 +661,10 @@ def release_year(item, media=None):
             return int(str(year_value)) if year_value is not None else None
         except (TypeError, ValueError):
             return None
+
+    display_year = getattr(item, "display_release_year", None)
+    if display_year:
+        return display_year
 
     release_dt = getattr(item, "release_datetime", None)
     if release_dt:

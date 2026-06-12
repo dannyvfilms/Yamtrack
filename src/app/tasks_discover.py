@@ -149,6 +149,17 @@ def warm_history_day_cache_coverage(
     logging_styles: list[str] | None = None,
 ):
     """Queue chunked history day coverage repair for active users."""
+    if interactive_request_active():
+        logger.info(
+            "warm_history_day_cache_coverage skipped reason=interactive_request_active",
+        )
+        return {
+            "scheduled": 0,
+            "users_count": 0,
+            "logging_styles": logging_styles or ["sessions", "repeats"],
+            "reason": "interactive_request_active",
+        }
+
     user_model = get_user_model()
     users = user_model.objects.filter(is_active=True)
     if user_ids:

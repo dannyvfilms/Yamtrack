@@ -29,6 +29,7 @@ from app.columns import (
 from app.discover import tab_cache as discover_tab_cache
 from app.models import Item, MediaManager, MediaTypes
 from app.providers import services
+from app.release_years import prefill_display_release_years
 from app.services import metadata_resolution
 from integrations.imports import helpers as import_helpers
 from integrations.imports import trakt as trakt_imports
@@ -693,6 +694,8 @@ def _smart_list_detail_response(
         filtered_items_count = paginator.count
         _attach_media_with_aggregation(items_page)
 
+    prefill_display_release_years(items_page)
+
     if layout == "table":
         _adapt_list_items_for_table(items_page)
 
@@ -1205,6 +1208,8 @@ def list_detail(request, list_reference):
         filtered_items_count = paginator.count
 
         _attach_media_with_aggregation(items_page)
+
+    prefill_display_release_years(items_page)
 
     if layout == "table":
         _adapt_list_items_for_table(items_page)

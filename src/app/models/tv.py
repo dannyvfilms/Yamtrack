@@ -9,6 +9,7 @@ from django.core.validators import (
 from django.db import models
 from django.db.models import Max
 from django.utils import timezone
+from django.utils.functional import cached_property
 from model_utils import FieldTracker
 from requests import RequestException
 from simple_history.models import HistoricalRecords
@@ -68,8 +69,9 @@ class TV(Media):
             self._start_next_available_season()
 
         cache_utils.clear_time_left_cache_for_user(self.user_id)
+        cache_utils.clear_media_list_cache_for_user(self.user_id)
 
-    @property
+    @cached_property
     def progress(self):
         """Return the total episodes watched for the TV show, excluding dropped seasons."""
         return sum(
@@ -79,7 +81,7 @@ class TV(Media):
             and season.status != Status.DROPPED.value
         )
 
-    @property
+    @cached_property
     def last_watched(self):
         """Return the latest watched episode in SxxExx format."""
         watched_episodes = [
@@ -104,13 +106,13 @@ class TV(Media):
 
         return f"S{latest_episode['season']:02d}E{latest_episode['episode']:02d}"
 
-    @property
+    @cached_property
     def progressed_at(self):
         """Return the date when the last attached episode was watched."""
         dates = self._season_activity_dates("progressed_at", include_specials=True)
         return max(dates) if dates else None
 
-    @property
+    @cached_property
     def start_date(self):
         """Return the first watched date, preferring main seasons over specials."""
         dates = self._season_activity_dates("start_date")
@@ -123,7 +125,7 @@ class TV(Media):
             return self.created_at
         return None
 
-    @property
+    @cached_property
     def end_date(self):
         """Return the last watched date across main seasons and specials."""
         dates = self._season_activity_dates("end_date", include_specials=True)
@@ -484,6 +486,7 @@ class Season(Media):
             self.item.fetch_releases(delay=True)
 
         cache_utils.clear_time_left_cache_for_user(self.user_id)
+        cache_utils.clear_media_list_cache_for_user(self.user_id)
 
     @property
     def progress(self):
@@ -679,6 +682,7 @@ class Season(Media):
             episode,
         )
         cache_utils.clear_time_left_cache_for_user(self.user_id)
+        cache_utils.clear_media_list_cache_for_user(self.user_id)
 
     def decrease_progress(self):
         """Unwatch the current episode of the season."""
@@ -719,6 +723,7 @@ class Season(Media):
             delattr(self, "_episode_stats_cache")
         self._sync_status_after_episode_change()
         cache_utils.clear_time_left_cache_for_user(self.user_id)
+        cache_utils.clear_media_list_cache_for_user(self.user_id)
 
     def _sync_status_after_episode_change(self):
         """Recalculate season (and TV) status using local data (no provider calls)."""

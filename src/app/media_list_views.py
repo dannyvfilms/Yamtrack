@@ -49,6 +49,7 @@ from app.models import (
     Track,
 )
 from app.search_views import _mark_grouped_anime_route
+from app.release_years import prefill_display_release_years
 from app.templatetags import app_tags
 from app.tv_sort import _sort_tv_media_by_time_left
 from users.models import MediaSortChoices, MediaStatusChoices
@@ -934,6 +935,11 @@ def media_list(request, media_type):
         MediaTypes.TV.value,
         "both",
     }
+    cache_variant = (
+        anime_library_mode
+        if media_type in {MediaTypes.ANIME.value, MediaTypes.TV.value}
+        else ""
+    )
 
     tracked_status_filter = (
         MediaStatusChoices.ALL
@@ -1078,247 +1084,432 @@ def media_list(request, media_type):
 
         return filtered_items
 
-    media_queryset = BasicMedia.objects.get_media_list(
-        user=request.user,
-        media_type=media_type,
-        status_filter=tracked_status_filter,
-        sort_filter=query_sort_filter,
-        search=search_query,
-        direction=direction,
-        list_sql_filters=list_sql_filters,
+    # Cache tracker-backed list results and filter summaries separately.
+    _use_media_list_cache = not (
+        sort_filter == "time_left" and media_type == MediaTypes.TV.value
+    )
+    _include_untracked_entries = status_filter == MEDIA_LIST_NO_STATUS
+    _media_list_cache_key = (
+        cache_utils.build_media_list_cache_key(
+            request.user.id,
+            media_type,
+            sort_filter,
+            direction,
+            status_filter,
+            search_query,
+            rating_filter,
+            progress_filter,
+            collection_filter,
+            author_filter,
+            format_filter,
+            genre_filter,
+            implied_genre_filter,
+            year_filter,
+            release_filter,
+            source_filter,
+            language_filter,
+            country_filter,
+            platform_filter,
+            origin_filter,
+            tag_filter,
+            tag_exclude_filter,
+            cache_variant,
+        )
+        if _use_media_list_cache
+        else None
+    )
+    _media_list_filter_cache_key = (
+        cache_utils.build_media_list_filter_cache_key(
+            request.user.id,
+            media_type,
+            status_filter,
+            search_query,
+            progress_filter,
+            genre_filter,
+            implied_genre_filter,
+            year_filter,
+            release_filter,
+            source_filter,
+            language_filter,
+            country_filter,
+            platform_filter,
+            author_filter,
+            format_filter,
+            tag_filter,
+            tag_exclude_filter,
+            cache_variant,
+        )
+        if _use_media_list_cache
+        else None
+    )
+    _media_list_cached = cache.get(_media_list_cache_key) if _media_list_cache_key else None
+    filter_data = (
+        cache.get(_media_list_filter_cache_key)
+        if _media_list_filter_cache_key
+        else None
     )
 
-    # Convert to list for filtering (rating and collection filters work on lists)
-    media_list = list(media_queryset)
-    if media_type in {MediaTypes.TV.value, MediaTypes.SEASON.value} and not include_grouped_anime_in_tv:
-        media_list = [
-            media
-            for media in media_list
-            if getattr(getattr(media, "item", None), "library_media_type", None)
-            != MediaTypes.ANIME.value
-        ]
-    elif media_type == MediaTypes.ANIME.value and include_grouped_anime_in_anime:
-        grouped_anime_media = list(
-            BasicMedia.objects.get_media_list(
-                user=request.user,
-                media_type=MediaTypes.TV.value,
-                status_filter=tracked_status_filter,
-                sort_filter=query_sort_filter,
-                search=search_query,
-                direction=direction,
-                list_sql_filters=list_sql_filters,
-            ),
+    if _media_list_cached is None:
+        media_queryset = BasicMedia.objects.get_media_list(
+            user=request.user,
+            media_type=media_type,
+            status_filter=tracked_status_filter,
+            sort_filter=query_sort_filter,
+            search=search_query,
+            direction=direction,
+            list_sql_filters=list_sql_filters,
         )
-        grouped_anime_media = [
-            media
-            for media in grouped_anime_media
-            if getattr(getattr(media, "item", None), "library_media_type", None)
-            == MediaTypes.ANIME.value
-        ]
-        _mark_grouped_anime_route(grouped_anime_media)
-        media_list.extend(grouped_anime_media)
 
-    tracked_item_ids = {
-        media.item_id
-        for media in media_list
-        if getattr(media, "item_id", None)
-    }
-    untracked_media_entries = []
-    if status_filter in {MediaStatusChoices.ALL, MEDIA_LIST_NO_STATUS}:
-        untracked_media_entries = _build_untracked_media_entries(tracked_item_ids)
-
-    media_list = [MediaListEntry.from_media(media) for media in media_list]
-    media_list.extend(untracked_media_entries)
-
-    media_list = apply_latest_status_filter(media_list, status_filter)
-
-    if (
-        status_filter == MEDIA_LIST_NO_STATUS
-        and media_type != MediaTypes.ANIME.value
-        and sort_filter not in {"author", "runtime", "plays", "time_watched", "time_to_beat", "time_left"}
-    ):
-        _reverse = direction == "desc"
-        _none_sentinel = -math.inf if _reverse else math.inf
-
-        def _untracked_sort_key(entry):
-            item = getattr(entry, "item", None)
-            title = (getattr(item, "title", "") or "").lower()
-            if sort_filter == "release_date":
-                val = getattr(item, "release_datetime", None)
-                return (val.timestamp() if val else _none_sentinel, title)
-            if sort_filter == "popularity":
-                val = getattr(item, "trakt_popularity_rank", None)
-                return (val if val is not None else _none_sentinel, title)
-            if sort_filter == "critic_rating":
-                val = getattr(item, "provider_rating", None)
-                return (val if val is not None else _none_sentinel, title)
-            return title
-
-        media_list = sorted(media_list, key=_untracked_sort_key, reverse=_reverse)
-
-    filter_data_source_items = media_list
-    if media_type == MediaTypes.GAME.value and platform_filter:
-        filter_sql_filters = {**list_sql_filters, "platform": ""}
-        filter_data_source_items = [
-            MediaListEntry.from_media(media)
-            for media in list(
+        # Convert to list for filtering (rating and collection filters work on lists)
+        media_list = list(media_queryset)
+        if media_type in {MediaTypes.TV.value, MediaTypes.SEASON.value} and not include_grouped_anime_in_tv:
+            media_list = [
+                media
+                for media in media_list
+                if getattr(getattr(media, "item", None), "library_media_type", None)
+                != MediaTypes.ANIME.value
+            ]
+        elif media_type == MediaTypes.ANIME.value and include_grouped_anime_in_anime:
+            grouped_anime_media = list(
                 BasicMedia.objects.get_media_list(
                     user=request.user,
-                    media_type=media_type,
+                    media_type=MediaTypes.TV.value,
                     status_filter=tracked_status_filter,
                     sort_filter=query_sort_filter,
                     search=search_query,
                     direction=direction,
-                    list_sql_filters=filter_sql_filters,
+                    list_sql_filters=list_sql_filters,
                 ),
             )
-        ]
-        if status_filter in {MediaStatusChoices.ALL, MEDIA_LIST_NO_STATUS}:
-            filter_data_source_items.extend(
-                _build_untracked_media_entries(
-                    tracked_item_ids,
-                    ignore_platform_filter=True,
-                ),
-            )
-        filter_data_source_items = apply_latest_status_filter(
-            filter_data_source_items,
-            status_filter,
-        )
-    if media_type == MediaTypes.GAME.value:
-        item_ids = {
-            media.item_id
-            for media in filter_data_source_items
-            if getattr(media, "item_id", None)
-        }
-        if item_ids:
-            collection_platforms = CollectionEntry.objects.filter(
-                user=request.user,
-                item_id__in=item_ids,
-            ).values_list("item_id", "resolution")
-            for item_id, collection_platform in collection_platforms:
-                platform_value = str(collection_platform or "").strip()
-                if platform_value:
-                    collection_platforms_by_item_id[item_id].add(platform_value)
-    if media_type in author_media_types:
-        item_ids = {
+            grouped_anime_media = [
+                media
+                for media in grouped_anime_media
+                if getattr(getattr(media, "item", None), "library_media_type", None)
+                == MediaTypes.ANIME.value
+            ]
+            _mark_grouped_anime_route(grouped_anime_media)
+            media_list.extend(grouped_anime_media)
+
+        tracked_item_ids = {
             media.item_id
             for media in media_list
             if getattr(media, "item_id", None)
         }
-        if item_ids:
-            collection_formats = CollectionEntry.objects.filter(
-                user=request.user,
-                item_id__in=item_ids,
-            ).exclude(media_type="").values_list("item_id", "media_type")
-            for item_id, collection_format in collection_formats:
-                normalized_collection_format = _normalize_filter_value(collection_format)
-                if normalized_collection_format:
-                    collection_formats_by_item_id[item_id].add(normalized_collection_format)
-    filter_data = build_filter_data_from_items(filter_data_source_items)
-    filter_data["show_languages"] = media_type in (
-        MediaTypes.TV.value,
-        MediaTypes.MOVIE.value,
-        MediaTypes.ANIME.value,
-        MediaTypes.PODCAST.value,
-    )
-    filter_data["show_countries"] = media_type in (
-        MediaTypes.TV.value,
-        MediaTypes.MOVIE.value,
-        MediaTypes.ANIME.value,
-        MediaTypes.PODCAST.value,
-    )
-    filter_data["show_platforms"] = media_type == MediaTypes.GAME.value
-    filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
-    filter_data["show_formats"] = media_type in author_media_types
-    filter_data["show_authors"] = media_type in author_media_types
-    filter_data["show_progress"] = media_type in progress_media_types
-    user_tags = list(
-        Tag.objects.filter(user=request.user)
-        .values_list("name", flat=True)
-        .order_by("name")
-    )
-    filter_data["tags"] = user_tags
-    media_list = apply_rating_filter(media_list, rating_filter)
-    media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
-    media_list = apply_progress_filter(media_list, progress_filter, media_type)
-    if media_type in author_media_types:
-        media_list = apply_author_filter(media_list, author_filter)
-        media_list = apply_format_filter(media_list, format_filter)
-    if sort_filter == "author" and media_type in author_media_types:
-        media_list = sort_media_items_by_author(media_list, direction)
-    if sort_filter == "runtime" and media_type in runtime_media_types:
-        BasicMedia.objects.annotate_max_progress(
-            _tracked_media_entries(media_list),
-            media_type,
-        )
-        prefill_episode_runtime_index(media_list)
-        media_list = sort_media_items_by_runtime(media_list, direction)
-    if sort_filter == "plays" and media_type in plays_media_types:
-        media_list = sort_media_items_by_plays(media_list, direction)
-    if sort_filter == "time_watched" and media_type in runtime_media_types:
-        BasicMedia.objects.annotate_max_progress(
-            _tracked_media_entries(media_list),
-            media_type,
-        )
-        prefill_episode_runtime_index(media_list)
-        media_list = sort_media_items_by_time_watched(media_list, direction)
-    if sort_filter == "time_to_beat" and media_type == MediaTypes.GAME.value:
-        media_list = sort_media_items_by_game_time_to_beat(media_list, direction)
-    if media_type == MediaTypes.ANIME.value and any(
-        getattr(getattr(media, "item", None), "media_type", None) == MediaTypes.TV.value
-        for media in media_list
-    ):
-        if sort_filter not in {"plays", "time_watched"}:
-            def _sortable_dt(value):
-                if value is not None:
-                    return value
-                return (
-                    datetime.min.replace(tzinfo=UTC)
-                    if direction == "desc"
-                    else datetime.max.replace(tzinfo=UTC)
-                )
+        untracked_media_entries = []
+        if _include_untracked_entries:
+            untracked_media_entries = _build_untracked_media_entries(tracked_item_ids)
 
-            def _mixed_sort_key(media):
-                item = getattr(media, "item", None)
-                title = getattr(item, "title", "") or ""
-                if sort_filter == "score":
-                    score = getattr(media, "aggregated_score", None)
-                    if score is None:
-                        score = getattr(media, "score", None)
-                    return (score is None, score or 0, title.lower())
-                if sort_filter == "progress":
-                    progress = getattr(media, "aggregated_progress", None)
-                    if progress is None:
-                        progress = getattr(media, "progress", 0)
-                    return (progress, title.lower())
+        media_list = [MediaListEntry.from_media(media) for media in media_list]
+        media_list.extend(untracked_media_entries)
+
+        media_list = apply_latest_status_filter(media_list, status_filter)
+
+        if (
+            status_filter == MEDIA_LIST_NO_STATUS
+            and media_type != MediaTypes.ANIME.value
+            and sort_filter not in {"author", "runtime", "plays", "time_watched", "time_to_beat", "time_left"}
+        ):
+            _reverse = direction == "desc"
+            _none_sentinel = -math.inf if _reverse else math.inf
+
+            def _untracked_sort_key(entry):
+                item = getattr(entry, "item", None)
+                title = (getattr(item, "title", "") or "").lower()
                 if sort_filter == "release_date":
-                    release_dt = getattr(item, "release_datetime", None)
-                    return (_sortable_dt(release_dt), title.lower())
+                    val = getattr(item, "release_datetime", None)
+                    return (val.timestamp() if val else _none_sentinel, title)
                 if sort_filter == "popularity":
-                    rank = getattr(item, "trakt_popularity_rank", None)
-                    if rank is None:
-                        rank = math.inf if direction == "asc" else -math.inf
-                    return (rank, title.lower())
+                    val = getattr(item, "trakt_popularity_rank", None)
+                    return (val if val is not None else _none_sentinel, title)
                 if sort_filter == "critic_rating":
-                    rating = getattr(item, "provider_rating", None)
-                    if rating is None:
-                        rating = math.inf if direction == "asc" else -math.inf
-                    return (rating, title.lower())
-                if sort_filter == "date_added":
-                    return (_sortable_dt(getattr(media, "created_at", None)), title.lower())
-                if sort_filter == "start_date":
-                    start_dt = getattr(media, "aggregated_start_date", None) or getattr(media, "start_date", None)
-                    return (_sortable_dt(start_dt), title.lower())
-                if sort_filter == "end_date":
-                    end_dt = getattr(media, "aggregated_end_date", None) or getattr(media, "end_date", None)
-                    return (_sortable_dt(end_dt), title.lower())
-                if sort_filter == "next_episode_air_date":
-                    next_episode_air_date = getattr(media, "next_episode_air_date", None)
-                    return (_sortable_dt(next_episode_air_date), title.lower())
-                return title.lower()
+                    val = getattr(item, "provider_rating", None)
+                    return (val if val is not None else _none_sentinel, title)
+                return title
 
-            reverse = direction == "desc"
-            media_list = sorted(media_list, key=_mixed_sort_key, reverse=reverse)
+            media_list = sorted(media_list, key=_untracked_sort_key, reverse=_reverse)
+
+        filter_data_source_items = media_list
+        if media_type == MediaTypes.GAME.value and platform_filter and filter_data is None:
+            filter_sql_filters = {**list_sql_filters, "platform": ""}
+            filter_data_source_items = [
+                MediaListEntry.from_media(media)
+                for media in list(
+                    BasicMedia.objects.get_media_list(
+                        user=request.user,
+                        media_type=media_type,
+                        status_filter=tracked_status_filter,
+                        sort_filter=query_sort_filter,
+                        search=search_query,
+                        direction=direction,
+                        list_sql_filters=filter_sql_filters,
+                    ),
+                )
+            ]
+            if _include_untracked_entries:
+                filter_data_source_items.extend(
+                    _build_untracked_media_entries(
+                        tracked_item_ids,
+                        ignore_platform_filter=True,
+                    ),
+                )
+            filter_data_source_items = apply_latest_status_filter(
+                filter_data_source_items,
+                status_filter,
+            )
+        if filter_data is None and media_type == MediaTypes.GAME.value:
+            item_ids = {
+                media.item_id
+                for media in filter_data_source_items
+                if getattr(media, "item_id", None)
+            }
+            if item_ids:
+                collection_platforms = CollectionEntry.objects.filter(
+                    user=request.user,
+                    item_id__in=item_ids,
+                ).values_list("item_id", "resolution")
+                for item_id, collection_platform in collection_platforms:
+                    platform_value = str(collection_platform or "").strip()
+                    if platform_value:
+                        collection_platforms_by_item_id[item_id].add(platform_value)
+        if filter_data is None and media_type in author_media_types:
+            item_ids = {
+                media.item_id
+                for media in media_list
+                if getattr(media, "item_id", None)
+            }
+            if item_ids:
+                collection_formats = CollectionEntry.objects.filter(
+                    user=request.user,
+                    item_id__in=item_ids,
+                ).exclude(media_type="").values_list("item_id", "media_type")
+                for item_id, collection_format in collection_formats:
+                    normalized_collection_format = _normalize_filter_value(collection_format)
+                    if normalized_collection_format:
+                        collection_formats_by_item_id[item_id].add(normalized_collection_format)
+        if filter_data is None:
+            filter_data = build_filter_data_from_items(filter_data_source_items)
+            filter_data["show_languages"] = media_type in (
+                MediaTypes.TV.value,
+                MediaTypes.MOVIE.value,
+                MediaTypes.ANIME.value,
+                MediaTypes.PODCAST.value,
+            )
+            filter_data["show_countries"] = media_type in (
+                MediaTypes.TV.value,
+                MediaTypes.MOVIE.value,
+                MediaTypes.ANIME.value,
+                MediaTypes.PODCAST.value,
+            )
+            filter_data["show_platforms"] = media_type == MediaTypes.GAME.value
+            filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
+            filter_data["show_formats"] = media_type in author_media_types
+            filter_data["show_authors"] = media_type in author_media_types
+            filter_data["show_progress"] = media_type in progress_media_types
+            user_tags = list(
+                Tag.objects.filter(user=request.user)
+                .values_list("name", flat=True)
+                .order_by("name")
+            )
+            filter_data["tags"] = user_tags
+            if _media_list_filter_cache_key:
+                cache.set(
+                    _media_list_filter_cache_key,
+                    filter_data,
+                    cache_utils.MEDIA_LIST_FILTER_CACHE_TTL,
+                )
+                cache_utils.register_media_list_cache_key(
+                    request.user.id,
+                    _media_list_filter_cache_key,
+                )
+        media_list = apply_rating_filter(media_list, rating_filter)
+        media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
+        media_list = apply_progress_filter(media_list, progress_filter, media_type)
+        if media_type in author_media_types:
+            media_list = apply_author_filter(media_list, author_filter)
+            media_list = apply_format_filter(media_list, format_filter)
+        if sort_filter == "author" and media_type in author_media_types:
+            media_list = sort_media_items_by_author(media_list, direction)
+        if sort_filter == "runtime" and media_type in runtime_media_types:
+            BasicMedia.objects.annotate_max_progress(
+                _tracked_media_entries(media_list),
+                media_type,
+            )
+            prefill_episode_runtime_index(media_list)
+            media_list = sort_media_items_by_runtime(media_list, direction)
+        if sort_filter == "plays" and media_type in plays_media_types:
+            media_list = sort_media_items_by_plays(media_list, direction)
+        if sort_filter == "time_watched" and media_type in runtime_media_types:
+            BasicMedia.objects.annotate_max_progress(
+                _tracked_media_entries(media_list),
+                media_type,
+            )
+            prefill_episode_runtime_index(media_list)
+            media_list = sort_media_items_by_time_watched(media_list, direction)
+        if sort_filter == "time_to_beat" and media_type == MediaTypes.GAME.value:
+            media_list = sort_media_items_by_game_time_to_beat(media_list, direction)
+        if media_type == MediaTypes.ANIME.value and any(
+            getattr(getattr(media, "item", None), "media_type", None) == MediaTypes.TV.value
+            for media in media_list
+        ):
+            if sort_filter not in {"plays", "time_watched"}:
+                def _sortable_dt(value):
+                    if value is not None:
+                        return value
+                    return (
+                        datetime.min.replace(tzinfo=UTC)
+                        if direction == "desc"
+                        else datetime.max.replace(tzinfo=UTC)
+                    )
+
+                def _mixed_sort_key(media):
+                    item = getattr(media, "item", None)
+                    title = getattr(item, "title", "") or ""
+                    if sort_filter == "score":
+                        score = getattr(media, "aggregated_score", None)
+                        if score is None:
+                            score = getattr(media, "score", None)
+                        return (score is None, score or 0, title.lower())
+                    if sort_filter == "progress":
+                        progress = getattr(media, "aggregated_progress", None)
+                        if progress is None:
+                            progress = getattr(media, "progress", 0)
+                        return (progress, title.lower())
+                    if sort_filter == "release_date":
+                        release_dt = getattr(item, "release_datetime", None)
+                        return (_sortable_dt(release_dt), title.lower())
+                    if sort_filter == "popularity":
+                        rank = getattr(item, "trakt_popularity_rank", None)
+                        if rank is None:
+                            rank = math.inf if direction == "asc" else -math.inf
+                        return (rank, title.lower())
+                    if sort_filter == "critic_rating":
+                        rating = getattr(item, "provider_rating", None)
+                        if rating is None:
+                            rating = math.inf if direction == "asc" else -math.inf
+                        return (rating, title.lower())
+                    if sort_filter == "date_added":
+                        return (_sortable_dt(getattr(media, "created_at", None)), title.lower())
+                    if sort_filter == "start_date":
+                        start_dt = getattr(media, "aggregated_start_date", None) or getattr(media, "start_date", None)
+                        return (_sortable_dt(start_dt), title.lower())
+                    if sort_filter == "end_date":
+                        end_dt = getattr(media, "aggregated_end_date", None) or getattr(media, "end_date", None)
+                        return (_sortable_dt(end_dt), title.lower())
+                    if sort_filter == "next_episode_air_date":
+                        next_episode_air_date = getattr(media, "next_episode_air_date", None)
+                        return (_sortable_dt(next_episode_air_date), title.lower())
+                    return title.lower()
+
+                reverse = direction == "desc"
+                media_list = sorted(media_list, key=_mixed_sort_key, reverse=reverse)
+
+        if _media_list_cache_key:
+            cache.set(
+                _media_list_cache_key,
+                media_list,
+                cache_utils.MEDIA_LIST_CACHE_TTL,
+            )
+            cache_utils.register_media_list_cache_key(request.user.id, _media_list_cache_key)
+    else:
+        media_list = _media_list_cached
+
+    if filter_data is None:
+        tracked_item_ids = {
+            media.item_id
+            for media in media_list
+            if getattr(media, "item_id", None)
+        }
+        filter_data_source_items = media_list
+        if media_type == MediaTypes.GAME.value and platform_filter:
+            filter_sql_filters = {**list_sql_filters, "platform": ""}
+            filter_data_source_items = [
+                MediaListEntry.from_media(media)
+                for media in list(
+                    BasicMedia.objects.get_media_list(
+                        user=request.user,
+                        media_type=media_type,
+                        status_filter=tracked_status_filter,
+                        sort_filter=query_sort_filter,
+                        search=search_query,
+                        direction=direction,
+                        list_sql_filters=filter_sql_filters,
+                    ),
+                )
+            ]
+            if _include_untracked_entries:
+                filter_data_source_items.extend(
+                    _build_untracked_media_entries(
+                        tracked_item_ids,
+                        ignore_platform_filter=True,
+                    ),
+                )
+            filter_data_source_items = apply_latest_status_filter(
+                filter_data_source_items,
+                status_filter,
+            )
+        if media_type == MediaTypes.GAME.value:
+            item_ids = {
+                media.item_id
+                for media in filter_data_source_items
+                if getattr(media, "item_id", None)
+            }
+            if item_ids:
+                collection_platforms = CollectionEntry.objects.filter(
+                    user=request.user,
+                    item_id__in=item_ids,
+                ).values_list("item_id", "resolution")
+                for item_id, collection_platform in collection_platforms:
+                    platform_value = str(collection_platform or "").strip()
+                    if platform_value:
+                        collection_platforms_by_item_id[item_id].add(platform_value)
+        if media_type in author_media_types:
+            item_ids = {
+                media.item_id
+                for media in media_list
+                if getattr(media, "item_id", None)
+            }
+            if item_ids:
+                collection_formats = CollectionEntry.objects.filter(
+                    user=request.user,
+                    item_id__in=item_ids,
+                ).exclude(media_type="").values_list("item_id", "media_type")
+                for item_id, collection_format in collection_formats:
+                    normalized_collection_format = _normalize_filter_value(collection_format)
+                    if normalized_collection_format:
+                        collection_formats_by_item_id[item_id].add(normalized_collection_format)
+        filter_data = build_filter_data_from_items(filter_data_source_items)
+        filter_data["show_languages"] = media_type in (
+            MediaTypes.TV.value,
+            MediaTypes.MOVIE.value,
+            MediaTypes.ANIME.value,
+            MediaTypes.PODCAST.value,
+        )
+        filter_data["show_countries"] = media_type in (
+            MediaTypes.TV.value,
+            MediaTypes.MOVIE.value,
+            MediaTypes.ANIME.value,
+            MediaTypes.PODCAST.value,
+        )
+        filter_data["show_platforms"] = media_type == MediaTypes.GAME.value
+        filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
+        filter_data["show_formats"] = media_type in author_media_types
+        filter_data["show_authors"] = media_type in author_media_types
+        filter_data["show_progress"] = media_type in progress_media_types
+        filter_data["tags"] = list(
+            Tag.objects.filter(user=request.user)
+            .values_list("name", flat=True)
+            .order_by("name")
+        )
+        if _media_list_filter_cache_key:
+            cache.set(
+                _media_list_filter_cache_key,
+                filter_data,
+                cache_utils.MEDIA_LIST_FILTER_CACHE_TTL,
+            )
+            cache_utils.register_media_list_cache_key(
+                request.user.id,
+                _media_list_filter_cache_key,
+            )
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -1406,6 +1597,7 @@ def media_list(request, media_type):
         # Table runtime/time-watched cells read total_runtime_minutes per row;
         # prefill so the page renders with one episode-runtime query.
         prefill_episode_runtime_index(media_page.object_list)
+    prefill_display_release_years(media_page.object_list)
 
     if media_type in author_media_types:
         annotate_media_authors(media_page.object_list)

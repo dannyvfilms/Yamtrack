@@ -294,7 +294,7 @@ class MediaManager(models.Manager):
             "item__series_name",
             "item__series_position",
         )
-        queryset = self._apply_prefetch_related(queryset, media_type)
+        queryset = self._apply_prefetch_related(queryset, media_type, list_mode=True)
 
         requires_presort_aggregation = (
             sort_filter in ("progress", "plays", "next_episode_air_date")
@@ -316,13 +316,15 @@ class MediaManager(models.Manager):
 
     def _aggregate_duplicate_data(self, queryset, user, media_type, dup_state=None):
         """Aggregate data from duplicate entries for each item."""
-        # Collect the item_ids present in the current (deduplicated) queryset.
-        # Scoping to these ids avoids fetching all user items when a status filter
-        # is active — e.g. only 50 in-progress items out of 1000 total.
-        queried_item_ids = frozenset(media.item_id for media in queryset)
+        # Materialize once — avoids re-evaluating the queryset (and re-firing all
+        # prefetch queries) for both the ID-collection pass and the aggregation pass.
+        # Lists pass through as-is, so callers that already hold a list are safe.
+        media_list = queryset if isinstance(queryset, list) else list(queryset)
+
+        queried_item_ids = frozenset(media.item_id for media in media_list)
 
         if not queried_item_ids:
-            return queryset
+            return media_list
 
         model = apps.get_model(app_label="app", model_name=media_type)
 
@@ -340,6 +342,7 @@ class MediaManager(models.Manager):
                 user=user.id,
                 item_id__in=queried_item_ids,
             ).select_related("item")
+            all_media = self._apply_prefetch_related(all_media, media_type, list_mode=True)
 
             # Group media by item_id
             media_by_item = {}
@@ -350,13 +353,12 @@ class MediaManager(models.Manager):
                 dup_state["ids"] = queried_item_ids
                 dup_state["groups"] = media_by_item
 
-        # Aggregate data for each item in the queryset
-        for media in queryset:
+        for media in media_list:
             entries = media_by_item.get(media.item_id, [])
             if len(entries) > 1:
                 self._aggregate_item_data(media, entries)
 
-        return queryset
+        return media_list
 
     def _aggregate_item_data(self, display_media, all_media_entries):
         """Aggregate data from multiple media entries for the same item."""
@@ -433,8 +435,13 @@ class MediaManager(models.Manager):
         # Store the number of repeats for display
         display_media.repeats = len(all_media_entries)
 
-    def _apply_prefetch_related(self, queryset, media_type):
-        """Apply appropriate prefetch_related based on media type."""
+    def _apply_prefetch_related(self, queryset, media_type, list_mode=False):
+        """Apply appropriate prefetch_related based on media type.
+
+        list_mode=True narrows the episode queryset to only the fields required
+        for list-view progress/date calculations, avoiding the cost of
+        materializing full Item objects for every episode.
+        """
         TV = apps.get_model("app", "TV")
         Season = apps.get_model("app", "Season")
         Episode = apps.get_model("app", "Episode")
@@ -442,6 +449,19 @@ class MediaManager(models.Manager):
         if media_type == MediaTypes.TV.value or (
             media_type == MediaTypes.ANIME.value and queryset.model == TV
         ):
+            episode_qs = Episode.objects.select_related("item")
+            if list_mode:
+                # Load only the two fields accessed in the list path:
+                # ep.item.episode_number and ep.end_date.  Deferring the
+                # remaining ~30 Item columns cuts Django object instantiation
+                # time proportionally for libraries with many episodes.
+                episode_qs = episode_qs.only(
+                    "id",
+                    "end_date",
+                    "related_season_id",
+                    "item__id",
+                    "item__episode_number",
+                )
             return queryset.prefetch_related(
                 Prefetch(
                     "seasons",
@@ -454,7 +474,7 @@ class MediaManager(models.Manager):
                 ),
                 Prefetch(
                     "seasons__episodes",
-                    queryset=Episode.objects.select_related("item"),
+                    queryset=episode_qs,
                 ),
             )
 

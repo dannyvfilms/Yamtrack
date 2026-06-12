@@ -188,6 +188,20 @@ def sync_smart_lists_on_collection_change(sender, instance, **kwargs):  # noqa: 
     _sync_owner_smart_lists_for_items(owner, items_to_sync)
 
 
+@receiver([post_save, post_delete], sender=CollectionEntry)
+def clear_media_list_cache_on_collection_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate media-list caches when collection metadata changes."""
+    user_id = getattr(instance, "user_id", None)
+    if not user_id:
+        return
+    if media_cache_change_signals_suppressed() or media_change_side_effects_suppressed():
+        return
+
+    from app.cache_utils import clear_media_list_cache_for_user
+
+    clear_media_list_cache_for_user(user_id)
+
+
 @receiver([post_save, post_delete], sender=ItemTag)
 def sync_smart_lists_on_item_tag_change(sender, instance, **kwargs):  # noqa: ARG001
     """Incrementally update smart lists when a tag is applied to or removed from an item."""
@@ -257,6 +271,10 @@ def _handle_media_cache_change(
         return
     if media_cache_change_signals_suppressed() or media_change_side_effects_suppressed():
         return
+
+    from app.cache_utils import clear_media_list_cache_for_user
+
+    clear_media_list_cache_for_user(user_id)
 
     active_context = discover_tab_cache.get_active_context(user_id)
     targets = discover_tab_cache.invalidate_for_media_change(user_id, changed_media_type)
@@ -542,8 +560,9 @@ def clear_time_left_cache_on_tv_delete(sender, instance, **kwargs):  # noqa: ARG
     """Clear time_left cache when TV show is deleted."""
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        from app.cache_utils import clear_time_left_cache_for_user
+        from app.cache_utils import clear_time_left_cache_for_user, clear_media_list_cache_for_user
         clear_time_left_cache_for_user(user_id)
+        clear_media_list_cache_for_user(user_id)
         logger.debug(
             "Cleared time_left cache for user %s after deleting TV show: %s",
             user_id,
@@ -570,8 +589,9 @@ def clear_time_left_cache_on_season_delete(sender, instance, **kwargs):  # noqa:
     """Clear time_left cache when Season is deleted."""
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        from app.cache_utils import clear_time_left_cache_for_user
+        from app.cache_utils import clear_time_left_cache_for_user, clear_media_list_cache_for_user
         clear_time_left_cache_for_user(user_id)
+        clear_media_list_cache_for_user(user_id)
         logger.debug(
             "Cleared time_left cache for user %s after deleting Season: %s",
             user_id,
@@ -757,8 +777,10 @@ def schedule_runtime_backfill_on_item_save(
             item__media_type__in=[MediaTypes.TV.value, MediaTypes.SEASON.value],
         ).values_list("user_id", flat=True).distinct()
         
+        from app.cache_utils import clear_media_list_cache_for_user
         for user_id in tracking_users:
             clear_time_left_cache_for_user(user_id)
+            clear_media_list_cache_for_user(user_id)
             logger.debug(
                 "Cleared time_left cache for user %s due to runtime update on %s",
                 user_id,

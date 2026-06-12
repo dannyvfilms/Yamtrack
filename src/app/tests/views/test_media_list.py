@@ -490,6 +490,48 @@ class MediaListViewTests(TestCase):
             app_tags.media_type_readable_plural(MediaTypes.MOVIE.value).lower(),
         )
 
+    def test_default_media_list_excludes_untracked_collection_entries(self):
+        item = Item.objects.create(
+            media_id="untracked-manga-default",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Untracked Manga Default",
+            image="http://example.com/untracked-manga.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=item,
+            media_type="paperback",
+        )
+
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MANGA.value]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media_list"].paginator.count, 0)
+        self.assertNotContains(response, "Untracked Manga Default")
+
+    def test_no_status_media_list_includes_untracked_collection_entries(self):
+        item = Item.objects.create(
+            media_id="untracked-manga-no-status",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Untracked Manga No Status",
+            image="http://example.com/untracked-manga.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=item,
+            media_type="paperback",
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MANGA.value]) + "?status=no_status",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media_list"].paginator.count, 1)
+        self.assertContains(response, "Untracked Manga No Status")
+
     def test_music_media_list_uses_canonical_artist_links(self):
         """Music list should render artist cells with canonical shared-detail URLs."""
         artist = Artist.objects.create(name="List Artist")
@@ -1071,7 +1113,7 @@ class MediaListViewTests(TestCase):
         self.assertEqual(self.user.movie_sort, "score")
         self.assertEqual(self.user.movie_layout, "table")
 
-    def test_status_all_includes_collected_untracked_items(self):
+    def test_status_all_excludes_collected_untracked_items(self):
         tracked_item = Item.objects.create(
             media_id="status-all-collected-tracked",
             source=Sources.TMDB.value,
@@ -1105,10 +1147,7 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             [entry.item.title for entry in response.context["media_list"].object_list],
-            [
-                "Status All Collected Tracked",
-                "Status All Collected Untracked",
-            ],
+            ["Status All Collected Tracked"],
         )
 
         in_progress_response = self.client.get(
@@ -1194,6 +1233,7 @@ class MediaListViewTests(TestCase):
             {
                 "search": "Grid No Status",
                 "layout": "grid",
+                "status": "no_status",
             },
         )
 
@@ -1201,7 +1241,7 @@ class MediaListViewTests(TestCase):
         self.assertContains(response, 'data-status-label="no-status"')
         self.assertContains(response, "No Status")
 
-    def test_not_rated_filter_includes_collected_untracked_items(self):
+    def test_not_rated_filter_excludes_collected_untracked_items(self):
         rated_item = Item.objects.create(
             media_id="rating-split-tracked",
             source=Sources.TMDB.value,
@@ -1242,10 +1282,10 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.context["current_rating"], "not_rated")
         self.assertEqual(
             [entry.item.title for entry in response.context["media_list"].object_list],
-            ["Rating Split Untracked"],
+            [],
         )
 
-    def test_tv_episode_collection_items_appear_for_all_and_no_status(self):
+    def test_tv_episode_collection_items_appear_for_no_status_only(self):
         show_item = Item.objects.create(
             media_id="tv-episode-collected-show",
             source=Sources.TMDB.value,
@@ -1278,7 +1318,7 @@ class MediaListViewTests(TestCase):
         self.assertEqual(show_item.id, no_status_response.context["media_list"].object_list[0].item.id)
         self.assertEqual(
             [entry.item.title for entry in all_response.context["media_list"].object_list],
-            ["Episode Collected Library Show"],
+            [],
         )
         self.assertEqual(
             [entry.item.title for entry in no_status_response.context["media_list"].object_list],

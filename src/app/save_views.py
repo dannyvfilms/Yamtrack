@@ -577,6 +577,7 @@ def episode_drop(request):
     )
     logger.info("%s dropped successfully.", episode_record)
     cache_utils.clear_time_left_cache_for_user(request.user.id)
+    cache_utils.clear_media_list_cache_for_user(request.user.id)
 
     if request.headers.get("HX-Request"):
         episode_history = list(

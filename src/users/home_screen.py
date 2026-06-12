@@ -25,6 +25,7 @@ from app.models import (
     Status,
     prefill_episode_runtime_index,
 )
+from app.release_years import prefill_display_release_years
 from app.templatetags import app_tags
 from lists import smart_rules
 from lists.models import CustomList
@@ -1928,6 +1929,7 @@ def build_home_page_groups(
             batch_start = load_row_offset if load_row_id == row.id and append_only else 0
             batch_end = batch_start + items_limit
             section_entries = entries[batch_start:batch_end]
+            prefill_display_release_years(section_entries)
             loaded_count = min(len(entries), batch_start + len(section_entries))
             title_main, title_detail = home_row_header_title_parts(row, user)
             row_sections.append(

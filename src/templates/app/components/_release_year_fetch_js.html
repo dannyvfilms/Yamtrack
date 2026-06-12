@@ -1,0 +1,87 @@
+<script>
+  // var (not let/const): this script re-executes on boosted navigation
+  var RELEASE_YEAR_FETCH_URL = '{% url "fetch_release_year" %}';
+  var releaseYearState = window.__yamtrackReleaseYearState || {
+    pending: new Set(),
+    queue: [],
+    processing: false,
+  };
+  window.__yamtrackReleaseYearState = releaseYearState;
+
+  function processReleaseYearQueue() {
+    if (releaseYearState.processing || releaseYearState.queue.length === 0) return;
+    releaseYearState.processing = true;
+
+    const itemId = releaseYearState.queue.shift();
+    if (!itemId || releaseYearState.pending.has(itemId)) {
+      releaseYearState.processing = false;
+      if (releaseYearState.queue.length > 0) {
+        setTimeout(processReleaseYearQueue, 50);
+      }
+      return;
+    }
+
+    releaseYearState.pending.add(itemId);
+
+    fetch(`${RELEASE_YEAR_FETCH_URL}?item_id=${itemId}`)
+      .then(response => response.json())
+      .then(data => {
+        if (data.year) {
+          document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+            const progressText = el.dataset.progressText;
+            const separator = " \u2022 ";
+            el.textContent = progressText ? `${data.year}${separator}${progressText}` : data.year;
+            el.classList.remove('release-year-placeholder');
+          });
+        } else {
+          document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+            el.remove();
+          });
+        }
+        if (typeof initMediaCardHover === 'function') {
+          initMediaCardHover();
+        }
+      })
+      .catch(err => {
+        console.warn('Failed to fetch release year for item', itemId, err);
+      })
+      .finally(() => {
+        releaseYearState.processing = false;
+        if (releaseYearState.queue.length > 0) {
+          setTimeout(processReleaseYearQueue, 100);
+        }
+      });
+  }
+
+  function queueReleaseYearFetch(itemId) {
+    if (!releaseYearState.pending.has(itemId) && !releaseYearState.queue.includes(itemId)) {
+      releaseYearState.queue.push(itemId);
+      processReleaseYearQueue();
+    }
+  }
+
+  function loadVisibleReleaseYears() {
+    document.querySelectorAll('.release-year-placeholder[data-item-id]').forEach(el => {
+      const itemId = el.dataset.itemId;
+      if (itemId) {
+        queueReleaseYearFetch(itemId);
+      }
+    });
+  }
+
+  window.queueReleaseYearFetch = queueReleaseYearFetch;
+  window.loadVisibleReleaseYears = loadVisibleReleaseYears;
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadVisibleReleaseYears, { once: true });
+  } else {
+    loadVisibleReleaseYears();
+  }
+
+  if (!window.__yamtrackReleaseYearsAfterSwapBound) {
+    window.__yamtrackReleaseYearsAfterSwapBound = true;
+    document.body.addEventListener('htmx:afterSwap', function() {
+      setTimeout(loadVisibleReleaseYears, 50);
+    });
+  }
+</script>

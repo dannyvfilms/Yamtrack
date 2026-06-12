@@ -91,6 +91,22 @@ class ListsViewTests(TestCase):
         self.assertIn("custom_lists", response.context)
         self.assertIn("form", response.context)
 
+    def test_list_detail_prefills_release_year_for_known_dates(self):
+        """List detail should render known release years without waiting for async fetches."""
+        self.client.login(**self.credentials)
+        self.item1.release_datetime = datetime(2024, 4, 5, 12, 0, tzinfo=UTC)
+        self.item1.save(update_fields=["release_datetime"])
+
+        response = self.client.get(
+            reverse("list_detail", args=[self.list1.public_reference]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        first_item = response.context["items"].object_list[0]
+        self.assertEqual(first_item.id, self.item1.id)
+        self.assertEqual(first_item.display_release_year, 2024)
+        self.assertContains(response, "2024", html=False)
+
     def test_lists_collaborator_view(self):
         """Test the lists view response and context for a collaborator."""
         self.client.login(**self.collaborator_credentials)
