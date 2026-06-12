@@ -1175,6 +1175,32 @@ class MediaListViewTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(self.user.movie_status, Status.COMPLETED.value)
 
+    def test_grid_layout_renders_no_status_chip_for_untracked_entries(self):
+        untracked_item = Item.objects.create(
+            media_id="grid-no-status-untracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Grid No Status Untracked",
+            image="http://example.com/grid-no-status-untracked.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=untracked_item,
+            media_type="digital",
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]),
+            {
+                "search": "Grid No Status",
+                "layout": "grid",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-status-label="no-status"')
+        self.assertContains(response, "No Status")
+
     def test_not_rated_filter_includes_collected_untracked_items(self):
         rated_item = Item.objects.create(
             media_id="rating-split-tracked",
