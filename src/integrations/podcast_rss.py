@@ -55,6 +55,12 @@ def fetch_show_metadata_from_rss(rss_feed_url: str) -> dict:
             channel = root if root.tag == "feed" or root.tag.endswith("}feed") else None
 
         if channel is not None:
+            title_elem = channel.find("title")
+            if title_elem is None:
+                title_elem = channel.find("{http://www.w3.org/2005/Atom}title")
+            if title_elem is not None and title_elem.text:
+                metadata["title"] = title_elem.text.strip()
+
             # Description
             desc_elem = channel.find("description")
             if desc_elem is None:

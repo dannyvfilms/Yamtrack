@@ -1413,6 +1413,7 @@ class User(AbstractUser):
             "sonarr": ["Import from Sonarr", "Import from Sonarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf", "Import from Audiobookshelf (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts", "Import from Pocket Casts (Recurring)"],
+            "gpodder": ["Import from GPodder", "Import from GPodder (Recurring)"],
             "lastfm": ["Import from Last.fm History"],
             "hardcover": ["Import from Hardcover"],
         }
@@ -1422,6 +1423,7 @@ class User(AbstractUser):
             "sonarr": ["Import from Sonarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
+            "gpodder": ["Import from GPodder (Recurring)"],
             "lastfm": ["Poll Last.fm for all users"],
         }
 

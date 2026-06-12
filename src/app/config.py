@@ -253,7 +253,7 @@ MEDIA_TYPE_CONFIG = {
         "date_key": "release_date",
     },
     MediaTypes.PODCAST.value: {
-        "sources": [Sources.POCKETCASTS],
+        "sources": [Sources.POCKETCASTS, Sources.GPODDER],
         "default_source": Sources.POCKETCASTS,
         "sample_query": "The Daily",
         "unicode_icon": "🎙️",

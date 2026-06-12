@@ -8,7 +8,7 @@ from django.core.validators import (
 from django.db import models
 from model_utils import FieldTracker
 
-from app.models.choices import Status
+from app.models.choices import Sources, Status
 from app.models.media import Media
 
 
@@ -22,6 +22,12 @@ class PodcastShow(models.Model):
         max_length=36,
         unique=True,
         help_text="Pocket Casts podcast UUID",
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=Sources,
+        default=Sources.POCKETCASTS.value,
+        help_text="Podcast provider source for this show",
     )
     title = models.CharField(max_length=255)
     slug = models.CharField(max_length=255, blank=True, default="")

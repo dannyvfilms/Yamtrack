@@ -53,7 +53,10 @@ def bulk_episode_plays_task(
     metadata_resolution_result = None
     podcast_show = None
 
-    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+    if media_type == MediaTypes.PODCAST.value and source in {
+        Sources.POCKETCASTS.value,
+        Sources.GPODDER.value,
+    }:
         podcast_show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
     else:
         tracking_media_type = metadata_resolution.get_tracking_media_type(

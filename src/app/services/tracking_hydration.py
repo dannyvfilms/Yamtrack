@@ -259,7 +259,10 @@ def ensure_item_metadata(
         episode_number,
     )
     podcast_show = None
-    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+    if media_type == MediaTypes.PODCAST.value and source in {
+        Sources.POCKETCASTS.value,
+        Sources.GPODDER.value,
+    }:
         metadata, podcast_show = _enrich_podcast_lookup(metadata, str(media_id))
     metadata = _fallback_metadata(
         metadata,

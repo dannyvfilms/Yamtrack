@@ -697,6 +697,12 @@ _DETAIL_LINK_BRANDS = {
         "accent_classes": "text-orange-100",
         "fallback_text": "PC",
     },
+    Sources.GPODDER.value: {
+        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07]",
+        "badge_classes": "border-sky-400/28 bg-sky-500/14",
+        "accent_classes": "text-sky-100",
+        "fallback_text": "GP",
+    },
     Sources.AUDIOBOOKSHELF.value: {
         "chip_classes": "border-teal-400/18 bg-teal-500/[0.07]",
         "badge_classes": "border-teal-400/28 bg-teal-500/14",

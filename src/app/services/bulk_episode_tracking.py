@@ -622,7 +622,7 @@ def build_episode_play_domain(
 ):
     """Return an episode selection domain for detail track modal tabs."""
     if route_media_type == MediaTypes.PODCAST.value:
-        if source != Sources.POCKETCASTS.value:
+        if source not in {Sources.POCKETCASTS.value, Sources.GPODDER.value}:
             return None
         show = podcast_show or PodcastShow.objects.filter(podcast_uuid=media_id).first()
         if show is None:
@@ -835,7 +835,7 @@ def _get_or_create_podcast_episode_item(show, episode):
 
     item, created = Item.objects.get_or_create(
         media_id=episode.episode_uuid,
-        source=Sources.POCKETCASTS.value,
+        source=show.source,
         media_type=MediaTypes.PODCAST.value,
         defaults=defaults,
     )

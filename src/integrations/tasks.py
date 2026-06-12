@@ -22,6 +22,7 @@ from integrations import plex as plex_api
 from integrations.imports import (
     anilist,
     audiobookshelf,
+    gpodder,
     goodreads,
     hardcover,
     helpers,
@@ -450,6 +451,32 @@ def import_pocketcasts_history(user_id):
         return "Skipped: import already in progress"
     try:
         return import_media(pocketcasts.importer, None, user_id, "new")
+    finally:
+        cache.delete(lock_key)
+
+
+@shared_task(name="Import from GPodder")
+def import_gpodder(user_id, mode="new"):
+    """Celery task for importing podcast history from GPodder-compatible servers."""
+    lock_key = f"gpodder_import_lock_{user_id}"
+    if not cache.add(lock_key, "1", timeout=600):
+        logger.info("GPodder import already running for user %s, skipping", user_id)
+        return "Skipped: import already in progress"
+    try:
+        return import_media(gpodder.importer, None, user_id, mode)
+    finally:
+        cache.delete(lock_key)
+
+
+@shared_task(name="Import from GPodder (Recurring)")
+def import_gpodder_recurring(user_id):
+    """Recurring import task for GPodder-compatible servers."""
+    lock_key = f"gpodder_import_lock_{user_id}"
+    if not cache.add(lock_key, "1", timeout=600):
+        logger.info("GPodder import already running for user %s, skipping", user_id)
+        return "Skipped: import already in progress"
+    try:
+        return import_media(gpodder.importer, None, user_id, "new")
     finally:
         cache.delete(lock_key)
 

@@ -21,13 +21,14 @@ from django.views.decorators.http import require_GET, require_POST
 import users
 from app import helpers as app_helpers
 from app.log_safety import exception_summary
-from integrations import exports, lastfm_api, pocketcasts_api, tasks
+from integrations import exports, gpodder_api, lastfm_api, pocketcasts_api, tasks
 from integrations import plex as plex_api
 from integrations.imports import anilist, helpers, simkl, trakt
 from integrations.imports.radarr import RadarrClient
 from integrations.imports.sonarr import SonarrClient
 from integrations.models import (
     AudiobookshelfAccount,
+    GPodderAccount,
     LastFMAccount,
     PlexAccount,
     PocketCastsAccount,
@@ -36,6 +37,7 @@ from integrations.models import (
 )
 from integrations.lastfm_api import LastFMAPIError, LastFMClientError, LastFMRateLimitError
 from integrations.plex_watchlist import WATCHLIST_SYNC_INTERVAL_MINUTES, WATCHLIST_TASK_NAME
+from integrations.gpodder_api import GPodderAuthError, GPodderClientError
 from integrations.pocketcasts_api import PocketCastsAuthError
 from integrations.imports.audiobookshelf import AudiobookshelfAuthError, AudiobookshelfClient
 from integrations.webhooks import emby, jellyfin
@@ -46,6 +48,7 @@ logger = logging.getLogger(__name__)
 ARR_SYNC_INTERVAL_HOURS = 2
 RADARR_RECURRING_TASK_NAME = "Import from Radarr (Recurring)"
 SONARR_RECURRING_TASK_NAME = "Import from Sonarr (Recurring)"
+GPODDER_RECURRING_TASK_NAME = "Import from GPodder (Recurring)"
 
 
 def _read_uploaded_file(file):
@@ -1182,6 +1185,104 @@ def pocketcasts_disconnect(request):
 
 
 @require_POST
+def gpodder_connect(request):
+    """Connect a GPodder-compatible account using Basic Auth credentials."""
+    server_url = gpodder_api.normalize_server_url(request.POST.get("server_url", ""))
+    username = request.POST.get("username", "").strip()
+    password = request.POST.get("password", "").strip()
+    device_filter = request.POST.get("device_filter", "").strip()
+
+    if not username:
+        messages.error(request, "Username is required.")
+        return redirect("import_data")
+
+    if not password:
+        messages.error(request, "Password is required.")
+        return redirect("import_data")
+
+    credentials = gpodder_api.GPodderCredentials(
+        server_url=server_url,
+        username=username,
+        password=password,
+    )
+    try:
+        gpodder_api.verify_login(credentials)
+    except GPodderAuthError:
+        messages.error(request, "Invalid GPodder username or password.")
+        return redirect("import_data")
+    except GPodderClientError as exc:
+        messages.error(request, f"Failed to connect to GPodder: {exc}")
+        return redirect("import_data")
+
+    device_id = f"yamtrack-{request.user.id}"
+
+    try:
+        GPodderAccount.objects.update_or_create(
+            user=request.user,
+            defaults={
+                "server_url": helpers.encrypt(server_url),
+                "username": helpers.encrypt(username),
+                "password": helpers.encrypt(password),
+                "device_id": device_id,
+                "device_filter": device_filter,
+                "connection_broken": False,
+                "last_error_message": "",
+            },
+        )
+
+        from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+        existing_task = PeriodicTask.objects.filter(
+            task=GPODDER_RECURRING_TASK_NAME,
+            kwargs__contains=f'"user_id": {request.user.id}',
+            enabled=True,
+        ).first()
+        if not existing_task:
+            crontab, _ = CrontabSchedule.objects.get_or_create(
+                minute=0,
+                hour="*/2",
+                day_of_week="*",
+                day_of_month="*",
+                month_of_year="*",
+                timezone=timezone.get_default_timezone(),
+            )
+            PeriodicTask.objects.create(
+                name=f"Import from GPodder for {request.user.username} (every 2 hours)",
+                task=GPODDER_RECURRING_TASK_NAME,
+                crontab=crontab,
+                kwargs=json.dumps({"user_id": request.user.id}),
+                start_time=timezone.now(),
+                enabled=True,
+            )
+            tasks.import_gpodder.delay(user_id=request.user.id, mode="new")
+            messages.success(
+                request,
+                "Connected to GPodder successfully. Initial sync queued. Recurring syncs will run every 2 hours.",
+            )
+        else:
+            messages.success(request, "Connected to GPodder successfully.")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to store GPodder credentials")
+        messages.error(request, f"Failed to save GPodder connection: {exc}")
+
+    return redirect("import_data")
+
+
+@require_POST
+def gpodder_disconnect(request):
+    """Remove stored GPodder credentials and scheduled imports."""
+    from django_celery_beat.models import PeriodicTask
+
+    PeriodicTask.objects.filter(
+        task=GPODDER_RECURRING_TASK_NAME,
+        kwargs__contains=f'"user_id": {request.user.id}',
+    ).delete()
+    GPodderAccount.objects.filter(user=request.user).delete()
+    messages.info(request, "Disconnected GPodder and removed scheduled imports.")
+    return redirect("import_data")
+
+
+@require_POST
 def lastfm_connect(request):
     """Connect Last.fm account using username."""
     username = request.POST.get("lastfm_username", "").strip()
@@ -1384,6 +1485,52 @@ def import_pocketcasts(request):
         )
         messages.info(request, "The task to import media from Pocket Casts has been queued.")
 
+    return redirect("import_data")
+
+
+@require_POST
+def import_gpodder(request):
+    """Queue a GPodder podcast history sync for the current user."""
+    gpodder_account = getattr(request.user, "gpodder_account", None)
+    if not gpodder_account:
+        messages.error(request, "Connect GPodder before syncing.")
+        return redirect("import_data")
+
+    gpodder_account.refresh_from_db()
+
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    existing_task = PeriodicTask.objects.filter(
+        task=GPODDER_RECURRING_TASK_NAME,
+        kwargs__contains=f'"user_id": {request.user.id}',
+        enabled=True,
+    ).first()
+
+    if not existing_task:
+        crontab, _ = CrontabSchedule.objects.get_or_create(
+            minute=0,
+            hour="*/2",
+            day_of_week="*",
+            day_of_month="*",
+            month_of_year="*",
+            timezone=timezone.get_default_timezone(),
+        )
+        PeriodicTask.objects.create(
+            name=f"Import from GPodder for {request.user.username} (every 2 hours)",
+            task=GPODDER_RECURRING_TASK_NAME,
+            crontab=crontab,
+            kwargs=json.dumps({"user_id": request.user.id}),
+            start_time=timezone.now(),
+            enabled=True,
+        )
+        messages.info(
+            request,
+            "The task to import media from GPodder has been queued. Recurring syncs will run every 2 hours.",
+        )
+    else:
+        messages.info(request, "The task to import media from GPodder has been queued.")
+
+    tasks.import_gpodder.delay(user_id=request.user.id, mode="new")
     return redirect("import_data")
 
 

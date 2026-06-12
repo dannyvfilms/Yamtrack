@@ -123,7 +123,7 @@ def podcast_episodes_api(request, show_id):
     for episode in episodes:
         item, _ = Item.objects.get_or_create(
             media_id=episode.episode_uuid,
-            source=Sources.POCKETCASTS.value,
+            source=show.source,
             media_type=MediaTypes.PODCAST.value,
             defaults={
                 "title": episode.title,
@@ -135,7 +135,7 @@ def podcast_episodes_api(request, show_id):
             item.save(update_fields=["title"])
         episode_items_data.append({
             "media_id": episode.episode_uuid,
-            "source": Sources.POCKETCASTS.value,
+            "source": show.source,
             "media_type": MediaTypes.PODCAST.value,
         })
         episode_items_map[episode.episode_uuid] = item
@@ -245,7 +245,7 @@ def podcast_episodes_api(request, show_id):
                 "media": enriched["media"] if enriched else None,
                 "item": enriched["item"] if enriched else item,
                 "media_id": episode_obj.episode_uuid,
-                "source": Sources.POCKETCASTS.value,
+                "source": show.source,
                 "media_type": MediaTypes.PODCAST.value,
                 "track_adapter": PodcastEpisodeAdapter(episode_obj),
                 "album_adapter": PodcastShowAdapter(show),
@@ -466,7 +466,7 @@ def podcast_mark_all_played(request, show_id):
 
     if not unplayed_episodes.exists():
         messages.info(request, f"All episodes of {show.title} are already marked as played")
-        return redirect("media_details", source=Sources.POCKETCASTS.value, media_type=MediaTypes.PODCAST.value, media_id=show.podcast_uuid, title=show.slug or show.title)
+        return redirect("media_details", source=show.source, media_type=MediaTypes.PODCAST.value, media_id=show.podcast_uuid, title=show.slug or show.title)
 
     created_count = 0
     items_created = []
@@ -485,7 +485,7 @@ def podcast_mark_all_played(request, show_id):
 
             item, item_created = Item.objects.get_or_create(
                 media_id=episode.episode_uuid,
-                source=Sources.POCKETCASTS.value,
+                source=show.source,
                 media_type=MediaTypes.PODCAST.value,
                 defaults=item_defaults,
             )
@@ -529,7 +529,7 @@ def podcast_mark_all_played(request, show_id):
         f"Marked {created_count} {episode_word} of {show.title} as played",
     )
 
-    return redirect("media_details", source=Sources.POCKETCASTS.value, media_type=MediaTypes.PODCAST.value, media_id=show.podcast_uuid, title=show.slug or show.title)
+    return redirect("media_details", source=show.source, media_type=MediaTypes.PODCAST.value, media_id=show.podcast_uuid, title=show.slug or show.title)
 
 
 @require_POST
@@ -580,7 +580,7 @@ def podcast_save(request):
 
     item, created = Item.objects.get_or_create(
         media_id=episode_uuid,
-        source=Sources.POCKETCASTS.value,
+        source=show.source,
         media_type=MediaTypes.PODCAST.value,
         defaults=item_defaults,
     )
@@ -646,7 +646,7 @@ def podcast_save(request):
 
         episode_items_data = [{
             "media_id": episode_obj.episode_uuid,
-            "source": Sources.POCKETCASTS.value,
+            "source": show.source,
             "media_type": MediaTypes.PODCAST.value,
         }]
         enriched_episodes_raw = helpers.enrich_items_with_user_data(
@@ -736,7 +736,7 @@ def podcast_save(request):
             "media": enriched["media"] if enriched else None,
             "item": item,
             "media_id": episode_obj.episode_uuid,
-            "source": Sources.POCKETCASTS.value,
+            "source": show.source,
             "media_type": MediaTypes.PODCAST.value,
             "track_adapter": PodcastEpisodeAdapter(episode_obj),
             "album_adapter": PodcastShowAdapter(show),
@@ -764,7 +764,7 @@ def podcast_save(request):
 
     return redirect(
         "media_details",
-        source=Sources.POCKETCASTS.value,
+        source=show.source,
         media_type=MediaTypes.PODCAST.value,
         media_id=show.podcast_uuid,
         title=show.slug or slugify(show.title),

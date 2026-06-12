@@ -279,7 +279,10 @@ def media_details(
             return fallback
 
     # For podcast shows (identified by podcast_uuid), show show detail page
-    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+    if media_type == MediaTypes.PODCAST.value and source in {
+        Sources.POCKETCASTS.value,
+        Sources.GPODDER.value,
+    }:
         from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
 
         # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
@@ -315,7 +318,7 @@ def media_details(
                             from django.utils.text import slugify
                             return redirect(
                                 "media_details",
-                                source=Sources.POCKETCASTS.value,
+                                source=source,
                                 media_type=MediaTypes.PODCAST.value,
                                 media_id=existing_show.podcast_uuid,
                                 title=slugify(existing_show.title or "podcast"),
@@ -408,7 +411,7 @@ def media_details(
                         from django.utils.text import slugify
                         return redirect(
                             "media_details",
-                            source=Sources.POCKETCASTS.value,
+                            source=source,
                             media_type=MediaTypes.PODCAST.value,
                             media_id=show.podcast_uuid,
                             title=slugify(show.title or "podcast"),

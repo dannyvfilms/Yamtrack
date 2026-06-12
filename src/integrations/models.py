@@ -201,6 +201,65 @@ class PocketCastsAccount(models.Model):
         return timezone.now() >= self.token_expires_at
 
 
+class GPodderAccount(models.Model):
+    """Store GPodder connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="gpodder_account",
+    )
+    server_url = models.TextField(
+        help_text="Encrypted GPodder-compatible server URL",
+    )
+    username = models.TextField(
+        help_text="Encrypted username for HTTP Basic authentication",
+    )
+    password = models.TextField(
+        help_text="Encrypted password or app password for HTTP Basic authentication",
+    )
+    device_id = models.CharField(
+        max_length=255,
+        help_text="Yamtrack-managed GPodder device identifier",
+    )
+    device_filter = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Optional upstream device filter for imported actions",
+    )
+    episode_actions_since = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Last successfully imported GPodder episode actions cursor",
+    )
+    subscription_since = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Reserved for future incremental subscription sync",
+    )
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    connection_broken = models.BooleanField(default=False)
+    last_error_message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "GPodder account"
+        verbose_name_plural = "GPodder accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"GPodderAccount({self.user.username})"
+
+    @property
+    def is_connected(self):
+        """Return True when the account appears connected."""
+        return bool(self.server_url and self.username and self.password) and not self.connection_broken
+
+
 class AudiobookshelfAccount(models.Model):
     """Store Audiobookshelf connection settings and sync state for a user."""
 

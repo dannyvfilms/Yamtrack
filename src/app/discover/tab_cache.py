@@ -72,7 +72,7 @@ DISCOVER_PROVIDER_BY_MEDIA_TYPE = {
     MediaTypes.TV.value: {"trakt"},
     MediaTypes.ANIME.value: {"trakt"},
     MediaTypes.MUSIC.value: {Sources.MUSICBRAINZ.value},
-    MediaTypes.PODCAST.value: {Sources.POCKETCASTS.value},
+    MediaTypes.PODCAST.value: {Sources.POCKETCASTS.value, Sources.GPODDER.value},
     MediaTypes.BOOK.value: {Sources.OPENLIBRARY.value},
     MediaTypes.COMIC.value: {Sources.COMICVINE.value},
     MediaTypes.MANGA.value: {Sources.MAL.value},

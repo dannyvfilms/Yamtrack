@@ -980,6 +980,7 @@ def import_data(request):
 
     # Get Pocket Casts account
     pocketcasts_account = getattr(user, "pocketcasts_account", None)
+    gpodder_account = getattr(user, "gpodder_account", None)
 
     # Get Last.fm account
     lastfm_account = getattr(user, "lastfm_account", None)
@@ -1026,6 +1027,7 @@ def import_data(request):
         "plex_sections_json": json.dumps(plex_sections),
         "audiobookshelf_account": audiobookshelf_account,
         "pocketcasts_account": pocketcasts_account,
+        "gpodder_account": gpodder_account,
         "lastfm_account": lastfm_account,
         "radarr_account": radarr_account,
         "sonarr_account": sonarr_account,

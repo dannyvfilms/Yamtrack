@@ -743,6 +743,107 @@
           {% endif %}
         </div>
 
+        {# GPodder #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['podcasts'])"
+             x-transition.opacity.duration.150ms>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "gpodder" %}</div>
+            {% if gpodder_account and gpodder_account.is_connected %}
+              <form method="post" action="{% url 'gpodder_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+          {% if gpodder_account %}
+            <p class="text-sm text-gray-400">Recurring podcast history sync for GPodder, AntennaPod, and self-hosted compatible servers every 2 hours.</p>
+
+            <div class="flex items-center gap-2 text-sm">
+              {% if gpodder_account.is_connected %}
+                <span class="text-gray-300">Connected</span>
+              {% else %}
+                <span class="text-gray-300">Disconnected</span>
+              {% endif %}
+              {% if gpodder_account.last_sync_at %}
+                <span class="text-gray-400">•</span>
+                <span class="text-gray-400">Last sync: {{ gpodder_account.last_sync_at|user_datetime_format:user }}</span>
+              {% endif %}
+            </div>
+
+            <div class="space-y-3">
+              <form method="post" action="{% url 'import_gpodder' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                  Sync now
+                </button>
+              </form>
+
+              <form method="post" action="{% url 'gpodder_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-red-600 text-white hover:bg-red-700">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          {% else %}
+            <p class="text-sm text-gray-400 mb-3">
+              Recurring podcast history sync for GPodder, AntennaPod, and self-hosted compatible servers every 2 hours.
+            </p>
+
+            <form method="post" action="{% url 'gpodder_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Server URL</label>
+                <input type="url"
+                       name="server_url"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="https://gpodder.net"
+                       value="https://gpodder.net"
+                       required>
+              </div>
+
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Username</label>
+                <input type="text"
+                       name="username"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="Your GPodder username"
+                       required>
+              </div>
+
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Password / App Password</label>
+                <input type="password"
+                       name="password"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="Your password or app password"
+                       required>
+              </div>
+
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Optional Device Filter</label>
+                <input type="text"
+                       name="device_filter"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="antenna-pod-device">
+              </div>
+
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect GPodder
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
         {# Last.fm #}
         <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
              x-show="sourceSupports(['music'])"

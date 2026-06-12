@@ -69,6 +69,10 @@ SOURCES_CONFIG = {
         "name": "Pocket Casts",
         "logo": static("img/pocketcasts-logo.svg"),
     },
+    "gpodder": {
+        "name": "GPodder",
+        "logo": static("favicon/apple-touch-icon.png"),
+    },
     "lastfm": {
         "name": "Last.fm",
         "logo": static("img/lastfm-logo.png"),

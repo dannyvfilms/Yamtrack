@@ -679,7 +679,7 @@ def _render_podcast_show_track_modal(
     episode_plays_domain = bulk_episode_tracking.build_episode_play_domain(
         request.user,
         MediaTypes.PODCAST.value,
-        Sources.POCKETCASTS.value,
+        show.source,
         show.podcast_uuid,
         podcast_show=show,
     )
@@ -774,7 +774,7 @@ def track_modal(
     if (
         not standard_modal
         and media_type == MediaTypes.PODCAST.value
-        and source == Sources.POCKETCASTS.value
+        and source in {Sources.POCKETCASTS.value, Sources.GPODDER.value}
     ):
         from app.models import PodcastEpisode, PodcastShow
 

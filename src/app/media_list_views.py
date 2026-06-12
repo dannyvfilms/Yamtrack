@@ -1588,7 +1588,7 @@ def media_list(request, media_type):
                 # Use the show's podcast_uuid as media_id for routing
                 self.item, _ = Item.objects.get_or_create(
                     media_id=tracker.show.podcast_uuid,
-                    source=Sources.POCKETCASTS.value,
+                    source=tracker.show.source,
                     media_type=MediaTypes.PODCAST.value,
                     defaults={
                         "title": tracker.show.title,
