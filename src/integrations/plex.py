@@ -571,6 +571,7 @@ def _parse_resources_xml(
                 "name": device.attrib.get("name"),
                 "machine_identifier": device.attrib.get("clientIdentifier"),
                 "access_token": device.attrib.get("accessToken") or fallback_token,
+                "owned": device.attrib.get("owned") in ("1", "true"),
                 "connections": connections,
             },
         )

@@ -601,13 +601,20 @@ class BaseWebhookProcessor:
         else:
             logger.warning("No TMDB or IMDB ID found for movie, skipping processing")
 
-    def _find_tv_media_id(self, ids, series_title=None, allow_title_fallback=False):
+    def _find_tv_media_id(
+        self,
+        ids,
+        series_title=None,
+        allow_title_fallback=False,
+        year=None,
+    ):
         """Find TV media ID from external IDs, with optional title search fallback.
 
         Args:
             ids: Dict of external IDs (tmdb_id, tvdb_id, imdb_id, anidb_id).
             series_title: Show title used for title-search fallback.
             allow_title_fallback: Enable title-search when all ID lookups fail.
+            year: First-air year used to disambiguate title-search results.
 
         Returns:
             tuple: (media_id, season_number, episode_number)
@@ -647,8 +654,8 @@ class BaseWebhookProcessor:
                 MediaTypes.TV.value, series_title, page=1,
             )
             results = (search_results or {}).get("results") or []
-            if results:
-                found_id = results[0].get("media_id")
+            found_id = self._pick_title_search_result(results, year)
+            if found_id:
                 logger.info("Resolved TV entry via title search")
                 return str(found_id), None, None
 
@@ -659,8 +666,8 @@ class BaseWebhookProcessor:
                     MediaTypes.TV.value, clean_title, page=1,
                 )
                 results = (search_results or {}).get("results") or []
-                if results:
-                    found_id = results[0].get("media_id")
+                found_id = self._pick_title_search_result(results, year)
+                if found_id:
                     logger.info("Resolved TV entry via normalized title search")
                     return str(found_id), None, None
         except Exception as exc:
@@ -669,6 +676,18 @@ class BaseWebhookProcessor:
             )
 
         return None, None, None
+
+    def _pick_title_search_result(self, results, year):
+        """Pick the search result matching the show year, if one was given."""
+        if not results:
+            return None
+        if year is not None:
+            for result in results:
+                result_year = result.get("year")
+                if result_year and str(result_year) == str(year):
+                    return result.get("media_id")
+            return None
+        return results[0].get("media_id")
 
     def _get_mal_id_from_provider_links(
         self,

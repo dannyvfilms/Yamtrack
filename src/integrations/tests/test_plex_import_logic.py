@@ -1013,6 +1013,284 @@ class TestPlexAnimeImportRouting(TestCase):
             8,
         )
 
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    @patch("integrations.imports.plex.app.providers.tmdb.find")
+    def test_tvdb_numbering_remapped_to_tmdb(
+        self,
+        mock_find,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """An episode-level Guid should recover TMDB numbering for split seasons."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {"show_id": "tmdb-split", "season_number": 3, "episode_number": 1},
+            ],
+        }
+        importer = self._importer()
+        record = self._record(
+            "tmdb-split",
+            2,
+            8,
+            series_title="Split Show",
+        )
+        record["external_ids"]["tvdb_id"] = "9000123"
+        importer._episode_records = [record]
+        importer._tv_metadata_cache = {
+            "tmdb-split": self._metadata(
+                "tmdb-split",
+                "Split Show",
+                seasons={2: range(1, 8), 3: range(1, 12)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        episodes = importer.bulk_media[MediaTypes.EPISODE.value]
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(episodes[0].item.season_number, 3)
+        self.assertEqual(episodes[0].item.episode_number, 1)
+        self.assertFalse(
+            any("not found" in warning for warning in importer.warnings),
+        )
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    def test_cumulative_numbering_remap_for_split_seasons(
+        self,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """TVDB S2E8 should land on TMDB S3E1 when TMDB splits the season."""
+        importer = self._importer()
+        record = self._record(
+            "tmdb-demon",
+            2,
+            8,
+            series_title="Demon Slayer",
+        )
+        importer._episode_records = [record]
+        metadata = self._metadata(
+            "tmdb-demon",
+            "Demon Slayer",
+            seasons={2: range(1, 8), 3: range(1, 12)},
+        )
+        metadata["related"] = {
+            "seasons": [
+                {"season_number": 1, "episode_count": 26},
+                {"season_number": 2, "episode_count": 7},
+                {"season_number": 3, "episode_count": 11},
+            ],
+        }
+        importer._tv_metadata_cache = {"tmdb-demon": metadata}
+
+        importer._build_bulk_media()
+
+        episodes = importer.bulk_media[MediaTypes.EPISODE.value]
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(episodes[0].item.season_number, 3)
+        self.assertEqual(episodes[0].item.episode_number, 1)
+        self.assertFalse(
+            any("not found" in warning for warning in importer.warnings),
+        )
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    @patch("integrations.imports.plex.app.providers.mal.anime")
+    def test_anime_routing_not_blocked_by_stale_global_items(
+        self,
+        mock_mal,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """A leftover global TV Item must not pin another user's show to TV."""
+        mock_mal.return_value = {
+            "title": "Stale Item Anime",
+            "image": "https://example.com/stale.jpg",
+            "max_progress": 12,
+        }
+        # Global TV item from an old/buggy import; this user has no TV row.
+        Item.objects.create(
+            media_id="tmdb-stale",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Stale Item Anime",
+            image="https://example.com/stale.jpg",
+        )
+        self._create_mal_mapping("777", Sources.TVDB.value, "tvdb-stale", season=1)
+        importer = self._importer()
+        importer._episode_records = [
+            self._record(
+                "tmdb-stale",
+                1,
+                1,
+                series_title="Stale Item Anime",
+            ),
+        ]
+        importer._tv_metadata_cache = {
+            "tmdb-stale": self._metadata(
+                "tmdb-stale",
+                "Stale Item Anime",
+                tvdb_id="tvdb-stale",
+                seasons={1: range(1, 13)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        self.assertTrue(
+            Anime.objects.filter(user=self.user, item__media_id="777").exists(),
+        )
+        self.assertEqual(len(importer.bulk_media[MediaTypes.TV.value]), 0)
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 0)
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    @patch("integrations.imports.plex.app.providers.mal.anime")
+    def test_user_tracked_tv_show_stays_tv(
+        self,
+        mock_mal,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """A show the user tracks as TV must not be rerouted to anime."""
+        mock_mal.return_value = {
+            "title": "Tracked Show",
+            "image": "https://example.com/tracked.jpg",
+            "max_progress": 12,
+        }
+        tv_item = Item.objects.create(
+            media_id="tmdb-tracked",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Tracked Show",
+            image="https://example.com/tracked.jpg",
+        )
+        TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        self._create_mal_mapping("778", Sources.TVDB.value, "tvdb-tracked", season=1)
+        importer = self._importer()
+        importer._episode_records = [
+            self._record(
+                "tmdb-tracked",
+                1,
+                1,
+                series_title="Tracked Show",
+            ),
+        ]
+        importer._tv_metadata_cache = {
+            "tmdb-tracked": self._metadata(
+                "tmdb-tracked",
+                "Tracked Show",
+                tvdb_id="tvdb-tracked",
+                seasons={1: range(1, 13)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        self.assertFalse(
+            Anime.objects.filter(user=self.user, item__media_id="778").exists(),
+        )
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 1)
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    @patch("integrations.imports.plex.app.providers.mal.anime")
+    def test_anime_section_hint_routes_to_anime(
+        self,
+        mock_mal,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """Records from an anime library route to anime despite TV tracking."""
+        mock_mal.return_value = {
+            "title": "Hinted Anime",
+            "image": "https://example.com/hinted.jpg",
+            "max_progress": 12,
+        }
+        tv_item = Item.objects.create(
+            media_id="tmdb-hinted",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Hinted Anime",
+            image="https://example.com/hinted.jpg",
+        )
+        TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        self._create_mal_mapping("779", Sources.TVDB.value, "tvdb-hinted", season=1)
+        importer = self._importer()
+        record = self._record(
+            "tmdb-hinted",
+            1,
+            1,
+            series_title="Hinted Anime",
+        )
+        record["anime_section"] = True
+        importer._episode_records = [record]
+        importer._tv_metadata_cache = {
+            "tmdb-hinted": self._metadata(
+                "tmdb-hinted",
+                "Hinted Anime",
+                tvdb_id="tvdb-hinted",
+                seasons={1: range(1, 13)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        self.assertTrue(
+            Anime.objects.filter(user=self.user, item__media_id="779").exists(),
+        )
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 0)
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    def test_unmappable_anime_marked_anime_library_type(
+        self,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """Anime-library shows without a MAL mapping land in the anime view."""
+        importer = self._importer()
+        record = self._record(
+            "tmdb-unmapped",
+            1,
+            1,
+            series_title="Unmapped Anime",
+        )
+        record["anime_section"] = True
+        importer._episode_records = [record]
+        importer._tv_metadata_cache = {
+            "tmdb-unmapped": self._metadata(
+                "tmdb-unmapped",
+                "Unmapped Anime",
+                seasons={1: range(1, 13)},
+            ),
+        }
+
+        importer._build_bulk_media()
+
+        tv_rows = importer.bulk_media[MediaTypes.TV.value]
+        self.assertEqual(len(tv_rows), 1)
+        self.assertEqual(
+            tv_rows[0].item.library_media_type,
+            MediaTypes.ANIME.value,
+        )
+        episodes = importer.bulk_media[MediaTypes.EPISODE.value]
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(
+            episodes[0].item.library_media_type,
+            MediaTypes.ANIME.value,
+        )
+
 
 class TestPlexPostImportSideEffects(TestCase):
     """Plex imports should refresh dependent caches and queue collection refresh."""
@@ -1324,3 +1602,218 @@ class TestOverwriteMetadataFailureSafety(TestCase):
             TV.objects.filter(user=self.user, item__media_id="8888").exists(),
             "TV show was deleted before TMDB error propagated — delete happened too early",
         )
+
+
+class TestPlexIdentityAndScorePreservation(TestCase):
+    """Friend-server identity filtering and overwrite-mode score preservation."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="identityuser")
+        self.account = PlexAccount.objects.create(
+            user=self.user,
+            plex_token="token",
+            plex_username="identityuser",
+            plex_account_id="111",
+        )
+        self.user.plex_usernames = "identityuser"
+        self.user.save()
+
+    def _importer(self, mode="new"):
+        return PlexHistoryImporter(
+            user=self.user,
+            account=self.account,
+            mode=mode,
+            library="machine::1",
+        )
+
+    def _configured_importer(self, *, owned):
+        importer = self._importer()
+        importer._allowed_usernames = ["identityuser"]
+        importer._allowed_account_ids = {"111"}
+        importer._current_server_owned = owned
+        return importer
+
+    def test_friend_server_owner_history_skipped(self):
+        """Treat accountID 1 on a shared server as the friend, never this user."""
+        importer = self._configured_importer(owned=False)
+
+        allowed = importer._is_allowed_history_user({"accountID": "1"})
+
+        self.assertFalse(allowed)
+        self.assertEqual(importer._skipped_user_count, 1)
+
+    def test_owned_server_owner_history_imported(self):
+        """Treat accountID 1 on the user's own server as the user."""
+        importer = self._configured_importer(owned=True)
+
+        allowed = importer._is_allowed_history_user({"accountID": "1"})
+
+        self.assertTrue(allowed)
+        self.assertEqual(importer._skipped_user_count, 0)
+
+    def test_unverified_identity_skipped_on_shared_server(self):
+        """Without filters, shared-server history must not import blindly."""
+        importer = self._importer()
+        importer._allowed_usernames = []
+        importer._account_id = None
+        importer._current_server_owned = False
+
+        allowed = importer._is_allowed_history_user({"accountID": "5"})
+
+        self.assertFalse(allowed)
+        self.assertTrue(
+            any("Could not verify" in warning for warning in importer.warnings),
+        )
+
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data", return_value={})
+    @patch("integrations.imports.plex.app.providers.tvdb.enabled", return_value=False)
+    def test_overwrite_import_preserves_yamtrack_scores(
+        self,
+        _mock_tvdb_enabled,
+        _mock_mapping_data,
+    ):
+        """Scores set in Yamtrack survive periodic overwrite imports."""
+        movie_item, _ = Item.objects.get_or_create(
+            media_id="501",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            defaults={"title": "Scored Movie", "image": "https://example.com/m.jpg"},
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            score=9.5,
+        )
+        tv_item, _ = Item.objects.get_or_create(
+            media_id="601",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Scored Show", "image": "https://example.com/t.jpg"},
+        )
+        tv_row = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            score=8.0,
+        )
+        season_item, _ = Item.objects.get_or_create(
+            media_id="601",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            defaults={"title": "Scored Show", "image": "https://example.com/t.jpg"},
+        )
+        Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv_row,
+            status=Status.IN_PROGRESS.value,
+            score=7.0,
+        )
+
+        importer = self._importer(mode="overwrite")
+        importer.to_delete[MediaTypes.MOVIE.value][Sources.TMDB.value].add("501")
+        importer.to_delete[MediaTypes.TV.value][Sources.TMDB.value].add("601")
+        importer._capture_existing_scores()
+        helpers.cleanup_existing_media(importer.to_delete, self.user)
+
+        watched_at = timezone.now().replace(second=0, microsecond=0)
+        importer._movie_records = [
+            {
+                "tmdb_id": "501",
+                "imdb_id": None,
+                "watched_at": watched_at,
+                "rating": None,
+                "title": "Scored Movie",
+            },
+        ]
+        importer._movie_metadata_cache = {
+            "501": {
+                "media_id": "501",
+                "title": "Scored Movie",
+                "image": "https://example.com/m.jpg",
+            },
+        }
+        importer._episode_records = [
+            {
+                "tmdb_id": "601",
+                "external_ids": {},
+                "season_number": 1,
+                "episode_number": 1,
+                "watched_at": watched_at,
+                "viewed_at_ts": None,
+                "plex_rating_key": "rk601",
+                "rating": None,
+                "title": "Episode 1",
+                "series_title": "Scored Show",
+                "guid": None,
+            },
+        ]
+        importer._tv_metadata_cache = {
+            "601": {
+                "media_id": "601",
+                "title": "Scored Show",
+                "original_title": "Scored Show",
+                "localized_title": "Scored Show",
+                "image": "https://example.com/t.jpg",
+                "season/1": {
+                    "image": "https://example.com/t-s1.jpg",
+                    "max_progress": 10,
+                    "episodes": [{"episode_number": 1}],
+                },
+            },
+        }
+
+        importer._build_bulk_media()
+
+        movie_obj = importer.bulk_media[MediaTypes.MOVIE.value][0]
+        self.assertEqual(movie_obj.score, 9.5)
+        tv_obj = importer.bulk_media[MediaTypes.TV.value][0]
+        self.assertEqual(tv_obj.score, 8.0)
+        season_obj = importer.bulk_media[MediaTypes.SEASON.value][0]
+        self.assertEqual(season_obj.score, 7.0)
+
+    @patch("integrations.imports.plex.services.search")
+    @patch("integrations.webhooks.base.app.providers.tmdb.search")
+    @patch("integrations.imports.plex.plex_api.fetch_metadata")
+    def test_title_fallback_uses_grandparent_show_ids(
+        self,
+        mock_fetch_metadata,
+        mock_tmdb_search,
+        mock_services_search,
+    ):
+        """Show-level Plex Guids resolve the show before any title search."""
+        mock_fetch_metadata.return_value = {
+            "type": "show",
+            "title": "ONE PIECE",
+            "year": 2023,
+            "Guid": [{"id": "tmdb://111110"}],
+        }
+        importer = self._importer()
+        importer._current_section_uri = "http://plex"
+        metadata = {
+            "type": "episode",
+            "title": "Romance Dawn",
+            "grandparentTitle": "ONE PIECE",
+            "grandparentRatingKey": "gp1",
+            "parentIndex": 1,
+            "index": 1,
+            "viewedAt": 1700000000,
+            "ratingKey": "rk-op-1",
+        }
+        ids = {
+            "tmdb_id": None,
+            "tvdb_id": None,
+            "imdb_id": None,
+            "anidb_id": None,
+            "plex_guid": None,
+        }
+
+        recorded = importer._record_episode_entry(metadata, ids)
+
+        self.assertTrue(recorded)
+        self.assertEqual(importer._episode_records[0]["tmdb_id"], "111110")
+        mock_tmdb_search.assert_not_called()
+        mock_services_search.assert_not_called()
