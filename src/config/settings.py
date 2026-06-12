@@ -200,8 +200,18 @@ INSTALLED_APPS = [
 if ENABLE_DEBUG_TOOLBAR:
     INSTALLED_APPS.append("debug_toolbar")
 
+# Slow-request instrumentation: log requests exceeding either threshold.
+PERF_LOG_ENABLED = config("PERF_LOG_ENABLED", default=True, cast=bool)
+PERF_LOG_SLOW_REQUEST_MS = config("PERF_LOG_SLOW_REQUEST_MS", default=500, cast=int)
+PERF_LOG_QUERY_COUNT_THRESHOLD = config(
+    "PERF_LOG_QUERY_COUNT_THRESHOLD",
+    default=75,
+    cast=int,
+)
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "app.middleware.RequestPerformanceLoggingMiddleware",
     "app.middleware.DatabaseRetryMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",

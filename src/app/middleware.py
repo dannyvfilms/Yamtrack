@@ -3,6 +3,7 @@ import time
 
 from django.conf import settings
 from django.contrib.auth import get_user_model, login
+from django.db import connection
 from django.db.utils import OperationalError
 from django.http import HttpRequest
 from django.urls import reverse
@@ -41,6 +42,47 @@ class AutoLoginMiddleware:
                 pass
 
         return self.get_response(request)
+
+
+class RequestPerformanceLoggingMiddleware:
+    """Log slow or query-heavy requests so regressions are visible in production.
+
+    Query counting uses connection.execute_wrapper so it works without DEBUG.
+    """
+
+    def __init__(self, get_response):
+        """Initialize the middleware with the get_response callable."""
+        self.get_response = get_response
+
+    def __call__(self, request):
+        """Time the request and count its queries, logging when over thresholds."""
+        if not settings.PERF_LOG_ENABLED:
+            return self.get_response(request)
+
+        query_count = {"total": 0}
+
+        def count_query(execute, sql, params, many, context):
+            query_count["total"] += 1
+            return execute(sql, params, many, context)
+
+        start = time.perf_counter()
+        with connection.execute_wrapper(count_query):
+            response = self.get_response(request)
+        duration_ms = (time.perf_counter() - start) * 1000
+
+        if (
+            duration_ms >= settings.PERF_LOG_SLOW_REQUEST_MS
+            or query_count["total"] >= settings.PERF_LOG_QUERY_COUNT_THRESHOLD
+        ):
+            logger.info(
+                "slow_request method=%s path=%s status=%s duration_ms=%.0f queries=%s",
+                request.method,
+                request.path,
+                response.status_code,
+                duration_ms,
+                query_count["total"],
+            )
+        return response
 
 
 class DatabaseRetryMiddleware:
