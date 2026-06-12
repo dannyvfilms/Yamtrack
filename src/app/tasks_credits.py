@@ -11,6 +11,7 @@ from django.core.cache import cache
 from app import credits as credit_helpers
 from app.log_safety import exception_summary
 from app.models import CREDITS_BACKFILL_VERSION, Item, MediaTypes, MetadataBackfillField
+from app.task_cooperation import CooperativeRun
 from app.tasks_backfill_state import (
     _filter_backfill_item_ids,
     _normalize_item_ids,
@@ -63,7 +64,8 @@ def _populate_credits_for_items(items, delay_seconds):
     error_count = 0
     updated_items = []
 
-    for item in items:
+    run = CooperativeRun("credits_backfill")
+    for item in run.iter(items):
         try:
             if item.media_type == MediaTypes.EPISODE.value and (
                 item.season_number is None or item.episode_number is None
@@ -130,6 +132,7 @@ def _populate_credits_for_items(items, delay_seconds):
             logger.error("Error syncing credits for %s: %s", item.title, exception_summary(exc))
             _record_backfill_failure(item, MetadataBackfillField.CREDITS, f"exception: {exception_summary(exc)}")
 
+    run.reenqueue_if_deferred(enqueue_credits_backfill_items)
     logger.info("Credits population batch completed: %s updated, %s errors", updated_count, error_count)
     if updated_items:
         _schedule_metadata_statistics_refresh(

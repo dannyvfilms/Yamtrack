@@ -13,6 +13,7 @@ from django.core.cache import cache
 from app.log_safety import exception_summary
 from app.models import TRAKT_POPULARITY_BACKFILL_VERSION, MetadataBackfillField
 from app.services import trakt_popularity as trakt_popularity_service
+from app.task_cooperation import CooperativeRun
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,8 @@ def populate_trakt_popularity_data_for_items(
 
     updated_count = 0
     error_count = 0
-    for item in items:
+    run = CooperativeRun("trakt_popularity_backfill")
+    for item in run.iter(items):
         try:
             trakt_popularity_service.refresh_trakt_popularity(
                 item,
@@ -121,6 +123,10 @@ def populate_trakt_popularity_data_for_items(
                 MetadataBackfillField.TRAKT_POPULARITY,
                 f"exception: {exception_summary(exc)}",
             )
+
+    run.reenqueue_if_deferred(
+        lambda ids: enqueue_trakt_popularity_backfill_items(ids, force=force),
+    )
 
     return {
         "updated": updated_count,

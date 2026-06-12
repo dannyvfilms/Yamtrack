@@ -15,6 +15,7 @@ from django.utils import timezone
 from app.log_safety import exception_summary
 from app.models import Item, MediaTypes, MetadataBackfillField, MetadataBackfillState
 from app.providers import services
+from app.task_cooperation import CooperativeRun
 from app.tasks_backfill_state import (
     _apply_backfill_state_filters,
     _filter_backfill_item_ids,
@@ -218,7 +219,8 @@ def _populate_runtime_for_items(items, delay_seconds):
                 logger.error("Failed to mark %s as failed: %s", item.title, save_error)
         return give_up
 
-    for item in items:
+    run = CooperativeRun("runtime_backfill")
+    for item in run.iter(items):
         try:
             metadata = services.get_media_metadata(
                 item.media_type.lower(),
@@ -278,6 +280,7 @@ def _populate_runtime_for_items(items, delay_seconds):
             logger.error("Error updating runtime for %s: %s", item.title, exception_summary(exc))
             _mark_runtime_failure(item, f"exception: {exception_summary(exc)}")
 
+    run.reenqueue_if_deferred(enqueue_runtime_backfill_items)
     logger.info("Runtime population batch completed: %s updated, %s errors", updated_count, error_count)
     if updated_items:
         _schedule_metadata_statistics_refresh(

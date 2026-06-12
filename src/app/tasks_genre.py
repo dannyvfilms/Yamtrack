@@ -15,6 +15,7 @@ from app.interactive_requests import interactive_request_active
 from app.log_safety import exception_summary
 from app.models import Item, MediaTypes, MetadataBackfillField, Sources
 from app.providers import services
+from app.task_cooperation import CooperativeRun
 from app.tasks_backfill_state import (
     GENRE_BACKFILL_VERSION,
     _apply_backfill_state_filters,
@@ -154,7 +155,8 @@ def _populate_genres_for_items(items, delay_seconds):
     updated_count = 0
     error_count = 0
     updated_items = []
-    for item in items:
+    run = CooperativeRun("genre_backfill")
+    for item in run.iter(items):
         try:
             metadata = services.get_media_metadata(
                 item.media_type.lower(),
@@ -217,6 +219,7 @@ def _populate_genres_for_items(items, delay_seconds):
             logger.error("Error updating genres for %s: %s", item.title, exception_summary(exc))
             _record_backfill_failure(item, MetadataBackfillField.GENRES, f"exception: {exception_summary(exc)}")
 
+    run.reenqueue_if_deferred(enqueue_genre_backfill_items)
     logger.info("Genre population batch completed: %s updated, %s errors", updated_count, error_count)
     if updated_items:
         _schedule_metadata_statistics_refresh(
