@@ -29,8 +29,10 @@
     <link rel="stylesheet"
           type="text/css"
           href="{% static 'css/main.css' %}{% get_static_file_mtime 'css/main.css' %}">
-    {% if debug %}
+    {% djdt_enabled as djdt_is_enabled %}
+    {% if djdt_is_enabled %}
     <link rel="stylesheet" href="{% static 'debug_toolbar/css/toolbar.css' %}">
+    <script type="module" src="{% static 'debug_toolbar/js/toolbar.js' %}"></script>
     {% endif %}
 
     <script src="{% static 'js/libraries/htmx-2.0.4.min.js' %}"></script>

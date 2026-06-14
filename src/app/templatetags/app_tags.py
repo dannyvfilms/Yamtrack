@@ -25,6 +25,11 @@ def absolute_app_url(context, path):
 
 
 @register.simple_tag
+def djdt_enabled():
+    return getattr(settings, "ENABLE_DEBUG_TOOLBAR", False)
+
+
+@register.simple_tag
 def get_static_file_mtime(file_path):
     """Return the last modification time of a static file for cache busting."""
     # Check STATICFILES_DIRS first (for development), then STATIC_ROOT (for production)
