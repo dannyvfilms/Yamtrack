@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from django.db import transaction
 from django.db.utils import IntegrityError, OperationalError
 
 logger = logging.getLogger(__name__)
@@ -122,9 +123,13 @@ def update_or_create_race_safe(manager, *, defaults: dict, **lookup):
 
     SQLite's SELECT FOR UPDATE is advisory-only, so two concurrent callers can
     both see no row, then both attempt INSERT — causing an IntegrityError on the
-    loser.  A single retry finds the now-existing row and runs UPDATE instead.
+    loser.  Each attempt is wrapped in its own atomic() savepoint so the error
+    only rolls back the savepoint, not the outer transaction, leaving the
+    connection in a clean state for the retry's GET to find the now-existing row.
     """
     try:
-        return manager.update_or_create(**lookup, defaults=defaults)
+        with transaction.atomic():
+            return manager.update_or_create(**lookup, defaults=defaults)
     except IntegrityError:
-        return manager.update_or_create(**lookup, defaults=defaults)
+        with transaction.atomic():
+            return manager.update_or_create(**lookup, defaults=defaults)
