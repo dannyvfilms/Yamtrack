@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.apps import apps
 from django.conf import settings
+from django.db import IntegrityError
 from django.utils.dateparse import parse_datetime
 
 import app
@@ -75,6 +76,25 @@ def _normalize_status(value):
         "abandoned": Status.DROPPED.value,
     }
     return aliases.get(lowered, raw)
+
+
+def _find_item_after_integrity_error(lookup, original_exc):
+    """Return the Item that caused a UniqueViolation during update_or_create.
+
+    Two-stage search:
+    1. Exact match on all lookup fields (covers PostgreSQL race-window case).
+    2. Broader match ignoring library_media_type, for items whose
+       library_media_type was '' in the DB but exported as 'tv'/'anime'/etc.
+    Raises the original IntegrityError if no row is found either way.
+    """
+    item = app.models.Item.objects.filter(**lookup).first()
+    if item is not None:
+        return item
+    partial = {k: v for k, v in lookup.items() if k != "library_media_type"}
+    item = app.models.Item.objects.filter(**partial).first()
+    if item is not None:
+        return item
+    raise original_exc
 
 
 def importer(file, user, mode):
@@ -248,20 +268,23 @@ class YamtrackImporter:
                 episode_number,
             )
 
-        item, _ = helpers.retry_on_lock(
-            lambda: app.models.Item.objects.update_or_create(
-                media_id=row["media_id"],
-                source=row["source"],
-                media_type=media_type,
-                library_media_type=library_media_type,
-                season_number=season_number,
-                episode_number=episode_number,
-                defaults={
-                    "title": row["title"],
-                    "image": row["image"],
-                },
-            ),
+        item_lookup = dict(
+            media_id=row["media_id"],
+            source=row["source"],
+            media_type=media_type,
+            library_media_type=library_media_type,
+            season_number=season_number,
+            episode_number=episode_number,
         )
+        try:
+            item, _ = helpers.retry_on_lock(
+                lambda: app.models.Item.objects.update_or_create(
+                    **item_lookup,
+                    defaults={"title": row["title"], "image": row["image"]},
+                ),
+            )
+        except IntegrityError as exc:
+            item = _find_item_after_integrity_error(item_lookup, exc)
 
         model = apps.get_model(app_label="app", model_name=media_type)
         instance = model(item=item)
@@ -419,20 +442,23 @@ class YamtrackImporter:
                 episode_number,
             )
 
-        item, _ = helpers.retry_on_lock(
-            lambda: app.models.Item.objects.update_or_create(
-                media_id=row["media_id"],
-                source=row["source"],
-                media_type=media_type,
-                library_media_type=library_media_type,
-                season_number=season_number,
-                episode_number=episode_number,
-                defaults={
-                    "title": row["title"],
-                    "image": row["image"],
-                },
-            ),
+        list_item_lookup = dict(
+            media_id=row["media_id"],
+            source=row["source"],
+            media_type=media_type,
+            library_media_type=library_media_type,
+            season_number=season_number,
+            episode_number=episode_number,
         )
+        try:
+            item, _ = helpers.retry_on_lock(
+                lambda: app.models.Item.objects.update_or_create(
+                    **list_item_lookup,
+                    defaults={"title": row["title"], "image": row["image"]},
+                ),
+            )
+        except IntegrityError as exc:
+            item = _find_item_after_integrity_error(list_item_lookup, exc)
 
         list_item, created = CustomListItem.objects.get_or_create(
             custom_list=custom_list,
