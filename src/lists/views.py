@@ -1513,6 +1513,8 @@ def lists_modal(
     try:
         item = Item.objects.get(**lookup)
         _maybe_backfill_episode_title(item, force=True)
+    except Item.MultipleObjectsReturned:
+        item = Item.objects.filter(**lookup).first()
     except Item.DoesNotExist:
         metadata = services.get_media_metadata(
             media_type,
