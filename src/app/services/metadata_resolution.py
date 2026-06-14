@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from django.conf import settings
 
 from app import config
-from app.db_retry import run_retryable_db_operation
+from app.db_retry import run_retryable_db_operation, update_or_create_race_safe
 from app.models import (
     Item,
     ItemProviderLink,
@@ -349,7 +349,8 @@ def upsert_provider_links(
         if episode_offset is not None:
             link_defaults["episode_offset"] = episode_offset
         provider_link_outcome = run_retryable_db_operation(
-            lambda: ItemProviderLink.objects.update_or_create(
+            lambda: update_or_create_race_safe(
+                ItemProviderLink.objects,
                 item=item,
                 provider=normalized_provider,
                 provider_media_type=normalized_media_type,

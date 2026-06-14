@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from django.db.utils import OperationalError
+from django.db.utils import IntegrityError, OperationalError
 
 logger = logging.getLogger(__name__)
 
@@ -115,3 +115,16 @@ def run_retryable_db_operation(
             )
             time.sleep(sleep_for)
             attempt += 1
+
+
+def update_or_create_race_safe(manager, *, defaults: dict, **lookup):
+    """update_or_create with one retry on IntegrityError for SQLite race conditions.
+
+    SQLite's SELECT FOR UPDATE is advisory-only, so two concurrent callers can
+    both see no row, then both attempt INSERT — causing an IntegrityError on the
+    loser.  A single retry finds the now-existing row and runs UPDATE instead.
+    """
+    try:
+        return manager.update_or_create(**lookup, defaults=defaults)
+    except IntegrityError:
+        return manager.update_or_create(**lookup, defaults=defaults)
