@@ -561,7 +561,7 @@ document.addEventListener("alpine:init", () => {
           }
         });
 
-        if (progressField.value.trim() && endDateField.value) {
+        if (isNewForm && progressField.value.trim() && endDateField.value) {
           this.syncStartDateFromProgress();
         }
       }
