@@ -119,17 +119,36 @@ def run_retryable_db_operation(
 
 
 def update_or_create_race_safe(manager, *, defaults: dict, **lookup):
-    """update_or_create with one retry on IntegrityError for SQLite race conditions.
+    """update_or_create with retry/fallback for SQLite IntegrityError scenarios.
 
-    SQLite's SELECT FOR UPDATE is advisory-only, so two concurrent callers can
-    both see no row, then both attempt INSERT — causing an IntegrityError on the
-    loser.  Each attempt is wrapped in its own atomic() savepoint so the error
-    only rolls back the savepoint, not the outer transaction, leaving the
-    connection in a clean state for the retry's GET to find the now-existing row.
+    Two failure modes are handled:
+
+    1. Race condition: two concurrent workers both see no row, both try INSERT.
+       The loser gets IntegrityError.  Wrapping in atomic() (savepoint) lets
+       the retry's GET find the now-existing row and run UPDATE instead.
+
+    2. Cross-key conflict: the lookup key and the unique constraint key differ
+       (e.g. same provider_media_id already linked to a *different* item).
+       GET finds nothing, INSERT fails, and the retry also fails.  In this
+       case we return (None, False) so the caller can continue rather than crash.
     """
     try:
         with transaction.atomic():
             return manager.update_or_create(**lookup, defaults=defaults)
     except IntegrityError:
+        pass
+
+    try:
         with transaction.atomic():
             return manager.update_or_create(**lookup, defaults=defaults)
+    except IntegrityError:
+        try:
+            return manager.get(**lookup), False
+        except manager.model.DoesNotExist:
+            logger.warning(
+                "Persistent IntegrityError for %s with lookup %r — "
+                "conflict with a different constraint key; skipping.",
+                manager.model.__name__,
+                lookup,
+            )
+            return None, False
