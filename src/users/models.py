@@ -1470,8 +1470,14 @@ class User(AbstractUser):
                 if async_result.status != task.status:
                     task.status = async_result.status
                     task.result = async_result.result
+                    task.traceback = async_result.traceback
                     task.date_done = async_result.date_done or timezone.now()
-                    task.save(update_fields=["status", "result", "date_done"])
+                    task.save(update_fields=["status", "result", "traceback", "date_done"])
+            elif task.status == states.FAILURE and not task.traceback:
+                async_result = AsyncResult(task.task_id)
+                if async_result.traceback:
+                    task.traceback = async_result.traceback
+                    task.save(update_fields=["traceback"])
 
             source = result_task_to_source[task.task_name]
             processed_task = helpers.process_task_result(task)

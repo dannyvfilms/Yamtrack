@@ -83,25 +83,37 @@
         {% if result.status %}
           {% if result.summary %}<div class="text-sm text-gray-200">{{ result.summary }}</div>{% endif %}
 
-          <div class="mt-2" x-data="{ showDetails: false }" x-cloak>
+          <div class="mt-2" x-data="{ showDetails: false, copied: false }" x-cloak>
             {% if result.errors %}
               {% if result.status == "SUCCESS" %}
                 <button @click="showDetails = !showDetails"
                         class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
                         x-text="showDetails ? 'Hide failed items' : 'Show failed items'">Show failed items</button>
 
-              {% elif result.status == "FAILURE" %}
-                <button @click="showDetails = !showDetails"
-                        class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
-                        x-text="showDetails ? 'Hide traceback' : 'Show traceback'">Show traceback</button>
-              {% endif %}
-
-              <div class="mt-2 space-y-1 text-sm bg-[#2a2f35] p-3 rounded overflow-x-auto break-words"
-                   x-show="showDetails">
-                <div class="text-xs space-y-1 text-red-400">
-                  {% for error in result.errors.splitlines %}<div>{{ error }}</div>{% endfor %}
+                <div class="mt-2 space-y-1 text-sm bg-[#2a2f35] p-3 rounded overflow-x-auto break-words"
+                     x-show="showDetails">
+                  <div class="text-xs space-y-1 text-red-400">
+                    {% for error in result.errors.splitlines %}<div>{{ error }}</div>{% endfor %}
+                  </div>
                 </div>
-              </div>
+
+              {% elif result.status == "FAILURE" %}
+                <div class="flex items-center gap-3">
+                  <button @click="showDetails = !showDetails"
+                          class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                          x-text="showDetails ? 'Hide traceback' : 'Show traceback'">Show traceback</button>
+                  <button x-show="showDetails"
+                          @click="navigator.clipboard.writeText($refs.traceback.textContent); copied = true; setTimeout(() => copied = false, 2000)"
+                          class="text-xs transition-colors cursor-pointer"
+                          :class="copied ? 'text-green-400' : 'text-gray-400 hover:text-gray-200'"
+                          x-text="copied ? 'Copied!' : 'Copy'">Copy</button>
+                </div>
+
+                <div class="mt-2 bg-[#1a1e24] border border-red-900/40 rounded overflow-auto"
+                     x-show="showDetails">
+                  <pre x-ref="traceback" class="text-xs text-red-400 p-3 whitespace-pre font-mono leading-relaxed select-all">{{ result.errors }}</pre>
+                </div>
+              {% endif %}
             {% endif %}
           </div>
         {% endif %}
