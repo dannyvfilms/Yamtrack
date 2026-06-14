@@ -381,7 +381,8 @@ def upsert_provider_links(
             candidate_provider=candidate_provider,
             external_id=external_id,
         ):
-            return ItemProviderLink.objects.update_or_create(
+            return update_or_create_race_safe(
+                ItemProviderLink.objects,
                 item=item,
                 provider=candidate_provider,
                 provider_media_type=normalized_media_type,
@@ -476,7 +477,8 @@ def resolve_provider_media_id(
         )
         if mapped_series_id:
             run_retryable_db_operation(
-                lambda: ItemProviderLink.objects.update_or_create(
+                lambda: update_or_create_race_safe(
+                    ItemProviderLink.objects,
                     item=item,
                     provider=provider,
                     provider_media_type=provider_media_type,
