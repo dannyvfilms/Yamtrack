@@ -1026,3 +1026,73 @@ class ImportTrakt(TestCase):
 
         tv_obj.refresh_from_db()
         self.assertEqual(tv_obj.status, Status.DROPPED.value)
+
+    def test_get_or_create_item_reuses_item_across_library_buckets(self):
+        """Episode existing under two library buckets must not crash the lookup.
+
+        Marking a season complete creates episode items inheriting the season's
+        ``library_media_type`` ('season'), while the importer creates them as
+        'episode'. Both rows are valid under the unique constraints, so a lookup
+        that ignores ``library_media_type`` previously raised
+        ``MultipleObjectsReturned``.
+        """
+        common = {
+            "media_id": "63404",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.EPISODE.value,
+            "season_number": 21,
+            "episode_number": 9,
+            "title": "Taskmaster",
+            "image": "img.jpg",
+        }
+        Item.objects.create(library_media_type=MediaTypes.EPISODE.value, **common)
+        Item.objects.create(library_media_type=MediaTypes.SEASON.value, **common)
+
+        trakt_importer = TraktImporter("testuser", self.user, "new")
+        metadata = {"title": "Taskmaster", "image": "img.jpg"}
+
+        result = trakt_importer._get_or_create_item(
+            MediaTypes.EPISODE.value,
+            "63404",
+            metadata,
+            season_number=21,
+            episode_number=9,
+        )
+
+        # Reuses the importer's preferred bucket, creates no duplicate.
+        self.assertEqual(result.library_media_type, MediaTypes.EPISODE.value)
+        self.assertEqual(
+            Item.objects.filter(
+                media_id="63404",
+                media_type=MediaTypes.EPISODE.value,
+                season_number=21,
+                episode_number=9,
+            ).count(),
+            2,
+        )
+
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    def test_process_history_skips_unexpected_entry_error(self, mock_paginated):
+        """A single failing entry is recorded as a warning, not fatal."""
+        episode_entry = {
+            "type": "episode",
+            "episode": {"season": 21, "number": 9, "title": "Bad Episode"},
+            "show": {"title": "Taskmaster", "ids": {"tmdb": 63404}},
+            "watched_at": "2023-01-01T00:00:00.000Z",
+        }
+        mock_paginated.return_value = [episode_entry]
+
+        trakt_importer = TraktImporter("testuser", self.user, "new")
+
+        with patch.object(
+            trakt_importer,
+            "process_watched_episode",
+            side_effect=ValueError("boom"),
+        ):
+            # Must not raise.
+            trakt_importer.process_history()
+
+        self.assertTrue(
+            any("skipped a watch entry" in warning for warning in trakt_importer.warnings),
+            trakt_importer.warnings,
+        )
