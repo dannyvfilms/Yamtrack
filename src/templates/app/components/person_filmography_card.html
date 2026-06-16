@@ -6,6 +6,10 @@
       <span class="absolute top-2 right-2 z-10 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md shadow-md">
         {{ entry.watched_person_runtime_display }}
       </span>
+    {% elif entry.vote_average %}
+      <span class="absolute top-2 right-2 z-10 bg-gray-900/80 text-gray-200 text-xs px-1.5 py-0.5 rounded shadow-md font-medium tabular-nums">
+        ★ {{ entry.vote_average|floatformat:1 }}
+      </span>
     {% endif %}
     {% if entry.tracked_item %}
       <a href="{{ entry.tracked_item|media_url }}">

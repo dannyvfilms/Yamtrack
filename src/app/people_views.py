@@ -17,6 +17,7 @@ from app.models import (
     Sources,
     Studio,
 )
+from users.models import MediaSortChoices
 from app.providers import comicvine, hardcover, igdb, mangaupdates, openlibrary, tmdb
 
 logger = __import__("logging").getLogger(__name__)
@@ -391,6 +392,58 @@ def person_detail(request, source, person_id, name):
         )
     )
 
+    # Collect filter options from the full unfiltered filmography.
+    all_departments = sorted({e["department"] for e in filmography if e.get("department")})
+    all_media_types = sorted({e["media_type"] for e in filmography if e.get("media_type")})
+
+    filter_department = request.GET.get("department", "")
+    filter_media_type_param = request.GET.get("media_type", "")
+    # Use the same sort key names as MediaSortChoices for consistency with the
+    # rest of the app. "release_date" desc is the default provider ordering.
+    _PERSON_VALID_SORTS = {
+        MediaSortChoices.RELEASE_DATE.value,
+        MediaSortChoices.TITLE.value,
+        MediaSortChoices.CRITIC_RATING.value,
+        MediaSortChoices.POPULARITY.value,
+    }
+    sort_by = request.GET.get("sort", MediaSortChoices.RELEASE_DATE.value)
+    if sort_by not in _PERSON_VALID_SORTS:
+        sort_by = MediaSortChoices.RELEASE_DATE.value
+    sort_dir = request.GET.get("direction", "")
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = "asc" if sort_by == MediaSortChoices.TITLE.value else "desc"
+
+    def _apply_filters(entries):
+        result = entries
+        if filter_department:
+            result = [e for e in result if e.get("department") == filter_department]
+        if filter_media_type_param:
+            result = [e for e in result if e.get("media_type") == filter_media_type_param]
+        return result
+
+    def _sort_with_nulls_last(entries, key_fn, reverse):
+        """Sort entries by key_fn, always placing None-valued entries at the end."""
+        has_value = [e for e in entries if key_fn(e) is not None]
+        no_value = [e for e in entries if key_fn(e) is None]
+        return sorted(has_value, key=key_fn, reverse=reverse) + no_value
+
+    def _apply_sort(entries):
+        rev = sort_dir == "desc"
+        if sort_by == MediaSortChoices.TITLE.value:
+            return sorted(entries, key=lambda e: e.get("title", "").lower(), reverse=rev)
+        if sort_by == MediaSortChoices.CRITIC_RATING.value:
+            return _sort_with_nulls_last(entries, lambda e: e.get("vote_average"), rev)
+        if sort_by == MediaSortChoices.POPULARITY.value:
+            return _sort_with_nulls_last(entries, lambda e: e.get("popularity"), rev)
+        # release_date: entries arrive from provider already sorted newest-first;
+        # asc reverses to oldest-first (chronological).
+        if sort_dir == "asc":
+            return list(reversed(entries))
+        return entries
+
+    filmography = _apply_sort(_apply_filters(filmography))
+    watched_filmography = _apply_sort(_apply_filters(watched_filmography))
+
     from django.urls import reverse
 
     history_filter_url = (
@@ -409,6 +462,42 @@ def person_detail(request, source, person_id, name):
                 tracked_plays_count = person_talent_totals.get("plays", 0)
                 tracked_hours_count = person_talent_totals.get("watched_time")
 
+    person_sort_choices = (
+        [
+            (MediaSortChoices.RELEASE_DATE.value, MediaSortChoices.RELEASE_DATE.label),
+            (MediaSortChoices.TITLE.value, MediaSortChoices.TITLE.label),
+        ]
+        if is_author
+        else [
+            (MediaSortChoices.RELEASE_DATE.value, MediaSortChoices.RELEASE_DATE.label),
+            (MediaSortChoices.TITLE.value, MediaSortChoices.TITLE.label),
+            (MediaSortChoices.CRITIC_RATING.value, MediaSortChoices.CRITIC_RATING.label),
+            (MediaSortChoices.POPULARITY.value, MediaSortChoices.POPULARITY.label),
+        ]
+    )
+
+    filter_data = {
+        "departments": all_departments if not is_author else [],
+        "genres": [],
+        "implied_genres": [],
+        "years": [],
+        "sources": [],
+        "languages": [],
+        "countries": [],
+        "platforms": [],
+        "origins": [],
+        "formats": [],
+        "authors": [],
+        "tags": [],
+        "show_languages": False,
+        "show_countries": False,
+        "show_platforms": False,
+        "show_origins": False,
+        "show_formats": False,
+        "show_authors": False,
+        "show_progress": False,
+    }
+
     context = {
         "user": request.user,
         "person": person_data,
@@ -423,7 +512,19 @@ def person_detail(request, source, person_id, name):
         "tracked_hours_count": tracked_hours_count,
         "source": source,
         "source_url": source_url,
+        # Filter/sort state (named to match media_list convention)
+        "current_sort": sort_by,
+        "current_direction": sort_dir,
+        "current_department": filter_department,
+        "current_media_type_filter": filter_media_type_param,
+        "sort_choices": person_sort_choices,
+        "status_choices": [],
+        "filter_data": filter_data,
+        "supports_critic_rating_sort": not is_author,
+        "person_detail_url": request.path,
     }
+    if request.headers.get("HX-Request"):
+        return render(request, "app/components/person_filmography_fragment.html", context)
     return render(request, "app/person_detail.html", context)
 
 

@@ -7,6 +7,8 @@
 {% endblock title %}
 
 {% block content %}
+  {% include "app/components/filter_toolbar_scripts.html" %}
+
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-10 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
       <img
@@ -118,41 +120,125 @@
     </div>
   </div>
 
-  <section class="mb-8">
-    <div class="flex items-end justify-between gap-3 mb-4">
-      <h2 class="text-xl font-bold">{% if is_author %}Read Content{% else %}Watched Content{% endif %}</h2>
-      <p class="text-xs text-gray-400">
-        {{ watched_filmography|length }} title{{ watched_filmography|length|pluralize }}
-      </p>
-    </div>
-    {% if watched_filmography %}
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
-        {% for entry in watched_filmography %}
-          {% include "app/components/person_filmography_card.html" with entry=entry source=source user=user IMG_NONE=IMG_NONE show_watched_runtime_chip=True only %}
-        {% endfor %}
-      </div>
-    {% else %}
-      <div class="bg-[#2a2f35] p-6 rounded-lg text-center">
-        <p class="text-gray-400">{% if is_author %}No read titles yet.{% else %}No watched titles yet.{% endif %}</p>
-      </div>
-    {% endif %}
-  </section>
+  <div x-data="{
+    mediaListUrl: '{{ person_detail_url }}',
+    sort: '{{ current_sort }}',
+    direction: '{{ current_direction }}',
+    status: 'all',
+    rating: 'all',
+    collection: 'all',
+    progress: 'all',
+    genre: '',
+    impliedGenre: '',
+    year: '',
+    release: 'all',
+    sourceFilter: '',
+    language: '',
+    country: '',
+    platform: '',
+    origin: '',
+    format: '',
+    author: '',
+    tag: '',
+    tag_exclude: '',
+    layout: 'grid',
+    search: '',
+    department: '{{ current_department }}',
+    showLanguages: false,
+    showCountries: false,
+    showPlatforms: false,
+    showOrigins: false,
+    showFormats: false,
+    showAuthors: false,
+    showProgress: false,
+    statusLabels: {},
+    ratingLabels: {
+      'all': 'All',
+      'rated': 'Rated',
+      'not_rated': 'Not Rated'
+    }, collectionLabels: {
+      'all': 'All',
+      'collected': 'Collected',
+      'not_collected': 'Not Collected'
+    }, progressLabels: {
+      'all': 'Any',
+      'not_caught_up': 'Not Caught Up',
+      'caught_up': 'Caught Up'
+    }, releaseLabels: {
+      'all': 'Any',
+      'released': 'Released',
+      'not_released': 'Not Released'
+    }, sortLabels: {
+    {% for value, label in sort_choices %}
+      '{{ value }}': '{{ label }}'
+      {% if not forloop.last %},{% endif %}
 
-  <section>
-    <div class="flex items-end justify-between gap-3 mb-4">
-      <h2 class="text-xl font-bold">{% if is_author %}Bibliography{% else %}Filmography{% endif %}</h2>
-      <p class="text-xs text-gray-400">{{ filmography|length }} title{{ filmography|length|pluralize }}</p>
-    </div>
-    {% if filmography %}
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
-        {% for entry in filmography %}
-          {% include "app/components/person_filmography_card.html" with entry=entry source=source user=user IMG_NONE=IMG_NONE show_watched_runtime_chip=False only %}
-        {% endfor %}
-      </div>
-    {% else %}
-      <div class="bg-[#2a2f35] p-6 rounded-lg text-center">
-        <p class="text-gray-400">{% if is_author %}No bibliography available.{% else %}No filmography available.{% endif %}</p>
-      </div>
+    {% endfor %}
+    },
+    defaultDirection(value) {
+      return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat', 'next_episode_air_date'].includes(value) ? 'asc' : 'desc';
+    },
+    toggleSort(value) {
+      this.direction = (this.sort === value)
+        ? (this.direction === 'asc' ? 'desc' : 'asc')
+        : this.defaultDirection(value);
+      this.sort = value;
+    },
+    toggleRating() {
+      if (this.rating === 'all') { this.rating = 'rated'; }
+      else if (this.rating === 'rated') { this.rating = 'not_rated'; }
+      else { this.rating = 'all'; }
+    },
+    toggleCollection() {
+      if (this.collection === 'all') { this.collection = 'collected'; }
+      else if (this.collection === 'collected') { this.collection = 'not_collected'; }
+      else { this.collection = 'all'; }
+    },
+    layoutHref(nextLayout) { return buildMediaListHref(this.mediaListUrl, document.getElementById('filter-form'), { layout: nextLayout }); },
+    filterLabel() {
+      const labels = [];
+      if (this.department) { labels.push(this.department); }
+      if (this.sourceFilter) { labels.push(this.sourceFilter.toUpperCase()); }
+      if (this.genre) { labels.push(this.genre); }
+      if (this.tag) { labels.push('+' + this.tag); }
+      if (this.tag_exclude) { labels.push('-' + this.tag_exclude); }
+      if (labels.length === 0) { return 'All'; }
+      if (labels.length === 1) { return labels[0]; }
+      return `${labels[0]} +${labels.length - 1}`;
+    },
+    clearFilters() {
+      this.rating = 'all';
+      this.collection = 'all';
+      this.progress = 'all';
+      this.genre = '';
+      this.impliedGenre = '';
+      this.year = '';
+      this.release = 'all';
+      this.sourceFilter = '';
+      this.department = '';
+      this.language = '';
+      this.country = '';
+      this.platform = '';
+      this.origin = '';
+      this.format = '';
+      this.author = '';
+      this.tag = '';
+      this.tag_exclude = '';
+    }
+  }">
+    {% if not is_author %}
+      {% include "app/components/filter_form.html" %}
+      {% include "app/components/filter_toolbar.html" with filter_hx_endpoint=person_detail_url filter_hx_target="#filmography-content" show_layout_toggle=False %}
     {% endif %}
-  </section>
+
+    <div id="filmography-content">
+      {% include "app/components/person_filmography_fragment.html" %}
+    </div>
+
+    <div id="loading-indicator" class="htmx-indicator text-center pt-8">
+      <div class="inline-flex justify-center items-center">
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+      </div>
+    </div>
+  </div>
 {% endblock content %}

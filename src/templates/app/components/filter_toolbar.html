@@ -1,0 +1,1184 @@
+{% load app_tags %}
+<div class="flex flex-col md:flex-row gap-4 mb-6">
+  <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar media-filter-toolbar">
+    {% if filter_data %}
+      {{ filter_data|json_script:"media-filter-data" }}
+    {% endif %}
+    {% if show_layout_toggle and column_config %}
+      {{ column_config|json_script:"media-column-config-data" }}
+      {{ default_column_config|json_script:"media-column-default-config-data" }}
+    {% endif %}
+
+    <!-- Filter Menu -->
+    <div class="relative filter-control" x-data="mediaFilterMenu()" @click.outside="open = false; view = 'root'">
+      <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+              @click="open = !open; if (open) { view = 'root'; }"
+              type="button">
+        <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]" x-text="filterLabel()"></span>
+        <svg xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            class="w-4 h-4 ml-2"
+            aria-hidden="true">
+          <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+        </svg>
+      </button>
+
+      <div class="absolute z-40 mt-2 w-60 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+           x-cloak
+           x-show="open"
+           x-transition:enter="transition ease-out duration-100"
+           x-transition:enter-start="transform opacity-0 scale-95"
+           x-transition:enter-end="transform opacity-100 scale-100"
+           x-transition:leave="transition ease-in duration-75"
+           x-transition:leave-start="transform opacity-100 scale-100"
+           x-transition:leave-end="transform opacity-0 scale-95">
+        <div x-show="view === 'root'" x-cloak>
+          <button hx-get="{{ filter_hx_endpoint }}"
+                  hx-target="{{ filter_hx_target }}"
+                  hx-include="#filter-form"
+                  hx-indicator="#loading-indicator"
+                  class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                  @click="clearFilters(); open = false"
+                  type="button">
+            <span>All</span>
+            <span class="ml-auto text-xs text-gray-500" x-show="filterLabel() === 'All'">Active</span>
+          </button>
+
+          {% if media_type == 'music' or media_type == 'comic' %}
+            <div class="border-t border-gray-700 my-1"></div>
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'mediaType'"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Media Type</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]">
+                {% if media_type == 'music' %}
+                  {{ current_subview|default:'artists'|title }}
+                {% else %}
+                  {{ current_subview|default:'comics'|title }}
+                {% endif %}
+              </span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          <div class="border-t border-gray-700 my-1"></div>
+          <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                  @click="view = 'rating'"
+                  type="button">
+            <span class="flex-shrink-0 mr-3">Rating</span>
+            <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                  x-text="ratingLabels[rating] || 'Any'"></span>
+            <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+          </button>
+          <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                  @click="view = 'collection'"
+                  type="button">
+            <span class="flex-shrink-0 mr-3">Collection</span>
+            <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                  x-text="collectionLabels[collection] || 'Any'"></span>
+            <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+          </button>
+
+          {% if filter_data.show_progress %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'progress'"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Progress</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                    x-text="progressLabels[progress] || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.genres %}
+            <div class="border-t border-gray-700 my-1"></div>
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'genre'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Genre</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="genre || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+          {% if filter_data.implied_genres %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'impliedGenre'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Implied Genre</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="impliedGenre || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.years %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'year'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Year</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="year ? (year === 'unknown' ? 'Unknown' : year) : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+          <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                  @click="view = 'release'"
+                  type="button">
+            <span class="flex-shrink-0 mr-3">Released</span>
+            <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                  x-text="releaseLabels[release] || 'Any'"></span>
+            <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+          </button>
+
+          {% if filter_data.sources %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'source'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Source</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="sourceFilter ? sourceFilter.toUpperCase() : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.show_languages %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'language'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Language</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="language ? (language.length <= 3 ? language.toUpperCase() : language) : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.show_countries %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'country'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Country</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="country ? (country.length <= 3 ? country.toUpperCase() : country) : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.show_platforms %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'platform'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Platform</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="platform ? platform : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.show_origins %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'origin'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Origin</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="origin ? (origin.length <= 3 ? origin.toUpperCase() : origin) : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.show_formats %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'format'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Format</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="format ? (format === 'ebook' ? 'eBook' : format.charAt(0).toUpperCase() + format.slice(1)) : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.show_authors and filter_data.authors %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'author'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Author</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="author || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.departments %}
+            <div class="border-t border-gray-700 my-1"></div>
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'department'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Department</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="department || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if filter_data.tags %}
+            <div class="border-t border-gray-700 my-1"></div>
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'tag'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Include Tag</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="tag || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'tag_exclude'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Exclude Tag</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="tag_exclude || 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+        </div>
+
+        <div x-show="view === 'mediaType'" x-cloak>
+          <div class="flex items-center gap-2 px-4 py-2 border-b border-gray-700">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Media Type</div>
+          </div>
+          {% if media_type == 'music' %}
+            <a href="{% url 'medialist' media_type %}?subview=artists"
+               class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+              <span>Artists</span>
+              {% if current_subview == 'artists' or not current_subview %}
+                <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+              {% endif %}
+            </a>
+            <a href="{% url 'medialist' media_type %}?subview=albums"
+               class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+              <span>Albums</span>
+              {% if current_subview == 'albums' %}
+                <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+              {% endif %}
+            </a>
+            <a href="{% url 'medialist' media_type %}?subview=tracks"
+               class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+              <span>Tracks</span>
+              {% if current_subview == 'tracks' %}
+                <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+              {% endif %}
+            </a>
+          {% elif media_type == 'comic' %}
+            <a href="{% url 'medialist' media_type %}?subview=comics"
+               class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+              <span>Comics</span>
+              {% if current_subview == 'comics' or not current_subview %}
+                <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+              {% endif %}
+            </a>
+            <a href="{% url 'medialist' media_type %}?subview=issues"
+               class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white">
+              <span>Issues</span>
+              {% if current_subview == 'issues' %}
+                <span class="ml-auto">{% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}</span>
+              {% endif %}
+            </a>
+          {% endif %}
+        </div>
+
+        <div x-show="view === 'genre'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Genre</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="genreSearch"
+                   placeholder="Filter Genre"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="genre = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Genres</span>
+              <span class="ml-auto" x-show="genre === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredGenres()" :key="option">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="genre = option; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
+                <span class="ml-auto" x-show="genre === option">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'impliedGenre'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Implied Genre</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="impliedGenreSearch"
+                   placeholder="Filter Implied Genre"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="impliedGenre = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Implied Genres</span>
+              <span class="ml-auto" x-show="impliedGenre === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredImpliedGenres()" :key="option">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="impliedGenre = option; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
+                <span class="ml-auto" x-show="impliedGenre === option">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'rating'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Rating</div>
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="rating = 'all'; open = false; view = 'root'"
+                    type="button">
+              <span>Any Rating</span>
+              <span class="ml-auto" x-show="rating === 'all'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="rating = 'rated'; open = false; view = 'root'"
+                    type="button">
+              <span>Rated</span>
+              <span class="ml-auto" x-show="rating === 'rated'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="rating = 'not_rated'; open = false; view = 'root'"
+                    type="button">
+              <span>Not Rated</span>
+              <span class="ml-auto" x-show="rating === 'not_rated'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div x-show="view === 'collection'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Collection</div>
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="collection = 'all'; open = false; view = 'root'"
+                    type="button">
+              <span>Any Collection</span>
+              <span class="ml-auto" x-show="collection === 'all'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="collection = 'collected'; open = false; view = 'root'"
+                    type="button">
+              <span>Collected</span>
+              <span class="ml-auto" x-show="collection === 'collected'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="collection = 'not_collected'; open = false; view = 'root'"
+                    type="button">
+              <span>Not Collected</span>
+              <span class="ml-auto" x-show="collection === 'not_collected'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {% if filter_data.show_progress %}
+          <div x-show="view === 'progress'" x-cloak class="p-2">
+            <div class="flex items-center gap-2 px-2 py-1">
+              <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                      @click="view = 'root'"
+                      type="button">
+                {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+              </button>
+              <div class="text-xs uppercase tracking-wide text-gray-300">Progress</div>
+            </div>
+            <div class="max-h-64 overflow-y-auto">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="progress = 'all'; open = false; view = 'root'"
+                      type="button">
+                <span>Any Progress</span>
+                <span class="ml-auto" x-show="progress === 'all'">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="progress = 'not_caught_up'; open = false; view = 'root'"
+                      type="button">
+                <span>Not Caught Up</span>
+                <span class="ml-auto" x-show="progress === 'not_caught_up'">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="progress = 'caught_up'; open = false; view = 'root'"
+                      type="button">
+                <span>Caught Up</span>
+                <span class="ml-auto" x-show="progress === 'caught_up'">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </div>
+          </div>
+        {% endif %}
+
+        <div x-show="view === 'year'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Year</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="yearSearch"
+                   placeholder="Filter Year"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="year = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Years</span>
+              <span class="ml-auto" x-show="year === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredYears()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="year = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="year === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'release'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Released</div>
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="release = 'all'; open = false; view = 'root'"
+                    type="button">
+              <span>Any Release State</span>
+              <span class="ml-auto" x-show="release === 'all'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="release = 'released'; open = false; view = 'root'"
+                    type="button">
+              <span>Released</span>
+              <span class="ml-auto" x-show="release === 'released'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="release = 'not_released'; open = false; view = 'root'"
+                    type="button">
+              <span>Not Released</span>
+              <span class="ml-auto" x-show="release === 'not_released'">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div x-show="view === 'source'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Source</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="sourceSearch"
+                   placeholder="Filter Source"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="sourceFilter = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Sources</span>
+              <span class="ml-auto" x-show="sourceFilter === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredSources()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="sourceFilter = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="sourceFilter === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'language'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Language</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="languageSearch"
+                   placeholder="Filter Language"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="language = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Languages</span>
+              <span class="ml-auto" x-show="language === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredLanguages()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="language = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="language === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'country'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Country</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="countrySearch"
+                   placeholder="Filter Country"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="country = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Countries</span>
+              <span class="ml-auto" x-show="country === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredCountries()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="country = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="country === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'platform'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Platform</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="platformSearch"
+                   placeholder="Filter Platform"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="platform = ''; open = false; view = 'root'"
+                    type="button">
+              <span>Any Platform</span>
+              <span class="ml-auto" x-show="platform === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredPlatforms()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="platform = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="platform === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'origin'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Origin</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="originSearch"
+                   placeholder="Filter Origin"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="origin = ''; open = false; view = 'root'"
+                    type="button">
+              <span>Any Origin</span>
+              <span class="ml-auto" x-show="origin === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredOrigins()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="origin = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="origin === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'format'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Format</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="formatSearch"
+                   placeholder="Filter Format"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="format = ''; open = false; view = 'root'"
+                    type="button">
+              <span>Any Format</span>
+              <span class="ml-auto" x-show="format === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredFormats()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="format = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="format === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'author'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Author</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="authorSearch"
+                   placeholder="Filter Author"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="author = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Authors</span>
+              <span class="ml-auto" x-show="author === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredAuthors()" :key="option.value">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="author = option.value; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="author === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'department'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Department</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="departmentSearch"
+                   placeholder="Filter Department"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="department = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Departments</span>
+              <span class="ml-auto" x-show="department === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredDepartments()" :key="option">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="department = option; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
+                <span class="ml-auto" x-show="department === option">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'tag'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Include Tag</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="tagSearch"
+                   placeholder="Filter Tags"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="tag = ''; open = false; view = 'root'"
+                    type="button">
+              <span>All Tags</span>
+              <span class="ml-auto" x-show="tag === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredTags()" :key="option">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="tag = option; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
+                <span class="ml-auto" x-show="tag === option">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'tag_exclude'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Exclude Tag</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="tagSearch"
+                   placeholder="Filter Tags"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="tag_exclude = ''; open = false; view = 'root'"
+                    type="button">
+              <span>No Exclusion</span>
+              <span class="ml-auto" x-show="tag_exclude === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredTags()" :key="option">
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="tag_exclude = option; open = false; view = 'root'"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option"></span>
+                <span class="ml-auto" x-show="tag_exclude === option">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Filter by Status -->
+    {% if status_choices %}
+      <div class="relative filter-control" x-data="{ open: false }">
+        <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+                @click="open = !open"
+                type="button">
+          <span x-text="(status === 'all' || status === 'All' || status === '') ? 'Status' : (statusLabels[status] || status)"></span>
+          <svg xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              class="w-4 h-4 ml-2"
+              aria-hidden="true">
+            <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+          </svg>
+        </button>
+
+        <div class="absolute z-40 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+             x-cloak
+             x-show="open"
+             @click.outside="open = false"
+             x-transition:enter="transition ease-out duration-100"
+             x-transition:enter-start="transform opacity-0 scale-95"
+             x-transition:enter-end="transform opacity-100 scale-100"
+             x-transition:leave="transition ease-in duration-75"
+             x-transition:leave-start="transform opacity-100 scale-100"
+             x-transition:leave-end="transform opacity-0 scale-95">
+          {% for value, label in status_choices %}
+            <button hx-get="{{ filter_hx_endpoint }}"
+                    hx-target="{{ filter_hx_target }}"
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                    :class="status === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                    @click="status = '{{ value }}'; open = false"
+                    type="button">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <!-- Sort by -->
+    <div class="relative filter-control" x-data="{ open: false }">
+      <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+              @click="open = !open"
+              type="button">
+        <span x-text="sortLabels[sort] || sort"></span>
+        <svg xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            class="w-4 h-4 ml-2"
+            x-show="direction === 'asc'"
+            aria-hidden="true">
+          <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
+        </svg>
+        <svg xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 20 20"
+            class="w-4 h-4 ml-2"
+            x-show="direction !== 'asc'"
+            aria-hidden="true">
+          <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
+        </svg>
+      </button>
+
+      <div class="absolute z-40 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+           x-cloak
+           x-show="open"
+           @click.outside="open = false"
+           x-transition:enter="transition ease-out duration-100"
+           x-transition:enter-start="transform opacity-0 scale-95"
+           x-transition:enter-end="transform opacity-100 scale-100"
+           x-transition:leave="transition ease-in duration-75"
+           x-transition:leave-start="transform opacity-100 scale-100"
+           x-transition:leave-end="transform opacity-0 scale-95">
+        {% for value, label in sort_choices %}
+          {% if value != 'critic_rating' or supports_critic_rating_sort %}
+            {% if value != 'author' or filter_data.show_authors %}
+              <button hx-get="{{ filter_hx_endpoint }}"
+                      hx-target="{{ filter_hx_target }}"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                      :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                      @click="toggleSort('{{ value }}'); open = false"
+                      type="button">{{ label }}</button>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if show_layout_toggle %}
+      <div id="result-count" data-result-count class="result-count-badge result-count-desktop px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
+        {% if media_list.paginator %}
+          {{ media_list.paginator.count }}
+        {% else %}
+          {{ media_list|length }}
+        {% endif %}
+      </div>
+
+      <div class="ml-auto flex items-center gap-2 shrink-0">
+        {% url 'medialist_columns' media_type as media_list_columns_url %}
+        {% include "app/components/table_column_menu.html" with table_column_update_url=media_list_columns_url table_refresh_url=filter_hx_endpoint table_refresh_target=".media-table" table_refresh_include_selector="#filter-form" table_loading_indicator="#loading-indicator" table_type=table_type|default:'media' %}
+
+        <!-- Layout Toggle -->
+        <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
+          <a :href="layoutHref('grid')"
+             class="p-2 cursor-pointer"
+             :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
+             title="Grid View"
+             @click="layout = 'grid'">
+            {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
+          </a>
+          <a :href="layoutHref('table')"
+             class="p-2 cursor-pointer"
+             :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
+             title="Table View"
+             @click="layout = 'table'">{% include "app/icons/table.svg" with classes="w-5 h-5" %}</a>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>

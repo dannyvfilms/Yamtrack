@@ -1,0 +1,29 @@
+<form id="filter-form" class="hidden">
+  <input type="hidden" name="sort" x-model="sort">
+  <input type="hidden" name="direction" x-model="direction">
+  <input type="hidden" name="status" x-model="status">
+  <input type="hidden" name="rating" x-model="rating">
+  <input type="hidden" name="collection" x-model="collection">
+  <input type="hidden" name="progress" x-model="progress">
+  <input type="hidden" name="genre" x-model="genre">
+  <input type="hidden" name="implied_genre" x-model="impliedGenre">
+  <input type="hidden" name="year" x-model="year">
+  <input type="hidden" name="release" x-model="release">
+  <input type="hidden" name="source" x-model="sourceFilter">
+  <input type="hidden" name="language" x-model="language">
+  <input type="hidden" name="country" x-model="country">
+  <input type="hidden" name="platform" x-model="platform">
+  <input type="hidden" name="origin" x-model="origin">
+  <input type="hidden" name="format" x-model="format">
+  <input type="hidden" name="author" x-model="author">
+  <input type="hidden" name="tag" x-model="tag">
+  <input type="hidden" name="tag_exclude" x-model="tag_exclude">
+  <input type="hidden" name="search" x-model="search">
+  <input type="hidden" name="layout" x-model="layout">
+  <input type="hidden" name="department" x-model="department">
+  {% if media_type == 'music' %}
+    <input type="hidden" name="subview" value="{{ current_subview|default:'artists' }}">
+  {% elif media_type == 'comic' %}
+    <input type="hidden" name="subview" value="{{ current_subview|default:'comics' }}">
+  {% endif %}
+</form>

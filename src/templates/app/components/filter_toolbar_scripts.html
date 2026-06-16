@@ -1,0 +1,181 @@
+<script>
+  function buildMediaListFilterParams(form, overrides = {}) {
+    const params = new URLSearchParams();
+    if (!form) {
+      return params;
+    }
+
+    const omitDefaults = {
+      status: 'all',
+      rating: 'all',
+      collection: 'all',
+      progress: 'all',
+      release: 'all',
+    };
+
+    Array.from(form.elements).forEach((field) => {
+      if (!field || !field.name || field.disabled) {
+        return;
+      }
+
+      const hasOverride = Object.prototype.hasOwnProperty.call(overrides, field.name);
+      const rawValue = hasOverride ? overrides[field.name] : field.value;
+      if (rawValue === null || rawValue === undefined) {
+        return;
+      }
+
+      const value = String(rawValue).trim();
+      if (!value) {
+        return;
+      }
+
+      const omittedDefault = omitDefaults[field.name];
+      if (omittedDefault && value.toLowerCase() === omittedDefault) {
+        return;
+      }
+
+      params.set(field.name, value);
+    });
+
+    return params;
+  }
+
+  function buildMediaListHref(listPath, form, overrides = {}) {
+    const params = buildMediaListFilterParams(form, overrides);
+    const query = params.toString();
+    return query ? `${listPath}?${query}` : listPath;
+  }
+</script>
+
+<script>
+  function mediaFilterMenu() {
+    const dataEl = document.getElementById('media-filter-data');
+    const data = dataEl ? JSON.parse(dataEl.textContent) : {};
+    return {
+      open: false,
+      view: 'root',
+      genreSearch: '',
+      impliedGenreSearch: '',
+      yearSearch: '',
+      sourceSearch: '',
+      languageSearch: '',
+      countrySearch: '',
+      platformSearch: '',
+      originSearch: '',
+      formatSearch: '',
+      authorSearch: '',
+      tagSearch: '',
+      departmentSearch: '',
+      genres: data.genres || [],
+      impliedGenres: data.implied_genres || [],
+      years: data.years || [],
+      sources: data.sources || [],
+      languages: data.languages || [],
+      countries: data.countries || [],
+      platforms: data.platforms || [],
+      origins: data.origins || [],
+      formats: data.formats || [],
+      authors: data.authors || [],
+      tags: data.tags || [],
+      departments: data.departments || [],
+      resetSearch() {
+        this.genreSearch = '';
+        this.impliedGenreSearch = '';
+        this.yearSearch = '';
+        this.sourceSearch = '';
+        this.languageSearch = '';
+        this.countrySearch = '';
+        this.platformSearch = '';
+        this.originSearch = '';
+        this.formatSearch = '';
+        this.authorSearch = '';
+        this.tagSearch = '';
+        this.departmentSearch = '';
+      },
+      filteredGenres() {
+        const term = this.genreSearch.toLowerCase();
+        if (!term) {
+          return this.genres;
+        }
+        return this.genres.filter(genre => genre.toLowerCase().includes(term));
+      },
+      filteredImpliedGenres() {
+        const term = this.impliedGenreSearch.toLowerCase();
+        if (!term) {
+          return this.impliedGenres;
+        }
+        return this.impliedGenres.filter(genre => genre.toLowerCase().includes(term));
+      },
+      filteredYears() {
+        const term = this.yearSearch.toLowerCase();
+        if (!term) {
+          return this.years;
+        }
+        return this.years.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredSources() {
+        const term = this.sourceSearch.toLowerCase();
+        if (!term) {
+          return this.sources;
+        }
+        return this.sources.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredLanguages() {
+        const term = this.languageSearch.toLowerCase();
+        if (!term) {
+          return this.languages;
+        }
+        return this.languages.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredCountries() {
+        const term = this.countrySearch.toLowerCase();
+        if (!term) {
+          return this.countries;
+        }
+        return this.countries.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredPlatforms() {
+        const term = this.platformSearch.toLowerCase();
+        if (!term) {
+          return this.platforms;
+        }
+        return this.platforms.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredOrigins() {
+        const term = this.originSearch.toLowerCase();
+        if (!term) {
+          return this.origins;
+        }
+        return this.origins.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredFormats() {
+        const term = this.formatSearch.toLowerCase();
+        if (!term) {
+          return this.formats;
+        }
+        return this.formats.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredAuthors() {
+        const term = this.authorSearch.toLowerCase();
+        if (!term) {
+          return this.authors;
+        }
+        return this.authors.filter(option => option.label.toLowerCase().includes(term));
+      },
+      filteredTags() {
+        const term = this.tagSearch.toLowerCase();
+        if (!term) {
+          return this.tags;
+        }
+        return this.tags.filter(t => t.toLowerCase().includes(term));
+      },
+      filteredDepartments() {
+        const term = this.departmentSearch.toLowerCase();
+        if (!term) {
+          return this.departments;
+        }
+        return this.departments.filter(d => d.toLowerCase().includes(term));
+      },
+    };
+  }
+</script>

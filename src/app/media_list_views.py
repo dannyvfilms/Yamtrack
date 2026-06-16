@@ -262,6 +262,26 @@ def media_list(request, media_type):
         request.user.update_preference(direction_field, direction)
     media_type = effective_media_type
 
+    # Pre-filter sort choices to only include those valid for the current media type.
+    # critic_rating and author remain template-gated via supports_critic_rating_sort /
+    # filter_data.show_authors; all other per-type exclusions are handled here so the
+    # sort dropdown template only needs a simple {% for %} loop.
+    _sort_type_guards = {
+        "progress": lambda mt: mt != MediaTypes.MOVIE.value,
+        "time_left": lambda mt: mt == MediaTypes.TV.value,
+        "runtime": lambda mt: mt in runtime_media_types,
+        "popularity": lambda mt: mt in popularity_media_types,
+        "time_to_beat": lambda mt: mt == MediaTypes.GAME.value,
+        "plays": lambda mt: mt in plays_media_types,
+        "time_watched": lambda mt: mt in runtime_media_types,
+        "next_episode_air_date": lambda mt: mt in next_episode_air_date_media_types,
+    }
+    sorted_media_sort_choices = [
+        (value, label)
+        for value, label in sorted_media_sort_choices
+        if value not in _sort_type_guards or _sort_type_guards[value](media_type)
+    ]
+
     supports_untracked_status_filter = media_type not in {
         MediaTypes.MUSIC.value,
         MediaTypes.PODCAST.value,
@@ -1400,8 +1420,8 @@ def media_list(request, media_type):
                         return (_sortable_dt(next_episode_air_date), title.lower())
                     return title.lower()
 
-                reverse = direction == "desc"
-                media_list = sorted(media_list, key=_mixed_sort_key, reverse=reverse)
+                _sort_reverse = direction == "desc"
+                media_list = sorted(media_list, key=_mixed_sort_key, reverse=_sort_reverse)
 
         if _media_list_cache_key:
             cache.set(
@@ -1602,13 +1622,19 @@ def media_list(request, media_type):
     if media_type in author_media_types:
         annotate_media_authors(media_page.object_list)
 
+    if filter_data is not None:
+        filter_data.setdefault("departments", [])
+
+    _layout_class = ".media-grid" if layout == "grid" else ".media-table"
     context = {
         "user": request.user,
         "media_type": route_media_type,
         "media_type_plural": app_tags.media_type_readable_plural(media_type).lower(),
         "media_list": media_page,
         "current_layout": layout,
-        "layout_class": ".media-grid" if layout == "grid" else ".media-table",
+        "layout_class": _layout_class,
+        "media_list_url": reverse("medialist", args=[route_media_type]),
+        "filter_hx_target": _layout_class if media_page else "#empty_list",
         "current_sort": sort_filter,
         "current_direction": direction,
         "current_status": status_filter,
