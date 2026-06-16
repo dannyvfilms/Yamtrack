@@ -195,151 +195,161 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         person_id_filter = str(person_id_filter)
 
     episodes_start = time.perf_counter()
-    episodes = (
-        Episode.objects.filter(
-            related_season__user=user,
-            end_date__isnull=False,
-        )
-        .select_related(
-            "item",
-            "related_season__item",
-            "related_season__related_tv__item",
-        )
-        .order_by("-end_date")
-    )
-
-    # Apply date range filter to episodes
-    if start_date:
-        episodes = episodes.filter(end_date__gte=start_date)
-    if end_date:
-        episodes = episodes.filter(end_date__lte=end_date)
-
-    # Apply episode filters
-    if filters.get('tv'):
-        episodes = episodes.filter(related_season__related_tv_id=filters['tv'])
-    if filters.get('season'):
-        episodes = episodes.filter(related_season_id=filters['season'])
-    if person_source_filter and person_id_filter:
-        regular_show_cast_filter = (
-            models.Q(role_type=CreditRoleType.CAST.value)
-            & (
-                ~models.Q(item__source=Sources.TMDB.value)
-                | models.Q(
-                    sort_order__lt=credit_helpers.TMDB_SHOW_REGULAR_CAST_SORT_ORDER_CUTOFF,
-                )
-            )
-        )
-        episode_person_credits = ItemPersonCredit.objects.filter(
-            item_id=models.OuterRef("item_id"),
-        )
-        episode_person_matches = episode_person_credits.filter(
-            person__source=person_source_filter,
-            person__source_person_id=person_id_filter,
-        )
-        season_person_credits = ItemPersonCredit.objects.filter(
-            item_id=models.OuterRef("related_season__item_id"),
-        )
-        season_person_matches = season_person_credits.filter(
-            person__source=person_source_filter,
-            person__source_person_id=person_id_filter,
-        )
-        season_has_cast_credits = models.Exists(
-            ItemPersonCredit.objects.filter(
-                item_id=models.OuterRef("related_season__item_id"),
-                role_type=CreditRoleType.CAST.value,
-            ),
-        )
-        season_has_crew_credits = models.Exists(
-            ItemPersonCredit.objects.filter(
-                item_id=models.OuterRef("related_season__item_id"),
-                role_type=CreditRoleType.CREW.value,
-            ),
-        )
-        season_has_usable_credits = models.Exists(
-            MetadataBackfillState.objects.filter(
-                item_id=models.OuterRef("related_season__item_id"),
-                field=MetadataBackfillField.CREDITS,
-                last_success_at__isnull=False,
-                strategy_version__gte=CREDITS_BACKFILL_VERSION,
-            ),
-        )
-        show_cast_person_matches = ItemPersonCredit.objects.filter(
-            item_id=models.OuterRef("related_season__related_tv__item_id"),
-            person__source=person_source_filter,
-            person__source_person_id=person_id_filter,
-        ).filter(
-            regular_show_cast_filter,
-        )
-        show_noncast_person_matches = ItemPersonCredit.objects.filter(
-            item_id=models.OuterRef("related_season__related_tv__item_id"),
-            person__source=person_source_filter,
-            person__source_person_id=person_id_filter,
-        ).filter(
-            role_type=CreditRoleType.CREW.value,
-        )
-        show_has_usable_credits = models.Exists(
-            MetadataBackfillState.objects.filter(
-                item_id=models.OuterRef("related_season__related_tv__item_id"),
-                field=MetadataBackfillField.CREDITS,
-                last_success_at__isnull=False,
-                strategy_version__gte=CREDITS_BACKFILL_VERSION,
-            ),
-        )
-        episodes = episodes.annotate(
-            has_episode_person=models.Exists(episode_person_matches),
-            has_season_person=models.Exists(season_person_matches),
-            season_has_cast_credits=season_has_cast_credits,
-            season_has_crew_credits=season_has_crew_credits,
-            season_has_usable_credits=season_has_usable_credits,
-            has_show_cast_person=models.Exists(show_cast_person_matches),
-            has_show_noncast_person=models.Exists(show_noncast_person_matches),
-            show_has_usable_credits=show_has_usable_credits,
-        ).filter(
-            models.Q(has_episode_person=True)
-            | models.Q(has_season_person=True)
-            | (
-                (
-                    models.Q(season_has_cast_credits=False)
-                    | models.Q(
-                        related_season__item__source=Sources.TMDB.value,
-                        season_has_usable_credits=False,
-                    )
-                )
-                & models.Q(has_show_cast_person=True)
-                & (
-                    ~models.Q(related_season__related_tv__item__source=Sources.TMDB.value)
-                    | models.Q(show_has_usable_credits=True)
-                )
-            )
-            | (
-                (
-                    models.Q(season_has_crew_credits=False)
-                    | models.Q(
-                        related_season__item__source=Sources.TMDB.value,
-                        season_has_usable_credits=False,
-                    )
-                )
-                & models.Q(has_show_noncast_person=True)
-                & (
-                    ~models.Q(related_season__related_tv__item__source=Sources.TMDB.value)
-                    | models.Q(show_has_usable_credits=True)
-                )
-            ),
-        )
-    if target_media_id and target_source and (
-        media_type_filter == MediaTypes.TV.value
+    if (
+        not media_type_filter
+        or media_type_filter == MediaTypes.TV.value
         or filters.get('tv')
         or filters.get('season')
         or season_number_filter is not None
+        or (person_source_filter and person_id_filter)
     ):
-        episodes = episodes.filter(
-            related_season__related_tv__item__media_id=target_media_id,
-            related_season__related_tv__item__source=target_source,
+        episodes = (
+            Episode.objects.filter(
+                related_season__user=user,
+                end_date__isnull=False,
+            )
+            .select_related(
+                "item",
+                "related_season__item",
+                "related_season__related_tv__item",
+            )
+            .order_by("-end_date")
         )
-        if season_number_filter is not None:
-            episodes = episodes.filter(related_season__item__season_number=season_number_filter)
 
-    episodes = list(episodes)
+        # Apply date range filter to episodes
+        if start_date:
+            episodes = episodes.filter(end_date__gte=start_date)
+        if end_date:
+            episodes = episodes.filter(end_date__lte=end_date)
+
+        # Apply episode filters
+        if filters.get('tv'):
+            episodes = episodes.filter(related_season__related_tv_id=filters['tv'])
+        if filters.get('season'):
+            episodes = episodes.filter(related_season_id=filters['season'])
+        if person_source_filter and person_id_filter:
+            regular_show_cast_filter = (
+                models.Q(role_type=CreditRoleType.CAST.value)
+                & (
+                    ~models.Q(item__source=Sources.TMDB.value)
+                    | models.Q(
+                        sort_order__lt=credit_helpers.TMDB_SHOW_REGULAR_CAST_SORT_ORDER_CUTOFF,
+                    )
+                )
+            )
+            episode_person_credits = ItemPersonCredit.objects.filter(
+                item_id=models.OuterRef("item_id"),
+            )
+            episode_person_matches = episode_person_credits.filter(
+                person__source=person_source_filter,
+                person__source_person_id=person_id_filter,
+            )
+            season_person_credits = ItemPersonCredit.objects.filter(
+                item_id=models.OuterRef("related_season__item_id"),
+            )
+            season_person_matches = season_person_credits.filter(
+                person__source=person_source_filter,
+                person__source_person_id=person_id_filter,
+            )
+            season_has_cast_credits = models.Exists(
+                ItemPersonCredit.objects.filter(
+                    item_id=models.OuterRef("related_season__item_id"),
+                    role_type=CreditRoleType.CAST.value,
+                ),
+            )
+            season_has_crew_credits = models.Exists(
+                ItemPersonCredit.objects.filter(
+                    item_id=models.OuterRef("related_season__item_id"),
+                    role_type=CreditRoleType.CREW.value,
+                ),
+            )
+            season_has_usable_credits = models.Exists(
+                MetadataBackfillState.objects.filter(
+                    item_id=models.OuterRef("related_season__item_id"),
+                    field=MetadataBackfillField.CREDITS,
+                    last_success_at__isnull=False,
+                    strategy_version__gte=CREDITS_BACKFILL_VERSION,
+                ),
+            )
+            show_cast_person_matches = ItemPersonCredit.objects.filter(
+                item_id=models.OuterRef("related_season__related_tv__item_id"),
+                person__source=person_source_filter,
+                person__source_person_id=person_id_filter,
+            ).filter(
+                regular_show_cast_filter,
+            )
+            show_noncast_person_matches = ItemPersonCredit.objects.filter(
+                item_id=models.OuterRef("related_season__related_tv__item_id"),
+                person__source=person_source_filter,
+                person__source_person_id=person_id_filter,
+            ).filter(
+                role_type=CreditRoleType.CREW.value,
+            )
+            show_has_usable_credits = models.Exists(
+                MetadataBackfillState.objects.filter(
+                    item_id=models.OuterRef("related_season__related_tv__item_id"),
+                    field=MetadataBackfillField.CREDITS,
+                    last_success_at__isnull=False,
+                    strategy_version__gte=CREDITS_BACKFILL_VERSION,
+                ),
+            )
+            episodes = episodes.annotate(
+                has_episode_person=models.Exists(episode_person_matches),
+                has_season_person=models.Exists(season_person_matches),
+                season_has_cast_credits=season_has_cast_credits,
+                season_has_crew_credits=season_has_crew_credits,
+                season_has_usable_credits=season_has_usable_credits,
+                has_show_cast_person=models.Exists(show_cast_person_matches),
+                has_show_noncast_person=models.Exists(show_noncast_person_matches),
+                show_has_usable_credits=show_has_usable_credits,
+            ).filter(
+                models.Q(has_episode_person=True)
+                | models.Q(has_season_person=True)
+                | (
+                    (
+                        models.Q(season_has_cast_credits=False)
+                        | models.Q(
+                            related_season__item__source=Sources.TMDB.value,
+                            season_has_usable_credits=False,
+                        )
+                    )
+                    & models.Q(has_show_cast_person=True)
+                    & (
+                        ~models.Q(related_season__related_tv__item__source=Sources.TMDB.value)
+                        | models.Q(show_has_usable_credits=True)
+                    )
+                )
+                | (
+                    (
+                        models.Q(season_has_crew_credits=False)
+                        | models.Q(
+                            related_season__item__source=Sources.TMDB.value,
+                            season_has_usable_credits=False,
+                        )
+                    )
+                    & models.Q(has_show_noncast_person=True)
+                    & (
+                        ~models.Q(related_season__related_tv__item__source=Sources.TMDB.value)
+                        | models.Q(show_has_usable_credits=True)
+                    )
+                ),
+            )
+        if target_media_id and target_source and (
+            media_type_filter == MediaTypes.TV.value
+            or filters.get('tv')
+            or filters.get('season')
+            or season_number_filter is not None
+        ):
+            episodes = episodes.filter(
+                related_season__related_tv__item__media_id=target_media_id,
+                related_season__related_tv__item__source=target_source,
+            )
+            if season_number_filter is not None:
+                episodes = episodes.filter(related_season__item__season_number=season_number_filter)
+
+        episodes = list(episodes)
+    else:
+        episodes = []
     logger.info(
         "history_build_episodes user_id=%s count=%s elapsed_ms=%.2f",
         user.id,
