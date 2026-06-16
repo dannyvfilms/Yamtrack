@@ -1,0 +1,5 @@
+{% for result in media_list.items %}
+  <div class="w-36 shrink-0">
+    {% include "app/components/detail_related_card.html" with item=result.item title=result.item.title user=user active=False show_release_year_placeholder=False %}
+  </div>
+{% endfor %}

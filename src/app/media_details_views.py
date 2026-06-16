@@ -156,6 +156,23 @@ def _get_tv_runtime_display_fallback(detail_item, media_metadata):
     return None
 
 
+def _build_static_row(row_id, title, items, *, view_all_url=None, view_all_text=None, card_width_class="w-32"):
+    """Build a row dict for _scrollable_row.html with no HTMX loading (all items pre-rendered)."""
+    shown = list(items)
+    return {
+        "row_id": row_id,
+        "title": title,
+        "items": shown,
+        "total": len(shown),
+        "loaded_count": len(shown),
+        "card_width_class": card_width_class,
+        "summary_inline": None,
+        "show_played_chip": False,
+        "view_all_url": view_all_url,
+        "view_all_text": view_all_text,
+    }
+
+
 def _build_detail_person_rows(media_metadata):
     """Build cast_row, crew_row, and recommendations_row dicts for _scrollable_row.html."""
     if not isinstance(media_metadata, dict):
@@ -163,37 +180,24 @@ def _build_detail_person_rows(media_metadata):
     cast = media_metadata.get("cast") or []
     crew = media_metadata.get("crew") or []
     recommendations = (media_metadata.get("related") or {}).get("recommendations") or []
+
+    total_cast = media_metadata.get("total_cast_count")
+    source_url = media_metadata.get("source_url")
+    view_all_url = None
+    view_all_text = None
+    if total_cast and total_cast > len(cast) and source_url:
+        view_all_url = source_url
+        view_all_text = f"Full cast ({total_cast})"
+
     return {
-        "cast_row": {
-            "row_id": "cast",
-            "title": "Cast",
-            "items": cast[:20],
-            "total": len(cast),
-            "loaded_count": min(20, len(cast)),
-            "card_width_class": "w-32",
-            "summary_inline": None,
-            "show_played_chip": False,
-        },
-        "crew_row": {
-            "row_id": "crew",
-            "title": "Crew",
-            "items": crew[:20],
-            "total": len(crew),
-            "loaded_count": min(20, len(crew)),
-            "card_width_class": "w-32",
-            "summary_inline": None,
-            "show_played_chip": False,
-        },
-        "recommendations_row": {
-            "row_id": "recommendations",
-            "title": "Recommendations",
-            "items": recommendations,
-            "total": len(recommendations),
-            "loaded_count": len(recommendations),
-            "card_width_class": "w-36",
-            "summary_inline": None,
-            "show_played_chip": False,
-        },
+        "cast_row": _build_static_row(
+            "detail-cast", "Cast", cast[:20],
+            view_all_url=view_all_url, view_all_text=view_all_text,
+        ),
+        "crew_row": _build_static_row("detail-crew", "Crew", crew[:20]),
+        "recommendations_row": _build_static_row(
+            "detail-recommendations", "Recommendations", recommendations, card_width_class="w-36",
+        ),
     }
 
 

@@ -349,110 +349,20 @@
         {% endif %}
 
         {% if media.source == Sources.TMDB.value and media.cast %}
-          <section class="mb-8"
-                   x-data="{ open: localStorage.getItem('detail-cast-open') !== 'false' }"
-                   x-init="$watch('open', v => localStorage.setItem('detail-cast-open', v))">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-bold">Cast</h2>
-              <div class="flex items-center gap-2">
-                {% if media.total_cast_count and media.total_cast_count > media.cast|length and media.source_url %}
-                  <a href="{{ media.source_url }}"
-                     target="_blank"
-                     rel="noreferrer"
-                     class="text-sm font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
-                    Full cast ({{ media.total_cast_count }})
-                  </a>
-                {% endif %}
-                <button type="button"
-                        class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
-                        @click="open = !open"
-                        :aria-expanded="open.toString()"
-                        aria-label="Toggle cast section">
-                  <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': open }">
-                    {% include "app/icons/chevron-down.svg" %}
-                  </div>
-                </button>
-              </div>
-            </div>
-            <div x-show="open"
-                 x-transition:enter="transition ease-out duration-200"
-                 x-transition:enter-start="opacity-0 transform -translate-y-1"
-                 x-transition:enter-end="opacity-100 transform translate-y-0"
-                 x-transition:leave="transition ease-in duration-150"
-                 x-transition:leave-start="opacity-100 transform translate-y-0"
-                 x-transition:leave-end="opacity-0 transform -translate-y-1">
-              <div class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden">
-                {% for person in media.cast|slice:":20" %}
-                  {% include "app/components/person_card_inline.html" %}
-                {% endfor %}
-              </div>
-            </div>
+          <section class="mb-8">
+            {% include "app/components/_scrollable_row.html" with row=cast_row grid_template="app/components/detail_cast_grid.html" collapse_key="detail-cast-open" %}
           </section>
         {% endif %}
 
         {% if media.source == Sources.TMDB.value and media.crew %}
-          <section class="mb-8"
-                   x-data="{ open: localStorage.getItem('detail-crew-open') !== 'false' }"
-                   x-init="$watch('open', v => localStorage.setItem('detail-crew-open', v))">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-bold">Crew</h2>
-              <button type="button"
-                      class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
-                      @click="open = !open"
-                      :aria-expanded="open.toString()"
-                      aria-label="Toggle crew section">
-                <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': open }">
-                  {% include "app/icons/chevron-down.svg" %}
-                </div>
-              </button>
-            </div>
-            <div x-show="open"
-                 x-transition:enter="transition ease-out duration-200"
-                 x-transition:enter-start="opacity-0 transform -translate-y-1"
-                 x-transition:enter-end="opacity-100 transform translate-y-0"
-                 x-transition:leave="transition ease-in duration-150"
-                 x-transition:leave-start="opacity-100 transform translate-y-0"
-                 x-transition:leave-end="opacity-0 transform -translate-y-1">
-              <div class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden">
-                {% for person in media.crew|slice:":20" %}
-                  {% include "app/components/person_card_inline.html" %}
-                {% endfor %}
-              </div>
-            </div>
+          <section class="mb-8">
+            {% include "app/components/_scrollable_row.html" with row=crew_row grid_template="app/components/detail_cast_grid.html" collapse_key="detail-crew-open" %}
           </section>
         {% endif %}
 
         {% if media.related.recommendations %}
-          <section class="mb-8"
-                   x-data="{ open: localStorage.getItem('detail-recommendations-open') !== 'false' }"
-                   x-init="$watch('open', v => localStorage.setItem('detail-recommendations-open', v))">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-xl font-bold">Recommendations</h2>
-              <button type="button"
-                      class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
-                      @click="open = !open"
-                      :aria-expanded="open.toString()"
-                      aria-label="Toggle recommendations section">
-                <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': open }">
-                  {% include "app/icons/chevron-down.svg" %}
-                </div>
-              </button>
-            </div>
-            <div x-show="open"
-                 x-transition:enter="transition ease-out duration-200"
-                 x-transition:enter-start="opacity-0 transform -translate-y-1"
-                 x-transition:enter-end="opacity-100 transform translate-y-0"
-                 x-transition:leave="transition ease-in duration-150"
-                 x-transition:leave-start="opacity-100 transform translate-y-0"
-                 x-transition:leave-end="opacity-0 transform -translate-y-1">
-              <div class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden">
-                {% for result in media.related.recommendations %}
-                  <div class="w-36 shrink-0">
-                    {% include "app/components/detail_related_card.html" with item=result.item title=result.item.title user=user active=False show_release_year_placeholder=False %}
-                  </div>
-                {% endfor %}
-              </div>
-            </div>
+          <section class="mb-8">
+            {% include "app/components/_scrollable_row.html" with row=recommendations_row grid_template="app/components/detail_related_grid.html" collapse_key="detail-recommendations-open" %}
           </section>
         {% endif %}
 
@@ -590,3 +500,4 @@
     {% endif %}
 
   </div>
+{% include "app/components/_scrollable_row_js.html" %}

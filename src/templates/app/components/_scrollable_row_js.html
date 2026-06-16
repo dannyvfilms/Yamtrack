@@ -133,6 +133,39 @@
     homeRowLoadTimers.set(row, timer);
   }
 
+  function scrollRowByPage(containerId, dir) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.scrollBy({ left: dir === 'next' ? el.clientWidth * 0.9 : -el.clientWidth * 0.9, behavior: 'smooth' });
+  }
+
+  function updateScrollBtns(row) {
+    const id = row.id;
+    if (!id) return;
+    const prevBtn = document.querySelector(`[data-scroll-dir="prev"][data-scroll-target="${id}"]`);
+    const nextBtn = document.querySelector(`[data-scroll-dir="next"][data-scroll-target="${id}"]`);
+    if (!prevBtn && !nextBtn) return;
+
+    const atStart = row.scrollLeft < 2;
+    if (prevBtn) {
+      if (atStart) {
+        prevBtn.classList.add('opacity-0', 'pointer-events-none');
+      } else {
+        prevBtn.classList.remove('opacity-0', 'pointer-events-none');
+      }
+    }
+
+    if (nextBtn) {
+      const { loaded, total } = getHomeRowCounts(row);
+      const atEnd = row.scrollLeft + row.clientWidth >= row.scrollWidth - 4;
+      if (atEnd && loaded >= total) {
+        nextBtn.classList.add('opacity-0', 'pointer-events-none');
+      } else {
+        nextBtn.classList.remove('opacity-0', 'pointer-events-none');
+      }
+    }
+  }
+
   function initHomeRowInfiniteScroll() {
     document.querySelectorAll('[data-home-row="true"]').forEach(row => {
       if (row.dataset.homeRowBound === 'true') {
@@ -144,6 +177,7 @@
         row.dataset.stickToEnd = isHomeRowNearEnd(row) ? 'true' : 'false';
         maybeLoadMoreHomeRow(row);
         scheduleHomeRowLoadMore(row);
+        updateScrollBtns(row);
       }, { passive: true });
     });
     requestAnimationFrame(() => {
@@ -151,6 +185,7 @@
         ensureHomeRowObserver(row);
         syncHomeRowLoadedCount(row);
         maybeAutofillHomeRow(row);
+        updateScrollBtns(row);
       });
     });
   }
@@ -247,6 +282,12 @@
     }
   });
 
+  document.body.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-scroll-dir]');
+    if (!btn) return;
+    scrollRowByPage(btn.dataset.scrollTarget, btn.dataset.scrollDir);
+  });
+
   document.body.addEventListener('htmx:afterSwap', function(event) {
     const row = event.detail.target;
     if (row && row.matches('[data-home-row="true"]')) {
@@ -267,6 +308,7 @@
         ensureHomeRowObserver(row);
         maybeAutofillHomeRow(row);
         maybeLoadMoreHomeRow(row);
+        updateScrollBtns(row);
       });
     }
     setTimeout(() => {
