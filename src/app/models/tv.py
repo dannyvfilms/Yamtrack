@@ -992,11 +992,23 @@ class Season(Media):
                     # If parsing fails, keep release_datetime as None
                     pass
 
+        # An episode's library bucket should mirror the show's grouping bucket
+        # (e.g. 'tv'/'anime' for grouped anime), never the season's own 'season'
+        # type. Copying the season's 'season' bucket onto episodes is what
+        # produced the stray ('episode','season') items, so fall back to
+        # 'episode' whenever the season is in its own (non-grouped) bucket.
+        season_bucket = self.item.library_media_type
+        episode_bucket = (
+            season_bucket
+            if season_bucket and season_bucket != MediaTypes.SEASON.value
+            else MediaTypes.EPISODE.value
+        )
+
         item, created = Item.objects.get_or_create(
             media_id=self.item.media_id,
             source=self.item.source,
             media_type=MediaTypes.EPISODE.value,
-            library_media_type=self.item.library_media_type,
+            library_media_type=episode_bucket,
             season_number=self.item.season_number,
             episode_number=normalized_episode_number,
             defaults={
@@ -1023,8 +1035,8 @@ class Season(Media):
                     setattr(item, field_name, value)
                     update_fields.append(field_name)
                     updated = True
-            if item.library_media_type != self.item.library_media_type:
-                item.library_media_type = self.item.library_media_type
+            if item.library_media_type != episode_bucket:
+                item.library_media_type = episode_bucket
                 update_fields.append("library_media_type")
                 updated = True
             if not item.runtime_minutes and runtime_minutes:
