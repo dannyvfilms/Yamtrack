@@ -369,9 +369,18 @@ class TraktImporter:
                         watched_at,
                     )
                     self.process_watched_episode(entry)
-            except Exception as e:
-                msg = f"Error processing history entry: {entry}"
-                raise MediaImportUnexpectedError(msg) from e
+            except MediaImportError:
+                # Fatal, importer-level problems (auth, etc.) must still abort.
+                raise
+            except Exception as e:  # noqa: BLE001
+                # A single malformed/unexpected entry should not abort the whole
+                # import; record it as a warning and continue with the rest.
+                logger.exception("Skipping Trakt history entry")
+                source_data = entry.get("show") or entry.get("movie") or {}
+                title = source_data.get("title", "Unknown title")
+                self.warnings.append(
+                    f"{title}: skipped a watch entry due to an unexpected error ({e}).",
+                )
 
     def _get_tmdb_id(self, entry_data):
         """Extract TMDB ID from entry data."""
@@ -418,7 +427,16 @@ class TraktImporter:
         season_number=None,
         episode_number=None,
     ):
-        """Get or create an item in the database."""
+        """Get or create an item in the database.
+
+        The same season/episode can legitimately exist under more than one
+        ``library_media_type`` bucket (e.g. grouped anime stored on TV rows, or
+        episodes auto-created when a season is marked complete). A plain
+        ``get_or_create`` keyed only on the identity fields therefore risks
+        ``MultipleObjectsReturned``. Reuse any existing matching item instead of
+        failing or creating a divergent duplicate, preferring the bucket this
+        importer would normally use.
+        """
         item_kwargs = {
             "media_id": tmdb_id,
             "source": Sources.TMDB.value,
@@ -431,17 +449,21 @@ class TraktImporter:
         if episode_number is not None:
             item_kwargs["episode_number"] = episode_number
 
-        defaults = {
-            **app.models.Item.title_fields_from_metadata(metadata),
-            "image": metadata["image"],
-        }
+        desired_bucket = metadata.get("library_media_type") or media_type
 
-        item, _ = app.models.Item.objects.get_or_create(
+        existing = list(app.models.Item.objects.filter(**item_kwargs))
+        if existing:
+            for item in existing:
+                if item.library_media_type == desired_bucket:
+                    return item
+            return existing[0]
+
+        return app.models.Item.objects.create(
             **item_kwargs,
-            defaults=defaults,
+            library_media_type=desired_bucket,
+            **app.models.Item.title_fields_from_metadata(metadata),
+            image=metadata["image"],
         )
-
-        return item
 
     def process_watched_movie(self, entry):
         """Process a single movie watch event."""
