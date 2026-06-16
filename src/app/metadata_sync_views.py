@@ -1225,6 +1225,52 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             season_number=season_number,
         )
 
+        preferred_provider = metadata_resolution.get_preferred_provider(
+            request.user,
+            item,
+            media_type,
+        )
+        preferred_provider_synced = False
+        if preferred_provider != source and preferred_provider != Sources.MANUAL.value:
+            preferred_media_id = metadata_resolution.resolve_provider_media_id(
+                item,
+                preferred_provider,
+                route_media_type=media_type,
+                season_number=season_number,
+            )
+            if preferred_media_id:
+                preferred_tracking_type = metadata_resolution.get_tracking_media_type(
+                    media_type,
+                    source=preferred_provider,
+                )
+                preferred_cache_key = f"{preferred_provider}_{preferred_tracking_type}_{preferred_media_id}"
+                cache.delete(preferred_cache_key)
+                try:
+                    preferred_metadata = services.get_media_metadata(
+                        metadata_resolution.provider_route_media_type(
+                            media_type,
+                            preferred_provider,
+                        ),
+                        preferred_media_id,
+                        preferred_provider,
+                    )
+                    metadata_resolution.upsert_provider_links(
+                        item,
+                        preferred_metadata,
+                        provider=preferred_provider,
+                        provider_media_type=preferred_tracking_type,
+                        season_number=season_number,
+                    )
+                    preferred_provider_synced = True
+                except (requests.exceptions.RequestException, services.ProviderAPIError) as exc:
+                    logger.warning(
+                        "preferred_provider_sync_failed item_id=%s preferred_provider=%s preferred_media_id=%s error=%s",
+                        item.id,
+                        preferred_provider,
+                        preferred_media_id,
+                        exception_summary(exc),
+                    )
+
         if trakt_popularity_service.supports_route_media_type(media_type):
             try:
                 trakt_popularity_service.refresh_trakt_popularity(
@@ -1347,7 +1393,13 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         # Sync rating from Plex if user has Plex connected and webhooks configured
         _sync_plex_rating(request, item, media_type)
 
-        msg = f"{title} was synced to {Sources(source).label} successfully."
+        if preferred_provider_synced:
+            msg = (
+                f"{title} was synced to {Sources(source).label} and "
+                f"{Sources(preferred_provider).label} successfully."
+            )
+        else:
+            msg = f"{title} was synced to {Sources(source).label} successfully."
         messages.success(request, msg)
 
     return _sync_redirect_response()
