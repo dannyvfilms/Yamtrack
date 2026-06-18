@@ -6,7 +6,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from app import live_playback
-from app.models import TV, Anime, Episode, Item, MediaTypes, Movie, Season, Status
+from app.models import TV, Anime, Episode, Item, ItemProviderLink, MediaTypes, Movie, Season, Sources, Status
 from integrations.webhooks.jellyfin import JellyfinWebhookProcessor
 
 
@@ -414,6 +414,94 @@ class JellyfinWebhookTests(TestCase):
         movie = Movie.objects.get(item__media_id="603")
         self.assertEqual(movie.progress, 0)
         self.assertEqual(movie.status, Status.IN_PROGRESS.value)
+
+    @patch("app.providers.tmdb.tv_with_seasons")
+    @patch("app.providers.tmdb.find")
+    def test_tv_episode_uses_existing_tvdb_tracked_item(
+        self, mock_find, mock_tv_with_seasons,
+    ):
+        """Webhook scrobble lands on an existing TVDB-tracked show rather than
+        creating a duplicate TMDB-sourced item."""
+        tvdb_show_id = "76669"
+        tmdb_show_id = "1668"
+
+        # Simulate a user who already tracks Friends via TVDB
+        tvdb_item = Item.objects.create(
+            media_id=tvdb_show_id,
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Friends",
+            image="https://example.com/friends.jpg",
+        )
+        TV.objects.create(item=tvdb_item, user=self.user, status=Status.IN_PROGRESS.value)
+        ItemProviderLink.objects.create(
+            item=tvdb_item,
+            provider=Sources.TVDB.value,
+            provider_media_id=tvdb_show_id,
+            provider_media_type=MediaTypes.TV.value,
+        )
+
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {"show_id": int(tmdb_show_id), "season_number": 1, "episode_number": 1},
+            ],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": tmdb_show_id,
+            "title": "Friends",
+            "image": "https://example.com/friends.jpg",
+            "tvdb_id": tvdb_show_id,
+            "provider_external_ids": {"tmdb_id": tmdb_show_id, "tvdb_id": tvdb_show_id},
+            "season/1": {
+                "season_number": 1,
+                "season_title": "Season 1",
+                "synopsis": "",
+                "image": "https://example.com/friends-s1.jpg",
+                "max_progress": 24,
+                "episodes": [{"episode_number": 1, "runtime": 22, "air_date": None, "still_path": None, "name": "The Pilot", "overview": ""}],
+                "details": {"episodes": 24},
+                "providers": {},
+            },
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The Pilot",
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "ProviderIds": {"Tvdb": tvdb_show_id},
+                "UserData": {"Played": True},
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        # No new TMDB-sourced TV item should have been created
+        self.assertFalse(
+            Item.objects.filter(source=Sources.TMDB.value, media_type=MediaTypes.TV.value).exists(),
+        )
+
+        # Season and episode items should be under the existing TVDB item
+        season_item = Item.objects.get(
+            source=Sources.TVDB.value,
+            media_id=tvdb_show_id,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+        )
+        episode = Episode.objects.get(
+            related_season__item=season_item,
+        )
+        self.assertIsNotNone(episode.end_date)
 
     def test_repeated_watch(self):
         """Test webhook handles repeated watches."""

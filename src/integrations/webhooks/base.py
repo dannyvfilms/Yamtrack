@@ -370,6 +370,56 @@ class BaseWebhookProcessor:
 
         return False
 
+    def _find_existing_tracked_tv_item(self, user, ids, tmdb_media_id):
+        """Return an existing TV Item this user already tracks that matches any
+        of the incoming external IDs, or None if no match found.
+
+        Checked before creating a new TMDB-sourced item so that users who
+        track a show via TVDB don't end up with a duplicate entry.
+        """
+        from django.db.models import Q  # noqa: PLC0415
+
+        tvdb_id = ids.get("tvdb_id")
+
+        filters = Q()
+        if tmdb_media_id:
+            filters |= Q(
+                provider=Sources.TMDB.value,
+                provider_media_id=str(tmdb_media_id),
+            )
+        if tvdb_id:
+            filters |= Q(
+                provider=Sources.TVDB.value,
+                provider_media_id=str(tvdb_id),
+            )
+
+        if filters:
+            link = (
+                app.models.ItemProviderLink.objects.filter(
+                    filters,
+                    provider_media_type=MediaTypes.TV.value,
+                    item__media_type=MediaTypes.TV.value,
+                    item__tv__user=user,
+                )
+                .select_related("item")
+                .first()
+            )
+            if link:
+                return link.item
+
+        # Direct match for manually-added TVDB items without a cross-provider link
+        if tvdb_id:
+            direct = app.models.Item.objects.filter(
+                source=Sources.TVDB.value,
+                media_id=str(tvdb_id),
+                media_type=MediaTypes.TV.value,
+                tv__user=user,
+            ).first()
+            if direct:
+                return direct
+
+        return None
+
     def _try_route_tvdb_anime(
         self,
         payload,
@@ -1044,15 +1094,26 @@ class BaseWebhookProcessor:
             )
             return
 
-        tv_item, _ = app.models.Item.objects.get_or_create(
-            media_id=media_id,
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.TV.value,
-            defaults={
-                "title": tv_metadata["title"],
-                "image": tv_metadata["image"],
-            },
+        existing_tv_item = self._find_existing_tracked_tv_item(
+            user, external_ids, media_id,
         )
+        if existing_tv_item:
+            tv_item = existing_tv_item
+            logger.info(
+                "Webhook using existing %s-tracked item for show: %s",
+                tv_item.source,
+                tv_item.title,
+            )
+        else:
+            tv_item, _ = app.models.Item.objects.get_or_create(
+                media_id=media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.TV.value,
+                defaults={
+                    "title": tv_metadata["title"],
+                    "image": tv_metadata["image"],
+                },
+            )
         metadata_resolution.upsert_provider_links(
             tv_item,
             tv_metadata
@@ -1110,8 +1171,8 @@ class BaseWebhookProcessor:
         )
 
         season_item, _ = app.models.Item.objects.get_or_create(
-            media_id=media_id,
-            source=Sources.TMDB.value,
+            media_id=tv_item.media_id,
+            source=tv_item.source,
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
             library_media_type=season_library_media_type,
