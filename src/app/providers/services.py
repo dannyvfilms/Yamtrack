@@ -422,7 +422,17 @@ def get_media_metadata(
                 media_id,
                 media_type=f"season {season_numbers[0]}",
             )
-        return seasons[season_key]
+        season_data = seasons[season_key]
+        if not season_data.get("cast"):
+            season_data["cast"] = seasons.get("cast") or []
+        if not season_data.get("crew"):
+            season_data["crew"] = seasons.get("crew") or []
+        tv_recommendations = (seasons.get("related") or {}).get("recommendations") or []
+        if tv_recommendations:
+            season_related = season_data.setdefault("related", {})
+            if not season_related.get("recommendations"):
+                season_related["recommendations"] = tv_recommendations
+        return season_data
 
     def tvdb_series_metadata(routed_media_type=MediaTypes.TV.value):
         """Return TVDB series metadata for TV or grouped anime routes."""

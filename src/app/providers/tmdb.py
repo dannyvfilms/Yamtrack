@@ -548,6 +548,15 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
         season_data.get("image"),
         tv_data.get("image"),
     )
+    if not season_data.get("cast"):
+        season_data["cast"] = tv_data.get("cast") or []
+    if not season_data.get("crew"):
+        season_data["crew"] = tv_data.get("crew") or []
+    tv_recommendations = (tv_data.get("related") or {}).get("recommendations") or []
+    if tv_recommendations:
+        season_related = season_data.setdefault("related", {})
+        if not season_related.get("recommendations"):
+            season_related["recommendations"] = tv_recommendations
     return season_data
 
 
