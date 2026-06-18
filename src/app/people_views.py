@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET
 
 from app import credits, helpers, statistics_cache
+from app.media_list_views import build_filter_data_from_items
 from app.models import (
     Book,
     Comic,
@@ -394,10 +395,17 @@ def person_detail(request, source, person_id, name):
 
     # Collect filter options from the full unfiltered filmography.
     all_departments = sorted({e["department"] for e in filmography if e.get("department")})
-    all_media_types = sorted({e["media_type"] for e in filmography if e.get("media_type")})
+    all_filmography_years = sorted(
+        {e["year"] for e in filmography if e.get("year")}, reverse=True
+    )
 
     filter_department = request.GET.get("department", "")
-    filter_media_type_param = request.GET.get("media_type", "")
+    filter_year = request.GET.get("year", "")
+    filter_genre = request.GET.get("genre", "")
+    filter_implied_genre = request.GET.get("implied_genre", "")
+    filter_source = request.GET.get("source", "")
+    filter_rating = request.GET.get("rating", "all")
+    filter_collection = request.GET.get("collection", "all")
     # Use the same sort key names as MediaSortChoices for consistency with the
     # rest of the app. "release_date" desc is the default provider ordering.
     _PERSON_VALID_SORTS = {
@@ -413,12 +421,55 @@ def person_detail(request, source, person_id, name):
     if sort_dir not in {"asc", "desc"}:
         sort_dir = "asc" if sort_by == MediaSortChoices.TITLE.value else "desc"
 
-    def _apply_filters(entries):
+    def _apply_common_filters(entries):
+        """Filters that work on all filmography entries (year + department)."""
         result = entries
         if filter_department:
             result = [e for e in result if e.get("department") == filter_department]
-        if filter_media_type_param:
-            result = [e for e in result if e.get("media_type") == filter_media_type_param]
+        if filter_year:
+            result = [e for e in result if str(e.get("year") or "") == filter_year]
+        return result
+
+    def _apply_watched_filters(entries):
+        """Filters that require tracked_item data; only applied to watched entries."""
+        result = entries
+        if filter_genre:
+            result = [
+                e for e in result
+                if filter_genre in (getattr(e.get("tracked_item"), "genres", None) or [])
+            ]
+        if filter_implied_genre:
+            result = [
+                e for e in result
+                if filter_implied_genre in (
+                    getattr(e.get("tracked_item"), "implied_genres", None) or []
+                )
+            ]
+        if filter_source:
+            result = [
+                e for e in result
+                if getattr(e.get("tracked_item"), "source", None) == filter_source
+            ]
+        if filter_rating == "rated":
+            result = [
+                e for e in result
+                if getattr(e.get("tracked_item"), "score", None) is not None
+            ]
+        elif filter_rating == "not_rated":
+            result = [
+                e for e in result
+                if getattr(e.get("tracked_item"), "score", None) is None
+            ]
+        if filter_collection == "collected":
+            result = [
+                e for e in result
+                if getattr(e.get("tracked_item"), "in_collection", False)
+            ]
+        elif filter_collection == "not_collected":
+            result = [
+                e for e in result
+                if not getattr(e.get("tracked_item"), "in_collection", False)
+            ]
         return result
 
     def _sort_with_nulls_last(entries, key_fn, reverse):
@@ -441,8 +492,15 @@ def person_detail(request, source, person_id, name):
             return list(reversed(entries))
         return entries
 
-    filmography = _apply_sort(_apply_filters(filmography))
-    watched_filmography = _apply_sort(_apply_filters(watched_filmography))
+    # Collect tracked items from the unfiltered watched list for filter option building.
+    watched_items_for_filter_data = [
+        e["tracked_item"] for e in watched_filmography if e.get("tracked_item")
+    ]
+
+    filmography = _apply_sort(_apply_common_filters(filmography))
+    watched_filmography = _apply_sort(
+        _apply_common_filters(_apply_watched_filters(watched_filmography))
+    )
 
     from django.urls import reverse
 
@@ -476,27 +534,20 @@ def person_detail(request, source, person_id, name):
         ]
     )
 
-    filter_data = {
-        "departments": all_departments if not is_author else [],
-        "genres": [],
-        "implied_genres": [],
-        "years": [],
-        "sources": [],
-        "languages": [],
-        "countries": [],
-        "platforms": [],
-        "origins": [],
-        "formats": [],
-        "authors": [],
-        "tags": [],
-        "show_languages": False,
-        "show_countries": False,
-        "show_platforms": False,
-        "show_origins": False,
-        "show_formats": False,
-        "show_authors": False,
-        "show_progress": False,
-    }
+    # Build filter options from tracked (watched) items using the shared function so
+    # any new filter dimension added there automatically appears here too.
+    filter_data = build_filter_data_from_items(watched_items_for_filter_data)
+
+    # Supplement with filmography-level data not available from tracked items.
+    filter_data["departments"] = all_departments if not is_author else []
+    filter_data["tags"] = []
+    filter_data["show_progress"] = False
+
+    # Years: merge watched-item years with years from the full unfiltered filmography
+    # so the year filter covers films not yet tracked by the user.
+    watched_years = {int(y["value"]) for y in filter_data["years"] if y["value"].isdigit()}
+    combined_years = sorted(watched_years | set(all_filmography_years), reverse=True)
+    filter_data["years"] = [{"value": str(y), "label": str(y)} for y in combined_years]
 
     context = {
         "user": request.user,
@@ -516,7 +567,12 @@ def person_detail(request, source, person_id, name):
         "current_sort": sort_by,
         "current_direction": sort_dir,
         "current_department": filter_department,
-        "current_media_type_filter": filter_media_type_param,
+        "current_year": filter_year,
+        "current_genre": filter_genre,
+        "current_implied_genre": filter_implied_genre,
+        "current_source": filter_source,
+        "current_rating": filter_rating,
+        "current_collection": filter_collection,
         "sort_choices": person_sort_choices,
         "status_choices": [],
         "filter_data": filter_data,

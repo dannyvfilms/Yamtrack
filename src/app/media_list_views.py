@@ -127,6 +127,224 @@ def _collect_reading_activity_day_keys(entries):
     return sorted(day_keys)
 
 
+FORMAT_LABELS = {
+    "hardcover": "Hardcover",
+    "paperback": "Paperback",
+    "ebook": "eBook",
+    "audiobook": "Audiobook",
+}
+
+
+def _normalize_filter_value(value):
+    return str(value or "").strip().lower()
+
+
+def _extract_item_languages(item):
+    """Extract languages from database fields only."""
+    if not item:
+        return []
+    languages = getattr(item, "languages", None)
+    if not languages:
+        return []
+    if isinstance(languages, list):
+        return [str(lang).strip() for lang in languages if str(lang).strip()]
+    return [str(languages).strip()] if str(languages).strip() else []
+
+
+def _extract_item_country(item):
+    """Extract country from database fields only."""
+    if not item:
+        return ""
+    country = getattr(item, "country", None)
+    return str(country).strip() if country else ""
+
+
+def _extract_item_platforms(item):
+    """Extract platforms from database fields only."""
+    if not item:
+        return []
+    platforms = getattr(item, "platforms", None)
+    if not platforms:
+        return []
+    if isinstance(platforms, list):
+        return [str(p).strip() for p in platforms if str(p).strip()]
+    return [str(platforms).strip()] if str(platforms).strip() else []
+
+
+def _extract_item_authors(item):
+    """Extract authors from database fields only."""
+    if not item:
+        return []
+    authors = getattr(item, "authors", None)
+    if not authors:
+        return []
+    if not isinstance(authors, list):
+        authors = [authors]
+    normalized = []
+    for raw_author in authors:
+        if isinstance(raw_author, dict):
+            author_name = (
+                raw_author.get("name")
+                or raw_author.get("person")
+                or raw_author.get("author")
+            )
+        else:
+            author_name = raw_author
+        author_text = str(author_name).strip() if author_name else ""
+        if author_text:
+            normalized.append(author_text)
+    return normalized
+
+
+def _extract_item_formats(item, collection_formats_by_item_id=None):
+    """Extract normalized format values from Item and collection metadata."""
+    formats = set()
+    if item and hasattr(item, "format") and item.format:
+        normalized_item_format = _normalize_filter_value(item.format)
+        if normalized_item_format:
+            formats.add(normalized_item_format)
+    if item and collection_formats_by_item_id:
+        formats.update(collection_formats_by_item_id.get(item.id, set()))
+    return formats
+
+
+def _extract_item_platforms_with_collection(item, collection_platforms_by_item_id=None):
+    """Extract platform values, preferring explicit collection platform entries."""
+    if not item:
+        return []
+    if collection_platforms_by_item_id:
+        explicit_platforms = collection_platforms_by_item_id.get(item.id, set())
+        if explicit_platforms:
+            return sorted(explicit_platforms, key=lambda value: value.lower())
+    return _extract_item_platforms(item)
+
+
+def build_filter_data_from_items(
+    media_items,
+    *,
+    collection_formats_by_item_id=None,
+    collection_platforms_by_item_id=None,
+):
+    """Build filter menu option lists from a sequence of media/Item objects.
+
+    Accepts either ORM media objects (with a ``.item`` FK attribute) or raw
+    Item instances.  Pass ``collection_formats_by_item_id`` /
+    ``collection_platforms_by_item_id`` from the media-list view to include
+    collection-enriched format/platform data; omit them (or pass None) for
+    contexts that don't have collection data (e.g. person detail pages).
+    """
+    from app.models import Sources
+
+    genres_set = set()
+    implied_genres_set = set()
+    years_set = set()
+    sources_set = set()
+    languages_set = set()
+    countries_set = set()
+    platforms_set = set()
+    formats_set = set()
+    authors_set = set()
+    has_unknown_year = False
+    for media in media_items:
+        item = getattr(media, "item", media)
+        if not item:
+            continue
+        for genre in getattr(item, "genres", None) or []:
+            genre_value = str(genre).strip()
+            if genre_value:
+                genres_set.add(genre_value)
+        for genre in getattr(item, "implied_genres", None) or []:
+            genre_value = str(genre).strip()
+            if genre_value:
+                implied_genres_set.add(genre_value)
+        release_dt = getattr(item, "release_datetime", None)
+        if release_dt and getattr(release_dt, "year", None):
+            years_set.add(release_dt.year)
+        else:
+            has_unknown_year = True
+        if getattr(item, "source", None):
+            sources_set.add(item.source)
+        db_languages = _extract_item_languages(item)
+        if db_languages:
+            languages_set.update(db_languages)
+        country_value = _extract_item_country(item)
+        if country_value:
+            countries_set.add(country_value)
+        platforms = _extract_item_platforms_with_collection(
+            item, collection_platforms_by_item_id
+        )
+        if platforms:
+            platforms_set.update(platforms)
+        authors = _extract_item_authors(item)
+        if authors:
+            authors_set.update(authors)
+        item_formats = _extract_item_formats(item, collection_formats_by_item_id)
+        if item_formats:
+            formats_set.update(item_formats)
+
+    genres = sorted(genres_set, key=lambda value: value.lower())
+    implied_genres = sorted(implied_genres_set, key=lambda value: value.lower())
+    years = [
+        {"value": str(year), "label": str(year)}
+        for year in sorted(years_set, reverse=True)
+    ]
+    if has_unknown_year:
+        years.append({"value": "unknown", "label": "Unknown"})
+
+    source_labels = dict(Sources.choices)
+    sources = [
+        {"value": source, "label": source_labels.get(source, source)}
+        for source in sorted(sources_set)
+    ]
+    languages = [
+        {
+            "value": value,
+            "label": value.upper() if len(value) <= 3 else value,
+        }
+        for value in sorted(languages_set)
+    ]
+    countries = [
+        {
+            "value": value,
+            "label": value.upper() if len(value) <= 3 else value,
+        }
+        for value in sorted(countries_set)
+    ]
+    platforms = [
+        {"value": value, "label": value}
+        for value in sorted(platforms_set, key=lambda val: val.lower())
+    ]
+    formats = [
+        {
+            "value": value,
+            "label": FORMAT_LABELS.get(_normalize_filter_value(value), value.title()),
+        }
+        for value in sorted(formats_set, key=lambda val: val.lower())
+    ]
+    authors = [
+        {"value": value, "label": value}
+        for value in sorted(authors_set, key=lambda val: val.lower())
+    ]
+    return {
+        "genres": genres,
+        "implied_genres": implied_genres,
+        "years": years,
+        "sources": sources,
+        "languages": languages,
+        "countries": countries,
+        "platforms": platforms,
+        "origins": [],
+        "formats": formats,
+        "authors": authors,
+        "show_languages": False,
+        "show_countries": False,
+        "show_platforms": False,
+        "show_origins": False,
+        "show_formats": False,
+        "show_authors": False,
+    }
+
+
 def media_list(request, media_type):
     """Return the media list page."""
     route_media_type = media_type
@@ -474,9 +692,6 @@ def media_list(request, media_type):
             ]
         return media_items
 
-    def _normalize_filter_value(value):
-        return str(value or "").strip().lower()
-
     def _release_date_from_value(value):
         if value is None:
             return None
@@ -506,85 +721,8 @@ def media_list(request, media_type):
             return release_date > today
         return True
 
-    def _extract_item_languages(item):
-        """Extract languages from database fields only."""
-        if not item:
-            return []
-        languages = getattr(item, "languages", None)
-        if not languages:
-            return []
-        if isinstance(languages, list):
-            return [str(lang).strip() for lang in languages if str(lang).strip()]
-        return [str(languages).strip()] if str(languages).strip() else []
-
-    def _extract_item_country(item):
-        """Extract country from database fields only."""
-        if not item:
-            return ""
-        country = getattr(item, "country", None)
-        return str(country).strip() if country else ""
-
-    def _extract_item_platforms(item):
-        """Extract platforms from database fields only."""
-        if not item:
-            return []
-        platforms = getattr(item, "platforms", None)
-        if not platforms:
-            return []
-        if isinstance(platforms, list):
-            return [str(p).strip() for p in platforms if str(p).strip()]
-        return [str(platforms).strip()] if str(platforms).strip() else []
-
-    def _extract_item_authors(item):
-        """Extract authors from database fields only."""
-        if not item:
-            return []
-        authors = getattr(item, "authors", None)
-        if not authors:
-            return []
-        if not isinstance(authors, list):
-            authors = [authors]
-        normalized = []
-        for raw_author in authors:
-            if isinstance(raw_author, dict):
-                author_name = (
-                    raw_author.get("name")
-                    or raw_author.get("person")
-                    or raw_author.get("author")
-                )
-            else:
-                author_name = raw_author
-            author_text = str(author_name).strip() if author_name else ""
-            if author_text:
-                normalized.append(author_text)
-        return normalized
-
     collection_formats_by_item_id = defaultdict(set)
     collection_platforms_by_item_id = defaultdict(set)
-
-    def _extract_item_formats(item):
-        """Extract normalized format values from Item and collection metadata."""
-        formats = set()
-        if item and hasattr(item, "format") and item.format:
-            normalized_item_format = _normalize_filter_value(item.format)
-            if normalized_item_format:
-                formats.add(normalized_item_format)
-
-        if item:
-            formats.update(collection_formats_by_item_id.get(item.id, set()))
-
-        return formats
-
-    def _extract_item_platforms_with_collection(item):
-        """Extract platform values, preferring explicit collection platform entries."""
-        if not item:
-            return []
-
-        explicit_platforms = collection_platforms_by_item_id.get(item.id, set())
-        if explicit_platforms:
-            return sorted(explicit_platforms, key=lambda value: value.lower())
-
-        return _extract_item_platforms(item)
 
     def apply_format_filter(media_items, filter_value):
         if not filter_value:
@@ -595,7 +733,7 @@ def media_list(request, media_type):
             item = getattr(media, "item", None)
             if not item:
                 continue
-            item_formats = _extract_item_formats(item)
+            item_formats = _extract_item_formats(item, collection_formats_by_item_id)
             if target in item_formats:
                 filtered_items.append(media)
         return filtered_items
@@ -787,13 +925,6 @@ def media_list(request, media_type):
         for media in media_items:
             media.display_authors = _extract_item_authors(getattr(media, "item", None))
 
-    FORMAT_LABELS = {
-        "hardcover": "Hardcover",
-        "paperback": "Paperback",
-        "ebook": "eBook",
-        "audiobook": "Audiobook",
-    }
-
     # Pre-fetch tag item IDs for include/exclude filters
     tag_included_ids = None
     tag_excluded_ids = None
@@ -811,116 +942,6 @@ def media_list(request, media_type):
                 tag__name__iexact=tag_exclude_filter,
             ).values_list("item_id", flat=True)
         )
-
-    def build_filter_data_from_items(media_items):
-        from app.models import Sources
-
-        genres_set = set()
-        implied_genres_set = set()
-        years_set = set()
-        sources_set = set()
-        languages_set = set()
-        countries_set = set()
-        platforms_set = set()
-        formats_set = set()
-        authors_set = set()
-        has_unknown_year = False
-        for media in media_items:
-            item = getattr(media, "item", None)
-            if not item:
-                continue
-            for genre in getattr(item, "genres", None) or []:
-                genre_value = str(genre).strip()
-                if genre_value:
-                    genres_set.add(genre_value)
-            for genre in getattr(item, "implied_genres", None) or []:
-                genre_value = str(genre).strip()
-                if genre_value:
-                    implied_genres_set.add(genre_value)
-            release_dt = getattr(item, "release_datetime", None)
-            if release_dt and getattr(release_dt, "year", None):
-                years_set.add(release_dt.year)
-            else:
-                has_unknown_year = True
-            if getattr(item, "source", None):
-                sources_set.add(item.source)
-            db_languages = _extract_item_languages(item)
-            if db_languages:
-                languages_set.update(db_languages)
-            country_value = _extract_item_country(item)
-            if country_value:
-                countries_set.add(country_value)
-            platforms = _extract_item_platforms_with_collection(item)
-            if platforms:
-                platforms_set.update(platforms)
-            authors = _extract_item_authors(item)
-            if authors:
-                authors_set.update(authors)
-            item_formats = _extract_item_formats(item)
-            if item_formats:
-                formats_set.update(item_formats)
-
-        genres = sorted(genres_set, key=lambda value: value.lower())
-        implied_genres = sorted(implied_genres_set, key=lambda value: value.lower())
-        years = [
-            {"value": str(year), "label": str(year)}
-            for year in sorted(years_set, reverse=True)
-        ]
-        if has_unknown_year:
-            years.append({"value": "unknown", "label": "Unknown"})
-
-        source_labels = dict(Sources.choices)
-        sources = [
-            {"value": source, "label": source_labels.get(source, source)}
-            for source in sorted(sources_set)
-        ]
-        languages = [
-            {
-                "value": value,
-                "label": value.upper() if len(value) <= 3 else value,
-            }
-            for value in sorted(languages_set)
-        ]
-        countries = [
-            {
-                "value": value,
-                "label": value.upper() if len(value) <= 3 else value,
-            }
-            for value in sorted(countries_set)
-        ]
-        platforms = [
-            {"value": value, "label": value}
-            for value in sorted(platforms_set, key=lambda val: val.lower())
-        ]
-        formats = [
-            {
-                "value": value,
-                "label": FORMAT_LABELS.get(_normalize_filter_value(value), value.title()),
-            }
-            for value in sorted(formats_set, key=lambda val: val.lower())
-        ]
-        authors = [
-            {"value": value, "label": value}
-            for value in sorted(authors_set, key=lambda val: val.lower())
-        ]
-        return {
-            "genres": genres,
-            "implied_genres": implied_genres,
-            "years": years,
-            "sources": sources,
-            "languages": languages,
-            "countries": countries,
-            "platforms": platforms,
-            "origins": [],
-            "formats": formats,
-            "authors": authors,
-            "show_languages": False,
-            "show_countries": False,
-            "show_platforms": False,
-            "show_origins": False,
-            "show_formats": False,
-            "show_authors": False,
-        }
 
     # Get media list with filters applied
     query_sort_filter = (
@@ -1307,7 +1328,11 @@ def media_list(request, media_type):
                     if normalized_collection_format:
                         collection_formats_by_item_id[item_id].add(normalized_collection_format)
         if filter_data is None:
-            filter_data = build_filter_data_from_items(filter_data_source_items)
+            filter_data = build_filter_data_from_items(
+            filter_data_source_items,
+            collection_formats_by_item_id=collection_formats_by_item_id,
+            collection_platforms_by_item_id=collection_platforms_by_item_id,
+        )
             filter_data["show_languages"] = media_type in (
                 MediaTypes.TV.value,
                 MediaTypes.MOVIE.value,
@@ -1497,7 +1522,11 @@ def media_list(request, media_type):
                     normalized_collection_format = _normalize_filter_value(collection_format)
                     if normalized_collection_format:
                         collection_formats_by_item_id[item_id].add(normalized_collection_format)
-        filter_data = build_filter_data_from_items(filter_data_source_items)
+        filter_data = build_filter_data_from_items(
+            filter_data_source_items,
+            collection_formats_by_item_id=collection_formats_by_item_id,
+            collection_platforms_by_item_id=collection_platforms_by_item_id,
+        )
         filter_data["show_languages"] = media_type in (
             MediaTypes.TV.value,
             MediaTypes.MOVIE.value,

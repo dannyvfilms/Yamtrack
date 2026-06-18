@@ -125,14 +125,14 @@
     sort: '{{ current_sort }}',
     direction: '{{ current_direction }}',
     status: 'all',
-    rating: 'all',
-    collection: 'all',
+    rating: '{{ current_rating }}',
+    collection: '{{ current_collection }}',
     progress: 'all',
-    genre: '',
-    impliedGenre: '',
-    year: '',
+    genre: '{{ current_genre }}',
+    impliedGenre: '{{ current_implied_genre }}',
+    year: '{{ current_year }}',
     release: 'all',
-    sourceFilter: '',
+    sourceFilter: '{{ current_source }}',
     language: '',
     country: '',
     platform: '',
@@ -198,8 +198,11 @@
     filterLabel() {
       const labels = [];
       if (this.department) { labels.push(this.department); }
-      if (this.sourceFilter) { labels.push(this.sourceFilter.toUpperCase()); }
+      if (this.year) { labels.push(this.year); }
       if (this.genre) { labels.push(this.genre); }
+      if (this.sourceFilter) { labels.push(this.sourceFilter.toUpperCase()); }
+      if (this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || this.rating); }
+      if (this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || this.collection); }
       if (this.tag) { labels.push('+' + this.tag); }
       if (this.tag_exclude) { labels.push('-' + this.tag_exclude); }
       if (labels.length === 0) { return 'All'; }
