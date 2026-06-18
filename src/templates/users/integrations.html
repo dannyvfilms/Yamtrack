@@ -7,13 +7,15 @@
 {% endblock title %}
 
 {% block settings_content %}
-  <div class="bg-[#2a2f35] rounded-lg p-6">
+  <div class="bg-[#2a2f35] rounded-lg p-6"
+       x-data="{ activeIntegration: 'all' }">
     <div class="flex items-center mb-4">
       {% include "app/icons/database.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
       <h2 class="text-xl font-semibold">Integrations</h2>
     </div>
-    <p class="text-gray-400 mb-5 text-sm">Connect your media servers via webhooks to automatically track your watching progress in real-time.</p>
+    <p class="text-gray-400 mb-5 text-sm">Connect your media servers and services via webhooks to automatically track your watching progress.</p>
 
+    {# API Token #}
     <div class="bg-[#39404b] p-5 rounded-lg mb-6">
       <div class="flex items-center mb-3">
         {% include "app/icons/padlock.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
@@ -52,39 +54,97 @@
       </div>
     </div>
 
-    <div class="bg-[#39404b] p-5 rounded-lg mb-6">
+    {# Filter bar #}
+    <div class="bg-[#39404b] rounded-lg p-4 mb-5">
+      <p class="text-sm text-gray-300 mb-3">Jump to integration:</p>
+      <div class="flex flex-wrap gap-2">
+        <button type="button"
+                @click="activeIntegration = 'all'"
+                :aria-pressed="activeIntegration === 'all'"
+                class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                :class="activeIntegration === 'all' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+          All
+        </button>
+        <button type="button"
+                @click="activeIntegration = 'jellyfin'"
+                :aria-pressed="activeIntegration === 'jellyfin'"
+                class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                :class="activeIntegration === 'jellyfin' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+          Jellyfin
+        </button>
+        <button type="button"
+                @click="activeIntegration = 'plex'"
+                :aria-pressed="activeIntegration === 'plex'"
+                class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                :class="activeIntegration === 'plex' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+          Plex
+        </button>
+        <button type="button"
+                @click="activeIntegration = 'emby'"
+                :aria-pressed="activeIntegration === 'emby'"
+                class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                :class="activeIntegration === 'emby' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+          Emby
+        </button>
+        <button type="button"
+                @click="activeIntegration = 'kodi'"
+                :aria-pressed="activeIntegration === 'kodi'"
+                class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                :class="activeIntegration === 'kodi' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+          Kodi
+        </button>
+        <button type="button"
+                @click="activeIntegration = 'jellyseerr'"
+                :aria-pressed="activeIntegration === 'jellyseerr'"
+                class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                :class="activeIntegration === 'jellyseerr' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+          Jellyseerr
+        </button>
+      </div>
+    </div>
+
+    {# Jellyfin Official #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6"
+         x-show="activeIntegration === 'all' || activeIntegration === 'jellyfin'"
+         x-transition.opacity.duration.150ms>
       <div class="flex items-center mb-3">
         {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
         <h3 class="text-base font-medium">Jellyfin Integration (Official Repo)</h3>
       </div>
-      <p class="text-gray-400 mb-4 text-sm">Connect Jellyfin to automatically track your watching progress.</p>
+      <p class="text-gray-400 mb-4 text-sm">Connect Jellyfin to automatically track your watching progress. Use this method if your server has access to the official Jellyfin plugin repository.</p>
       <div class="bg-[#262a2f] p-4 rounded-md">
         <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
+        {% url 'jellyfin_webhook' request.user.token as jellyfin_webhook_path %}
+        {% absolute_app_url jellyfin_webhook_path as jellyfin_webhook_url %}
         <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
           <li>You will need to have TMDB and TVDB as metadata providers in Jellyfin.</li>
-          <li>Install the Webhook plugin from the 'Jellyfin Stable' repo via your server's Plugin Catalog.</li>
+          <li>Install the Webhook plugin from the Jellyfin Stable repo via your server's Plugin Catalog.</li>
           <li>
-            Restart your server, then configure the plugin:
+            Restart your server, then open the Webhook plugin and click <strong>Add Generic Destination</strong>.
+          </li>
+          <li>
+            Configure the webhook with the following settings:
             <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
-              <li>Click on the "Add Generic Destination" button to create a new webhook.</li>
-              <li>Name: Yamtrack</li>
-              {% url 'jellyfin_webhook' request.user.token as jellyfin_webhook_path %}
-              {% absolute_app_url jellyfin_webhook_path as jellyfin_webhook_url %}
-              {# djlint:off #}
-              <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL:
-                  <input readonly id="jellyfin-webhook-url-official" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ jellyfin_webhook_url }}">
-                  <span class="flex items-center cursor-pointer group" title="Copy" data-copy-target="#jellyfin-webhook-url-official">
-                    {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
-                  </span>
-                </div>
-              </li>
-              {# djlint:on #}
-              <li>Notification Type: Playback Start and Playback Stop</li>
-              <li>User Filter: Your Jellyfin User</li>
-              <li>Finally, under the "Template" section, paste the following code.</li>
-              <div class="relative mt-2">
-                <textarea readonly id="jellyfin-json-template" class="w-full bg-[#39404b] rounded-md text-gray-300 text-sm border-0 focus:ring-0 outline-none font-mono p-3 resize-none overflow-auto max-h-72" rows="14">
+              <li>Name: <strong>Yamtrack</strong></li>
+              <li>Notification Type: <strong>Playback Start</strong> and <strong>Playback Stop</strong></li>
+              <li>User Filter: your Jellyfin user</li>
+            </ul>
+          </li>
+          <li>
+            Set the webhook URL to:
+            {# djlint:off #}
+            <div class="mt-2 inline-flex items-center gap-2 w-[calc(100%-30px)]">
+              <input readonly id="jellyfin-webhook-url-official" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ jellyfin_webhook_url }}">
+              <span class="flex items-center cursor-pointer group" title="Copy" data-copy-target="#jellyfin-webhook-url-official">
+                {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+              </span>
+            </div>
+            {# djlint:on #}
+          </li>
+          <li>
+            Under the <strong>Template</strong> section, paste the following JSON:
+            <div class="relative mt-2">
+              <textarea readonly id="jellyfin-json-template" class="w-full bg-[#39404b] rounded-md text-gray-300 text-sm border-0 focus:ring-0 outline-none font-mono p-3 resize-none overflow-auto max-h-72" rows="14">
 {% verbatim %}{
   "Event": "{{#if_equals NotificationType 'PlaybackStart'}}Play{{/if_equals}}{{#if_equals NotificationType 'PlaybackStop'}}Stop{{/if_equals}}",
   "Item": {
@@ -103,87 +163,198 @@
     {{/if_equals}}
   }
 }{% endverbatim %}</textarea>
-                <span class="absolute top-3 right-3 flex items-center cursor-pointer group"
-                  title="Copy"
-                  data-copy-target="#jellyfin-json-template">
-                  {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
-                </span>
-              </div>
-            </ul>
+              <span class="absolute top-3 right-3 flex items-center cursor-pointer group"
+                title="Copy"
+                data-copy-target="#jellyfin-json-template">
+                {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+              </span>
+            </div>
           </li>
         </ol>
       </div>
     </div>
-    <div class="bg-[#39404b] p-5 rounded-lg mb-6">
+
+    {# Jellyfin Unofficial #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6"
+         x-show="activeIntegration === 'all' || activeIntegration === 'jellyfin'"
+         x-transition.opacity.duration.150ms>
       <div class="flex items-center mb-3">
         {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
         <h3 class="text-base font-medium">Jellyfin Integration (Unofficial Repo)</h3>
       </div>
-      <p class="text-gray-400 mb-4 text-sm">Connect Jellyfin to automatically track your watching progress.</p>
+      <p class="text-gray-400 mb-4 text-sm">An alternative setup using an unofficial webhook plugin from a community repository. Use this method if the official Jellyfin plugin repository is not accessible from your server.</p>
       <div class="bg-[#262a2f] p-4 rounded-md">
         <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
         <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
           <li>You will need to have TMDB and TVDB as metadata providers in Jellyfin.</li>
           <li>
-            Add this repository
-            <a href="https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json"
-              target="_blank"
-              rel="noopener noreferrer"
-            class="text-indigo-400 hover:underline">link</a>
-            to your "Plugins Catalog" in Jellyfin settings.
+            In Jellyfin, go to <strong>Dashboard > Plugins > Repositories</strong> and add the following repository URL:
+            <div class="mt-2">
+              <a href="https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 class="text-indigo-400 hover:underline text-sm break-all">https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json</a>
+            </div>
           </li>
           <li>
-            From your "Plugins Catalog", install the
+            From the Plugin Catalog, install the
             <a href="https://github.com/shemanaev/jellyfin-plugin-webhooks"
                target="_blank"
                rel="noopener noreferrer"
                class="text-indigo-400 hover:underline">Unofficial Webhooks plugin</a>.
           </li>
           <li>
-            Restart your server, then configure the plugin:
+            Restart your server, then open the Unofficial Webhooks plugin and configure it:
             <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
-              {# djlint:off #}
-              <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL:
-                  <input readonly id="jellyfin-webhook-url-unofficial" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ jellyfin_webhook_url }}">
-                  <span class="flex items-center cursor-pointer group" title="Copy" data-copy-target="#jellyfin-webhook-url-unofficial">
-                    {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
-                  </span>
-                </div>
-              </li>
-              {# djlint:on #}
-              <li>Payload format: Default</li>
-              <li>Listen to events only for: Your Jellyfin User</li>
-              <li>Events: Play and Stop</li>
+              <li>Payload format: <strong>Default</strong></li>
+              <li>Listen to events only for: your Jellyfin user</li>
+              <li>Events: <strong>Play</strong> and <strong>Stop</strong></li>
             </ul>
+          </li>
+          <li>
+            Set the webhook URL to:
+            {# djlint:off #}
+            <div class="mt-2 inline-flex items-center gap-2 w-[calc(100%-30px)]">
+              <input readonly id="jellyfin-webhook-url-unofficial" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ jellyfin_webhook_url }}">
+              <span class="flex items-center cursor-pointer group" title="Copy" data-copy-target="#jellyfin-webhook-url-unofficial">
+                {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+              </span>
+            </div>
+            {# djlint:on #}
           </li>
         </ol>
       </div>
+    </div>
+
+    {# Plex #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6"
+         x-show="activeIntegration === 'all' || activeIntegration === 'plex'"
+         x-transition.opacity.duration.150ms>
+      <div class="flex items-center mb-3">
+        {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
+        <h3 class="text-base font-medium">Plex Integration</h3>
+      </div>
+      <p class="text-gray-400 mb-4 text-sm">Connect Plex to automatically track your watching progress.</p>
+
+      <div class="bg-[#262a2f] p-4 rounded-md mb-4">
+        <h4 class="text-sm font-medium mb-3">Plex Usernames</h4>
+        <form method="post"
+              action="{% url 'update_plex_usernames' %}"
+              class="space-y-2">
+          {% csrf_token %}
+          <div>
+            <p class="text-gray-400 mb-4 text-sm">
+              This username (or several, comma-separated) will be used to filter which events are sent to your webhook.
+            </p>
+            <input name="plex_usernames"
+                   class="w-full py-2 px-3 bg-[#39404b] rounded-md text-white text-sm border {% if user.plex_usernames.errors %}border-red-500{% else %}border-gray-600{% endif %} focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                   type="text"
+                   placeholder="username1, username2, username3"
+                   value="{{ request.user.plex_usernames }}">
+          </div>
+          <div class="pt-2">
+            <button type="submit"
+                    class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+              {% include "app/icons/save.svg" with classes="w-4 h-4 mr-2" %}
+              Save Changes
+            </button>
+          </div>
+        </form>
       </div>
 
-      <div class="bg-[#39404b] p-5 rounded-lg mb-6">
-        <div class="flex items-center mb-3">
-          {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
-          <h3 class="text-base font-medium">Plex Integration</h3>
-        </div>
-        <p class="text-gray-400 mb-4 text-sm">Connect Plex to automatically track your watching progress.</p>
-        <div class="bg-[#262a2f] p-3 rounded-md mb-4">
-          <h4 class="text-sm font-medium mb-3">Plex Usernames</h4>
-          <form method="post"
-                action="{% url 'update_plex_usernames' %}"
-                class="space-y-2">
+      <div class="bg-[#262a2f] p-4 rounded-md mb-4"
+           x-data="{
+             dropdownOpen: false,
+             selectedLibraries: JSON.parse('{{ selected_plex_webhook_libraries_json|escapejs }}'),
+             availableLibraries: JSON.parse('{{ plex_library_options_json|escapejs }}'),
+             selectedLabel() {
+               if (!this.availableLibraries.length) {
+                 return 'No libraries available';
+               }
+               if (this.selectedLibraries.length === this.availableLibraries.length) {
+                 return 'All Libraries';
+               }
+               if (!this.selectedLibraries.length) {
+                 return 'No Libraries';
+               }
+               return `${this.selectedLibraries.length} selected`;
+             },
+             toggleLibrary(value) {
+               if (this.selectedLibraries.includes(value)) {
+                 this.selectedLibraries = this.selectedLibraries.filter((entry) => entry !== value);
+               } else {
+                 this.selectedLibraries = [...this.selectedLibraries, value];
+               }
+             },
+             isLibrarySelected(value) {
+               return this.selectedLibraries.includes(value);
+             },
+             allLibrariesSelected() {
+               return this.availableLibraries.length > 0
+                 && this.selectedLibraries.length === this.availableLibraries.length;
+             },
+             toggleAllLibraries() {
+               if (this.allLibrariesSelected()) {
+                 this.selectedLibraries = [];
+               } else {
+                 this.selectedLibraries = this.availableLibraries.map((library) => library.value);
+               }
+             }
+           }">
+        <h4 class="text-sm font-medium mb-3">Plex Webhook Libraries</h4>
+        <p class="text-gray-400 mb-4 text-sm">
+          Choose which Plex libraries are accepted by your webhook. All libraries are selected by default.
+        </p>
+        {% if plex_library_options_json != "[]" %}
+          <form method="post" action="{% url 'update_plex_webhook_libraries' %}" class="space-y-3">
             {% csrf_token %}
+            <div class="relative" @click.outside="dropdownOpen = false">
+              <button type="button"
+                      class="h-10 px-3 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 w-full cursor-pointer"
+                      @click="dropdownOpen = !dropdownOpen"
+                      :aria-expanded="dropdownOpen">
+                {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
+                <span class="block min-w-0 truncate" x-text="selectedLabel()"></span>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="w-4 h-4 ml-auto" aria-hidden="true">
+                  <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+                </svg>
+              </button>
 
-            <div>
-              <p class="text-gray-400 mb-4 text-sm">
-                This username (or several, comma separated) will be used to filter which events are sent to your webhook.
-              </p>
-              <input name="plex_usernames"
-                     class="w-full py-2 px-3 bg-[#39404b] rounded-md text-white text-sm border {% if user.plex_usernames.errors %}border-red-500{% else %}border-gray-600{% endif %} focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                     type="text"
-                     placeholder="username1, username2, username3"
-                     value="{{ request.user.plex_usernames }}">
+              <div x-cloak
+                   x-show="dropdownOpen"
+                   x-transition:enter="transition ease-out duration-100"
+                   x-transition:enter-start="transform opacity-0 scale-95"
+                   x-transition:enter-end="transform opacity-100 scale-100"
+                   x-transition:leave="transition ease-in duration-75"
+                   x-transition:leave-start="transform opacity-100 scale-100"
+                   x-transition:leave-end="transform opacity-0 scale-95"
+                   class="absolute left-0 mt-2 w-full rounded-md bg-[#39404b] border border-gray-700 shadow-lg overflow-hidden z-40">
+                <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-700">
+                  <div class="text-xs uppercase tracking-wide text-gray-300">Plex Libraries</div>
+                  <button type="button"
+                          class="text-xs text-gray-300 hover:text-white transition-colors"
+                          @click="toggleAllLibraries()"
+                          x-text="allLibrariesSelected() ? 'Hide all' : 'Show all'"></button>
+                </div>
+                <div class="max-h-64 overflow-y-auto">
+                  <template x-for="library in availableLibraries" :key="library.value">
+                    <button type="button"
+                            class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                            @click="toggleLibrary(library.value)">
+                      <span class="block min-w-0 truncate" x-text="library.server_name ? `${library.label} (${library.server_name})` : library.label"></span>
+                      <span class="ml-auto" x-show="isLibrarySelected(library.value)">
+                        {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                      </span>
+                    </button>
+                  </template>
+                </div>
+              </div>
             </div>
+
+            <template x-for="library in selectedLibraries" :key="`selected-${library}`">
+              <input type="hidden" name="plex_webhook_libraries" :value="library">
+            </template>
+
             <div class="pt-2">
               <button type="submit"
                       class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
@@ -192,285 +363,183 @@
               </button>
             </div>
           </form>
-        </div>
+        {% else %}
+          <p class="text-sm text-amber-300">Connect Plex from the Import page to load your available libraries.</p>
+        {% endif %}
+      </div>
 
-        <div class="bg-[#262a2f] p-3 rounded-md mb-4"
-             x-data="{
-               dropdownOpen: false,
-               selectedLibraries: JSON.parse('{{ selected_plex_webhook_libraries_json|escapejs }}'),
-               availableLibraries: JSON.parse('{{ plex_library_options_json|escapejs }}'),
-               selectedLabel() {
-                 if (!this.availableLibraries.length) {
-                   return 'No libraries available';
-                 }
-                 if (this.selectedLibraries.length === this.availableLibraries.length) {
-                   return 'All Libraries';
-                 }
-                 if (!this.selectedLibraries.length) {
-                   return 'No Libraries';
-                 }
-                 return `${this.selectedLibraries.length} selected`;
-               },
-               toggleLibrary(value) {
-                 if (this.selectedLibraries.includes(value)) {
-                   this.selectedLibraries = this.selectedLibraries.filter((entry) => entry !== value);
-                 } else {
-                   this.selectedLibraries = [...this.selectedLibraries, value];
-                 }
-               },
-               isLibrarySelected(value) {
-                 return this.selectedLibraries.includes(value);
-               },
-               allLibrariesSelected() {
-                 return this.availableLibraries.length > 0
-                   && this.selectedLibraries.length === this.availableLibraries.length;
-               },
-               toggleAllLibraries() {
-                 if (this.allLibrariesSelected()) {
-                   this.selectedLibraries = [];
-                 } else {
-                   this.selectedLibraries = this.availableLibraries.map((library) => library.value);
-                 }
-               }
-             }">
-          <h4 class="text-sm font-medium mb-3">Plex Webhook Libraries</h4>
-          <p class="text-gray-400 mb-4 text-sm">
-            Choose which Plex libraries are accepted by your webhook. All libraries are selected by default.
-          </p>
-          {% if plex_library_options_json != "[]" %}
-            <form method="post" action="{% url 'update_plex_webhook_libraries' %}" class="space-y-3">
-              {% csrf_token %}
-              <div class="relative" @click.outside="dropdownOpen = false">
-                <button type="button"
-                        class="h-10 px-3 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 w-full cursor-pointer"
-                        @click="dropdownOpen = !dropdownOpen"
-                        :aria-expanded="dropdownOpen">
-                  {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
-                  <span class="block min-w-0 truncate" x-text="selectedLabel()"></span>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="w-4 h-4 ml-auto" aria-hidden="true">
-                    <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
-                  </svg>
-                </button>
-
-                <div x-cloak
-                     x-show="dropdownOpen"
-                     x-transition:enter="transition ease-out duration-100"
-                     x-transition:enter-start="transform opacity-0 scale-95"
-                     x-transition:enter-end="transform opacity-100 scale-100"
-                     x-transition:leave="transition ease-in duration-75"
-                     x-transition:leave-start="transform opacity-100 scale-100"
-                     x-transition:leave-end="transform opacity-0 scale-95"
-                     class="absolute left-0 mt-2 w-full rounded-md bg-[#39404b] border border-gray-700 shadow-lg overflow-hidden z-40">
-                  <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-700">
-                    <div class="text-xs uppercase tracking-wide text-gray-300">Plex Libraries</div>
-                    <button type="button"
-                            class="text-xs text-gray-300 hover:text-white transition-colors"
-                            @click="toggleAllLibraries()"
-                            x-text="allLibrariesSelected() ? 'Hide all' : 'Show all'"></button>
-                  </div>
-                  <div class="max-h-64 overflow-y-auto">
-                    <template x-for="library in availableLibraries" :key="library.value">
-                      <button type="button"
-                              class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
-                              @click="toggleLibrary(library.value)">
-                        <span class="block min-w-0 truncate" x-text="library.server_name ? `${library.label} (${library.server_name})` : library.label"></span>
-                        <span class="ml-auto" x-show="isLibrarySelected(library.value)">
-                          {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
-                        </span>
-                      </button>
-                    </template>
-                  </div>
-                </div>
-              </div>
-
-              <template x-for="library in selectedLibraries" :key="`selected-${library}`">
-                <input type="hidden" name="plex_webhook_libraries" :value="library">
-              </template>
-
-              <div class="pt-2">
-                <button type="submit"
-                        class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
-                  {% include "app/icons/save.svg" with classes="w-4 h-4 mr-2" %}
-                  Save Changes
-                </button>
-              </div>
-            </form>
-          {% else %}
-            <p class="text-sm text-amber-300">Connect Plex from the Import page to load your available libraries.</p>
-          {% endif %}
-        </div>
-        <div class="bg-[#262a2f] p-4 rounded-md mb-4">
-          <h4 class="text-sm font-medium mb-3">Webhook Status</h4>
-          {% if plex_webhook_needs_update %}
-            <div class="flex items-start gap-2">
-              {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-amber-300 shrink-0" %}
-              <div class="text-sm text-gray-300">
-                <p class="font-medium text-amber-300">Webhook URL needs updating</p>
-                <p class="text-gray-400 mt-1">
-                  You regenerated your API token on {{ user.plex_webhook_token_rotated_at|datetime_format:user }}.
-                  Plex webhooks using the old token will be rejected with a 401.
-                  Update the Plex webhook URL to the one shown below.
-                </p>
-              </div>
-            </div>
-          {% elif user.plex_webhook_last_error %}
-            <div class="flex items-start gap-2">
-              {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-red-300 shrink-0" %}
-              <div class="text-sm text-gray-300">
-                <p class="font-medium text-red-300">Last webhook error</p>
-                <p class="text-gray-400 mt-1">
-                  {{ user.plex_webhook_last_error }}
-                  {% if user.plex_webhook_last_error_at %}
-                    ({{ user.plex_webhook_last_error_at|datetime_format:user }})
-                  {% endif %}
-                </p>
-              </div>
-            </div>
-          {% elif user.plex_webhook_last_received_at %}
-            <div class="flex items-center gap-2">
-              {% include "app/icons/states/completed.svg" with classes="w-4 h-4 text-emerald-300 shrink-0" %}
-              <p class="text-sm text-gray-300">
-                Last webhook received {{ user.plex_webhook_last_received_at|datetime_format:user }}.
+      <div class="bg-[#262a2f] p-4 rounded-md mb-4">
+        <h4 class="text-sm font-medium mb-3">Webhook Status</h4>
+        {% if plex_webhook_needs_update %}
+          <div class="flex items-start gap-2">
+            {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-amber-300 shrink-0" %}
+            <div class="text-sm text-gray-300">
+              <p class="font-medium text-amber-300">Webhook URL needs updating</p>
+              <p class="text-gray-400 mt-1">
+                You regenerated your API token on {{ user.plex_webhook_token_rotated_at|datetime_format:user }}.
+                Plex webhooks using the old token will be rejected with a 401.
+                Update the Plex webhook URL to the one shown below.
               </p>
             </div>
-          {% else %}
-            <div class="flex items-start gap-2">
-              {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-amber-300 shrink-0" %}
-              <div class="text-sm text-gray-300">
-                <p class="font-medium text-amber-300">No Plex webhooks received yet</p>
-                <p class="text-gray-400 mt-1">
-                  If you expect automatic logging, confirm webhooks are enabled in Plex and that the
-                  URL includes your current API token.
-                </p>
-              </div>
+          </div>
+        {% elif user.plex_webhook_last_error %}
+          <div class="flex items-start gap-2">
+            {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-red-300 shrink-0" %}
+            <div class="text-sm text-gray-300">
+              <p class="font-medium text-red-300">Last webhook error</p>
+              <p class="text-gray-400 mt-1">
+                {{ user.plex_webhook_last_error }}
+                {% if user.plex_webhook_last_error_at %}
+                  ({{ user.plex_webhook_last_error_at|datetime_format:user }})
+                {% endif %}
+              </p>
             </div>
-          {% endif %}
-        </div>
-        <div class="bg-[#262a2f] p-4 rounded-md">
-          <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
-          <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
-            <li>You will need to have a PlexPass in order to have webhooks enabled</li>
-            <li>Go to Settings > Server > Network and enable Webhooks</li>
-            <li>
-              In Plex settings, go to <a href="https://app.plex.tv/desktop/#!/settings/webhooks"
-    target="_blank"
-    rel="noopener noreferrer"
-    class="text-indigo-400 hover:underline">Webhooks</a>.
-            </li>
-            <li>
-              In the Webhooks section, click on "Add Webhook" and enter the following URL:
-              <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
-                <li>
-                  <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">
-                    <input readonly
-                           id="plex-webhook-url"
-                           class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
-                           type="text"
-                           value="{% url 'plex_webhook' request.user.token as plex_webhook_path %}{% absolute_app_url plex_webhook_path %}">
-                    <span class="flex items-center cursor-pointer group"
-                          title="Copy"
-                          data-copy-target="#plex-webhook-url">
-                      {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
-                    </span>
-                  </div>
-                </li>
-              </ul>
-            </li>
-          </ol>
-        </div>
+          </div>
+        {% elif user.plex_webhook_last_received_at %}
+          <div class="flex items-center gap-2">
+            {% include "app/icons/states/completed.svg" with classes="w-4 h-4 text-emerald-300 shrink-0" %}
+            <p class="text-sm text-gray-300">
+              Last webhook received {{ user.plex_webhook_last_received_at|datetime_format:user }}.
+            </p>
+          </div>
+        {% else %}
+          <div class="flex items-start gap-2">
+            {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-amber-300 shrink-0" %}
+            <div class="text-sm text-gray-300">
+              <p class="font-medium text-amber-300">No Plex webhooks received yet</p>
+              <p class="text-gray-400 mt-1">
+                If you expect automatic logging, confirm webhooks are enabled in Plex and that the
+                URL includes your current API token.
+              </p>
+            </div>
+          </div>
+        {% endif %}
       </div>
 
-      <div class="bg-[#39404b] p-5 rounded-lg mb-6">
-        <div class="flex items-center mb-3">
-          {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
-          <h3 class="text-base font-medium">Emby Integration</h3>
-        </div>
-        <p class="text-gray-400 mb-4 text-sm">Connect Emby to automatically track your watching progress.</p>
-        <div class="bg-[#262a2f] p-4 rounded-md">
-          <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
-          <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
-            <li>In Emby, go to Settings > Notifications</li>
-            <li>In the Notifications section, click on "Add Notification"</li>
-            <li>
-              In the Notification settings:
-              <ul class="list-disc list-inside ml-6 mt-2 space-y-2 text-gray-400">
-                {# djlint:off #}
-              <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL:
-                  <input readonly
-                         id="emby-webhook-url"
-                         class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
-                         type="text"
-                         value="{% url 'emby_webhook' request.user.token as emby_webhook_path %}{% absolute_app_url emby_webhook_path %}">
-                  <span class="flex items-center cursor-pointer group"
-                        title="Copy"
-                        data-copy-target="#emby-webhook-url">
-                    {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
-                  </span>
-                </div>
-              </li>
-                {# djlint:on #}
-                <li>Request content type: multipart/form-data</li>
-                <li>Events: Play and Stop</li>
-                <li>Limit user events to: Your Emby User</li>
-                <li>"Limit library events to" and "Limit devices events to" are optional</li>
-              </ul>
-            </li>
-          </ol>
-        </div>
-      </div>
-    </div>
-    {# Kodi Integration #}
-    <div class="bg-[#39404b] p-5 rounded-lg mb-6">
-      <div class="flex items-center mb-3">
-        {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
-        <h3 class="text-base font-medium">Kodi Integration</h3>
-      </div>
-      <p class="text-gray-400 mb-4 text-sm">Connect Kodi to automatically track your watching progress using the <a href="https://github.com/swetoast/kodi-http-scrobbler" class="text-indigo-400 hover:underline" target="_blank" rel="noopener">HTTP Scrobbler add-on</a>.</p>
       <div class="bg-[#262a2f] p-4 rounded-md">
         <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
         <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
-          <li>Download and install the <a href="https://github.com/swetoast/kodi-http-scrobbler" class="text-indigo-400 hover:underline" target="_blank" rel="noopener">KodiAddon-HttpScrobbler</a> add-on in Kodi.</li>
-          <li>In Kodi, go to Settings &gt; Services &gt; Control and enable <strong>Allow remote control via HTTP</strong>.</li>
+          <li>You will need a Plex Pass subscription to use webhooks.</li>
+          <li>In Plex, go to <strong>Settings > Server > Network</strong> and enable Webhooks.</li>
           <li>
-            Open the Kodi web interface (http://&lt;your-kodi-ip&gt;:8080) to configure the add-on settings — this makes entering the URL easier than using the Kodi remote.
-          </li>
-          <li>
-            In the HTTP Scrobbler add-on settings, set the webhook URL:
-            <div class="mt-2">
-              {# djlint:off #}
-              <div class="inline-flex items-center gap-2 w-full">
-                <input readonly
-                       id="kodi-webhook-url"
-                       class="w-full bg-[#1a1d21] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono px-2 py-1"
-                       type="text"
-                       value="{% url 'kodi_webhook' request.user.token as kodi_webhook_path %}{% absolute_app_url kodi_webhook_path %}">
-                <span class="flex items-center cursor-pointer group"
-                      title="Copy"
-                      data-copy-target="#kodi-webhook-url">
-                  {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
-                </span>
-              </div>
-              {# djlint:on #}
+            Go to <a href="https://app.plex.tv/desktop/#!/settings/webhooks"
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     class="text-indigo-400 hover:underline">Settings > Webhooks</a> and click <strong>Add Webhook</strong>, then enter the following URL:
+            {# djlint:off #}
+            <div class="mt-2 inline-flex items-center gap-2 w-[calc(100%-30px)]">
+              <input readonly
+                     id="plex-webhook-url"
+                     class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
+                     type="text"
+                     value="{% url 'plex_webhook' request.user.token as plex_webhook_path %}{% absolute_app_url plex_webhook_path %}">
+              <span class="flex items-center cursor-pointer group"
+                    title="Copy"
+                    data-copy-target="#plex-webhook-url">
+                {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+              </span>
             </div>
+            {# djlint:on #}
           </li>
-          <li>Leave the username and password fields blank in the add-on settings.</li>
-          <li>Enable the following events: <strong>Start</strong>, <strong>Stopped</strong>, and <strong>Finished</strong>.</li>
-          <li>You will need TMDB and/or TVDB metadata enabled in Kodi so that external IDs are included in webhook payloads.</li>
-          <li>An item is considered watched when playback reaches 80% or when Kodi reports a <em>Finished</em> event.</li>
         </ol>
       </div>
     </div>
 
-    {# Jellyseerr Integration #}
-    <div class="bg-[#39404b] p-5 rounded-lg mb-6">
+    {# Emby #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6"
+         x-show="activeIntegration === 'all' || activeIntegration === 'emby'"
+         x-transition.opacity.duration.150ms>
+      <div class="flex items-center mb-3">
+        {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
+        <h3 class="text-base font-medium">Emby Integration</h3>
+      </div>
+      <p class="text-gray-400 mb-4 text-sm">Connect Emby to automatically track your watching progress.</p>
+      <div class="bg-[#262a2f] p-4 rounded-md">
+        <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
+        <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
+          <li>In Emby, go to <strong>Settings > Notifications</strong>.</li>
+          <li>Click <strong>Add Notification</strong>.</li>
+          <li>
+            Configure the notification with the following settings:
+            <ul class="list-disc list-inside ml-6 mt-2 space-y-2 text-gray-400">
+              <li>Request content type: <strong>multipart/form-data</strong></li>
+              <li>Events: <strong>Play</strong> and <strong>Stop</strong></li>
+              <li>Limit user events to: your Emby user</li>
+              <li><strong>Limit library events to</strong> and <strong>Limit devices events to</strong> are optional.</li>
+            </ul>
+          </li>
+          <li>
+            Set the webhook URL to:
+            {# djlint:off #}
+            <div class="mt-2 inline-flex items-center gap-2 w-[calc(100%-30px)]">
+              <input readonly
+                     id="emby-webhook-url"
+                     class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
+                     type="text"
+                     value="{% url 'emby_webhook' request.user.token as emby_webhook_path %}{% absolute_app_url emby_webhook_path %}">
+              <span class="flex items-center cursor-pointer group"
+                    title="Copy"
+                    data-copy-target="#emby-webhook-url">
+                {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+              </span>
+            </div>
+            {# djlint:on #}
+          </li>
+        </ol>
+      </div>
+    </div>
+
+    {# Kodi #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6"
+         x-show="activeIntegration === 'all' || activeIntegration === 'kodi'"
+         x-transition.opacity.duration.150ms>
+      <div class="flex items-center mb-3">
+        {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
+        <h3 class="text-base font-medium">Kodi Integration</h3>
+      </div>
+      <p class="text-gray-400 mb-4 text-sm">Connect Kodi to automatically track your watching progress.</p>
+      <div class="bg-[#262a2f] p-4 rounded-md">
+        <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
+        <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
+          <li>You will need TMDB and/or TVDB metadata sources enabled in Kodi so that external IDs are included in webhook payloads.</li>
+          <li>Download and install the <a href="https://github.com/swetoast/kodi-http-scrobbler" class="text-indigo-400 hover:underline" target="_blank" rel="noopener">HTTP Scrobbler add-on</a>.</li>
+          <li>In Kodi, go to <strong>Settings > Services > Control</strong> and enable <strong>Allow remote control via HTTP</strong>.</li>
+          <li>
+            In the HTTP Scrobbler add-on settings, set the webhook URL to:
+            <em class="text-gray-400 not-italic text-xs block mt-1 mb-2">Tip: open the Kodi web interface at <code>http://&lt;kodi-ip&gt;:8080</code> to configure the add-on — easier than using the remote.</em>
+            {# djlint:off #}
+            <div class="inline-flex items-center gap-2 w-full">
+              <input readonly
+                     id="kodi-webhook-url"
+                     class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono px-2 py-1"
+                     type="text"
+                     value="{% url 'kodi_webhook' request.user.token as kodi_webhook_path %}{% absolute_app_url kodi_webhook_path %}">
+              <span class="flex items-center cursor-pointer group"
+                    title="Copy"
+                    data-copy-target="#kodi-webhook-url">
+                {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+              </span>
+            </div>
+            {# djlint:on #}
+          </li>
+          <li>Leave the username and password fields blank.</li>
+          <li>Enable the following events: <strong>Start</strong>, <strong>Stopped</strong>, and <strong>Finished</strong>.</li>
+          <li>An item is marked watched when playback reaches 80% or Kodi reports a <em>Finished</em> event.</li>
+        </ol>
+      </div>
+    </div>
+
+    {# Jellyseerr #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6"
+         x-show="activeIntegration === 'all' || activeIntegration === 'jellyseerr'"
+         x-transition.opacity.duration.150ms>
       <div class="flex items-center mb-3">
         {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
         <h3 class="text-base font-medium">Jellyseerr Integration</h3>
       </div>
       <p class="text-gray-400 mb-4 text-sm">Use a Jellyseerr webhook to automatically add requested/approved media into Yamtrack.</p>
 
-      <div class="bg-[#262a2f] p-3 rounded-md mb-4">
+      <div class="bg-[#262a2f] p-4 rounded-md mb-4">
         <h4 class="text-sm font-medium mb-3">Jellyseerr Settings</h4>
         <form method="post" action="{% url 'update_jellyseerr_settings' %}" class="space-y-3">
           {% csrf_token %}
@@ -628,11 +697,12 @@
       <div class="bg-[#262a2f] p-4 rounded-md">
         <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
         <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
-          <li>In Jellyseerr go to <strong>Settings → Notifications → Webhook</strong>.</li>
+          <li>In Jellyseerr, go to <strong>Settings > Notifications > Webhook</strong>.</li>
           <li>Create a webhook with method <strong>POST</strong> and content type <strong>application/json</strong>.</li>
           <li>
             Set the webhook URL to:
-            <div class="inline-flex items-center gap-2 w-[calc(100%-30px)] mt-2">
+            {# djlint:off #}
+            <div class="mt-2 inline-flex items-center gap-2 w-[calc(100%-30px)]">
               <input readonly
                      id="jellyseerr-webhook-url"
                      class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
@@ -644,10 +714,11 @@
                 {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
               </span>
             </div>
+            {# djlint:on #}
           </li>
           <li>
             Paste this <strong>JSON Payload</strong> template into Jellyseerr:
-            <div class="bg-[#39404b] p-5 rounded-lg mt-2">
+            <div class="bg-[#39404b] p-4 rounded-lg mt-2">
               <div class="flex items-center justify-end mb-2">
                 <span class="flex items-center cursor-pointer group"
                       title="Copy"
@@ -683,6 +754,6 @@
   </div>
 {% endblock settings_content %}
 
-  {% block js %}
-    <script src="{% static 'js/copy-item.js' %}{% get_static_file_mtime 'js/copy-item.js' %}"></script>
-  {% endblock js %}
+{% block js %}
+  <script src="{% static 'js/copy-item.js' %}{% get_static_file_mtime 'js/copy-item.js' %}"></script>
+{% endblock js %}
