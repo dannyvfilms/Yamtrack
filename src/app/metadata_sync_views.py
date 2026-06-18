@@ -1115,9 +1115,12 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         media_type,
         source=source,
     )
-    cache_key = f"{source}_{tracking_media_type}_{media_id}"
-    if media_type == MediaTypes.SEASON.value:
-        cache_key += f"_{season_number}"
+    if media_type == MediaTypes.SEASON.value and source == Sources.TMDB.value:
+        cache_key = tmdb._season_cache_key(media_id, season_number)
+    else:
+        cache_key = f"{source}_{tracking_media_type}_{media_id}"
+        if media_type == MediaTypes.SEASON.value:
+            cache_key += f"_{season_number}"
 
     cached_metadata = cache.get(cache_key)
     ttl = cache.ttl(cache_key)
