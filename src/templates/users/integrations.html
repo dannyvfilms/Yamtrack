@@ -420,6 +420,48 @@
         </div>
       </div>
     </div>
+    {# Kodi Integration #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6">
+      <div class="flex items-center mb-3">
+        {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
+        <h3 class="text-base font-medium">Kodi Integration</h3>
+      </div>
+      <p class="text-gray-400 mb-4 text-sm">Connect Kodi to automatically track your watching progress using the <a href="https://github.com/swetoast/kodi-http-scrobbler" class="text-indigo-400 hover:underline" target="_blank" rel="noopener">HTTP Scrobbler add-on</a>.</p>
+      <div class="bg-[#262a2f] p-4 rounded-md">
+        <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
+        <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
+          <li>Download and install the <a href="https://github.com/swetoast/kodi-http-scrobbler" class="text-indigo-400 hover:underline" target="_blank" rel="noopener">KodiAddon-HttpScrobbler</a> add-on in Kodi.</li>
+          <li>In Kodi, go to Settings &gt; Services &gt; Control and enable <strong>Allow remote control via HTTP</strong>.</li>
+          <li>
+            Open the Kodi web interface (http://&lt;your-kodi-ip&gt;:8080) to configure the add-on settings — this makes entering the URL easier than using the Kodi remote.
+          </li>
+          <li>
+            In the HTTP Scrobbler add-on settings, set the webhook URL:
+            <div class="mt-2">
+              {# djlint:off #}
+              <div class="inline-flex items-center gap-2 w-full">
+                <input readonly
+                       id="kodi-webhook-url"
+                       class="w-full bg-[#1a1d21] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono px-2 py-1"
+                       type="text"
+                       value="{% url 'kodi_webhook' request.user.token as kodi_webhook_path %}{% absolute_app_url kodi_webhook_path %}">
+                <span class="flex items-center cursor-pointer group"
+                      title="Copy"
+                      data-copy-target="#kodi-webhook-url">
+                  {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+                </span>
+              </div>
+              {# djlint:on #}
+            </div>
+          </li>
+          <li>Leave the username and password fields blank in the add-on settings.</li>
+          <li>Enable the following events: <strong>Start</strong>, <strong>Stopped</strong>, and <strong>Finished</strong>.</li>
+          <li>You will need TMDB and/or TVDB metadata enabled in Kodi so that external IDs are included in webhook payloads.</li>
+          <li>An item is considered watched when playback reaches 80% or when Kodi reports a <em>Finished</em> event.</li>
+        </ol>
+      </div>
+    </div>
+
     {# Jellyseerr Integration #}
     <div class="bg-[#39404b] p-5 rounded-lg mb-6">
       <div class="flex items-center mb-3">

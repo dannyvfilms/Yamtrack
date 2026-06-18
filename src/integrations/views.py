@@ -1732,3 +1732,32 @@ def jellyseerr_webhook(request, token):
 
     tasks.process_webhook.delay("jellyseerr", payload, user.id)
     return HttpResponse(status=200)
+
+
+@login_not_required
+@csrf_exempt
+@require_POST
+def kodi_webhook(request, token):
+    """Handle Kodi webhook notifications for media playback."""
+    try:
+        user = users.models.User.objects.get(token=token)
+    except ObjectDoesNotExist:
+        logger.warning(
+            "Could not process Kodi webhook: Invalid token: %s",
+            token,
+        )
+        return HttpResponse(status=401)
+
+    data = request.body
+    if not data:
+        logger.warning("Missing payload in Kodi webhook request")
+        return HttpResponse("Missing payload", status=400)
+
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON payload in Kodi webhook request")
+        return HttpResponse("Invalid JSON", status=400)
+
+    tasks.process_webhook.delay("kodi", payload, user.id)
+    return HttpResponse(status=200)

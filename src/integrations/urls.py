@@ -84,5 +84,9 @@ urlpatterns = [
         views.jellyseerr_webhook,
         name="jellyseerr_webhook",
     ),
-
+    path(
+        "webhook/kodi/<str:token>",
+        views.kodi_webhook,
+        name="kodi_webhook",
+    ),
 ]
