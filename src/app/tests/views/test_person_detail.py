@@ -239,7 +239,7 @@ class PersonDetailViewTests(TestCase):
         )
         self.assertEqual(len(response.context["filmography"]), 2)
         content = response.content.decode()
-        self.assertLess(content.index("Filmography"), content.index("Watched Content"))
+        self.assertLess(content.index("Watched Content"), content.index("Filmography"))
         self.assertLess(content.index("1 movie"), content.index("1 tracked play"))
         self.assertLess(content.index("0 shows"), content.index("1 tracked play"))
         self.assertContains(response, "1 movie")
