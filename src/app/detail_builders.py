@@ -904,3 +904,54 @@ def _build_detail_link_sections(media_metadata, media_type, identity_provider, d
     if external_entries:
         sections.append({"title": "External links", "entries": external_entries})
     return sections
+
+
+def _build_static_row(row_id, title, items, *, view_all_url=None, view_all_text=None, card_width_class="w-32"):
+    """Build a row dict for _scrollable_row.html with no HTMX loading (all items pre-rendered)."""
+    shown = list(items)
+    return {
+        "row_id": row_id,
+        "title": title,
+        "items": shown,
+        "total": len(shown),
+        "loaded_count": len(shown),
+        "card_width_class": card_width_class,
+        "summary_inline": None,
+        "show_played_chip": False,
+        "view_all_url": view_all_url,
+        "view_all_text": view_all_text,
+    }
+
+
+def _build_detail_person_rows(media_metadata):
+    """Build cast_row, crew_row, and recommendations_row dicts for _scrollable_row.html."""
+    if not isinstance(media_metadata, dict):
+        return {}
+    cast = media_metadata.get("cast") or []
+    crew = media_metadata.get("crew") or []
+    raw_recommendations = (media_metadata.get("related") or {}).get("recommendations") or []
+    # enrich_items_with_user_data wraps each item as {"item": <dict>, "media": <model>}.
+    # Unwrap those so the card template receives the original metadata dicts.
+    recommendations = [
+        r["item"] if (isinstance(r, dict) and "item" in r and "media" in r) else r
+        for r in raw_recommendations
+    ]
+
+    total_cast = media_metadata.get("total_cast_count")
+    source_url = media_metadata.get("source_url")
+    view_all_url = None
+    view_all_text = None
+    if total_cast and total_cast > len(cast) and source_url:
+        view_all_url = source_url
+        view_all_text = f"Full cast ({total_cast})"
+
+    return {
+        "cast_row": _build_static_row(
+            "detail-cast", "Cast", cast[:20],
+            view_all_url=view_all_url, view_all_text=view_all_text,
+        ),
+        "crew_row": _build_static_row("detail-crew", "Crew", crew[:20]),
+        "recommendations_row": _build_static_row(
+            "detail-recommendations", "Recommendations", recommendations, card_width_class="w-36",
+        ),
+    }

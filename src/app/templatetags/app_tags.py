@@ -814,11 +814,17 @@ def media_url(media):
     """Return the media URL for both metadata and model object cases."""
     is_dict = isinstance(media, dict)
 
-    if not is_dict and not hasattr(media, "media_type"):
-        return ""
-
-    # Actual content type — never overridden (season is always "season")
-    actual_media_type = media["media_type"] if is_dict else media.media_type
+    if is_dict:
+        actual_media_type = media.get("media_type")
+        if not actual_media_type:
+            return ""
+    else:
+        try:
+            actual_media_type = media.media_type
+        except (AttributeError, KeyError, TypeError):
+            return ""
+        if not actual_media_type:
+            return ""
     # Route override — used to route TV items to anime show pages, or season items
     # to anime season URLs when the parent show is anime
     route_media_type = (

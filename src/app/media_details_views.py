@@ -36,6 +36,7 @@ from app.db_retry import run_retryable_db_operation
 from app.detail_builders import (
     _apply_cached_hltb_link,
     _build_detail_link_sections,
+    _build_detail_person_rows,
     _build_episode_graph_from_season_cache,
     _build_game_lengths_context,
     _build_season_scores_graph,
@@ -155,50 +156,6 @@ def _get_tv_runtime_display_fallback(detail_item, media_metadata):
 
     return None
 
-
-def _build_static_row(row_id, title, items, *, view_all_url=None, view_all_text=None, card_width_class="w-32"):
-    """Build a row dict for _scrollable_row.html with no HTMX loading (all items pre-rendered)."""
-    shown = list(items)
-    return {
-        "row_id": row_id,
-        "title": title,
-        "items": shown,
-        "total": len(shown),
-        "loaded_count": len(shown),
-        "card_width_class": card_width_class,
-        "summary_inline": None,
-        "show_played_chip": False,
-        "view_all_url": view_all_url,
-        "view_all_text": view_all_text,
-    }
-
-
-def _build_detail_person_rows(media_metadata):
-    """Build cast_row, crew_row, and recommendations_row dicts for _scrollable_row.html."""
-    if not isinstance(media_metadata, dict):
-        return {}
-    cast = media_metadata.get("cast") or []
-    crew = media_metadata.get("crew") or []
-    recommendations = (media_metadata.get("related") or {}).get("recommendations") or []
-
-    total_cast = media_metadata.get("total_cast_count")
-    source_url = media_metadata.get("source_url")
-    view_all_url = None
-    view_all_text = None
-    if total_cast and total_cast > len(cast) and source_url:
-        view_all_url = source_url
-        view_all_text = f"Full cast ({total_cast})"
-
-    return {
-        "cast_row": _build_static_row(
-            "detail-cast", "Cast", cast[:20],
-            view_all_url=view_all_url, view_all_text=view_all_text,
-        ),
-        "crew_row": _build_static_row("detail-crew", "Crew", crew[:20]),
-        "recommendations_row": _build_static_row(
-            "detail-recommendations", "Recommendations", recommendations, card_width_class="w-36",
-        ),
-    }
 
 
 @login_not_required

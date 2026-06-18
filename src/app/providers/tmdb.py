@@ -24,7 +24,7 @@ TV_DETAIL_SEASON_APPEND_RESPONSES = (
     "season/{season}/credits",
     "season/{season}/watch/providers",
 )
-TMDB_SEASON_CACHE_VERSION = 3
+TMDB_SEASON_CACHE_VERSION = 4
 base_params = {
     "api_key": settings.TMDB_API,
     "language": settings.TMDB_LANG,

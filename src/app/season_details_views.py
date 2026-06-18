@@ -16,6 +16,7 @@ from app.activity_builders import (
 )
 from app.detail_builders import (
     _build_detail_link_sections,
+    _build_detail_person_rows,
     _build_series_graph_data,
     _build_series_graph_from_raw,
     _build_trakt_popularity_context,
@@ -793,6 +794,7 @@ def season_details(
         "detail_secondary_fragment_url": detail_secondary_fragment_url,
         "defer_detail_secondary": defer_detail_secondary,
         "render_secondary_only": render_secondary_only,
+        **_build_detail_person_rows(season_metadata),
     }
     logger.info(
         "detail_render_complete path=%s phase=%s media_type=%s source=%s duration_ms=%.2f",
