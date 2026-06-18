@@ -993,6 +993,30 @@ def tv(media_id):
     return data
 
 
+def _build_tv_crew(response):
+    """Build sorted crew list for a TV show, prepending created_by as Creators."""
+    crew = get_crew_credits(response.get("aggregate_credits", {}), is_aggregate=True)
+    created_by = response.get("created_by") or []
+    if not created_by:
+        return crew
+    creator_ids = {str(c.get("id")) for c in created_by}
+    crew = [c for c in crew if c.get("person_id") not in creator_ids]
+    creators = [
+        {
+            "person_id": str(c.get("id")),
+            "name": c.get("name", ""),
+            "image": get_profile_image_url(c.get("profile_path")),
+            "known_for_department": c.get("known_for_department", "Writing"),
+            "gender": get_gender(c.get("gender")),
+            "department": "Writing",
+            "role": "Creator",
+            "order": idx,
+        }
+        for idx, c in enumerate(created_by)
+    ]
+    return creators + crew
+
+
 def process_tv(response, media_id=None):
     """Process the metadata for the selected tv show from The Movie Database."""
     media_id = str(media_id) if media_id is not None else str(response["id"])
@@ -1032,10 +1056,7 @@ def process_tv(response, media_id=None):
             response.get("aggregate_credits", {}),
             is_aggregate=True,
         ),
-        "crew": get_crew_credits(
-            response.get("aggregate_credits", {}),
-            is_aggregate=True,
-        ),
+        "crew": _build_tv_crew(response),
         "studios_full": get_companies_full(response.get("production_companies")),
         "related": {
             "seasons": get_related(
@@ -1532,14 +1553,25 @@ def get_crew_credits(credits_data, is_aggregate=False):
             },
         )
 
-    _CREW_PRIORITY = {"creator": 0, "director": 1, "screenplay": 2, "writer": 3, "showrunner": 4}
+    _CREW_PRIORITY_EXACT = {
+        "creator": 0,
+        "created by": 0,
+        "showrunner": 0,
+        "director": 1,
+        "co-director": 1,
+        "screenplay": 2,
+        "original screenplay": 2,
+        "screenwriter": 2,
+        "co-screenplay": 2,
+        "writer": 3,
+        "story": 3,
+        "story by": 3,
+        "original story": 3,
+    }
 
     def _crew_priority(entry):
-        role_lower = (entry.get("role") or "").lower()
-        for keyword, rank in _CREW_PRIORITY.items():
-            if keyword in role_lower:
-                return rank
-        return 99
+        role_lower = (entry.get("role") or "").lower().strip()
+        return _CREW_PRIORITY_EXACT.get(role_lower, 99)
 
     crew_entries.sort(
         key=lambda row: (
