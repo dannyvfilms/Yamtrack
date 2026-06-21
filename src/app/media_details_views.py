@@ -45,6 +45,7 @@ from app.detail_builders import (
     _build_trakt_popularity_context,
 )
 from app.log_safety import exception_summary
+from app.media_list_views import _collect_reading_activity_day_keys
 from app.metadata_sync_views import _build_flat_anime_episode_preview
 from app.models import (
     TV,
