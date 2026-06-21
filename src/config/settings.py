@@ -274,8 +274,8 @@ DB_HOST = config("DB_HOST", default=None)
 USING_SQLITE_DATABASE = not bool(DB_HOST)
 
 if DB_HOST:
-    DB_POOL_ENABLED = config("DB_POOL_ENABLED", default=False, cast=bool)
-    DB_POOL_MIN = config("DB_POOL_MIN", default=0, cast=int)
+    DB_POOL_ENABLED = config("DB_POOL_ENABLED", default=True, cast=bool)
+    DB_POOL_MIN = config("DB_POOL_MIN", default=1, cast=int)
     DB_POOL_MAX = config("DB_POOL_MAX", default=2, cast=int)
     DB_POOL_TIMEOUT = config("DB_POOL_TIMEOUT", default=30, cast=int)
     db_options = {}

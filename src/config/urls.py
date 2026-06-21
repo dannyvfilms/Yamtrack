@@ -13,6 +13,7 @@ from allauth.urls import build_provider_urlpatterns
 from django.conf import settings
 from django.contrib import admin
 from django.contrib.auth.decorators import login_not_required
+from django.http import JsonResponse
 from django.urls import include, path, re_path
 from django.views.static import serve
 from health_check.views import MainView
@@ -32,6 +33,10 @@ urlpatterns = [
     path(
         "health/",
         login_not_required(MainView.as_view()),
+    ),
+    path(
+        "ping/",
+        login_not_required(lambda request: JsonResponse({"status": "ok"})),
     ),
 ]
 

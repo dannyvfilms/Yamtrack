@@ -23,6 +23,7 @@ from app.models import (
     MediaTypes,
     Sources,
     Status,
+    Tag,
     prefill_episode_runtime_index,
 )
 from app.release_years import prefill_display_release_years
@@ -658,29 +659,11 @@ def ensure_home_screen_rows(user) -> list[HomeScreenRow]:
     return rows
 
 
-def _author_options_for_media_type(user, media_type: str) -> list[dict]:
-    if media_type not in AUTHOR_MEDIA_TYPES:
-        return []
-
-    normalized_rules = smart_rules.normalize_rule_payload(
-        {"media_types": [media_type], "status": "all"},
-        user,
-    )
-    item_ids = smart_rules.collect_matching_item_ids(
-        user,
-        normalized_rules,
-        include_collection_only_untracked=True,
-    )
-    authors = set()
-    for item in Item.objects.filter(id__in=item_ids).only("authors"):
-        authors.update(smart_rules._extract_authors(item))
-    return [
-        {"value": value, "label": value}
-        for value in sorted(authors, key=lambda entry: entry.lower())
-    ]
-
-
-def build_filter_field_data(user, media_type: str) -> list[dict]:
+def build_filter_field_data(
+    user,
+    media_type: str,
+    precomputed_tags: list[str] | None = None,
+) -> list[dict]:
     """Return template-friendly filter field definitions for a media type."""
     filter_data = smart_rules.build_rule_filter_data(
         user,
@@ -688,8 +671,8 @@ def build_filter_field_data(user, media_type: str) -> list[dict]:
         "all",
         "",
         include_collection_only_untracked=True,
+        precomputed_tags=precomputed_tags,
     )
-    filter_data["authors"] = _author_options_for_media_type(user, media_type)
     filter_data["show_authors"] = media_type in AUTHOR_MEDIA_TYPES
 
     field_definitions = [
@@ -938,6 +921,10 @@ def serialize_settings_sections(user) -> list[dict]:
     for row in rows:
         rows_by_media_type[row.media_type].append(row)
 
+    tag_names = list(
+        Tag.objects.filter(user=user).values_list("name", flat=True).order_by("name")
+    )
+
     sections = []
     for media_type in get_home_configurable_media_types(user):
         media_rows = rows_by_media_type.get(media_type, [])
@@ -956,7 +943,7 @@ def serialize_settings_sections(user) -> list[dict]:
                         HomeScreenRowTypeChoices.CUSTOM_LIST,
                     ),
                 },
-                "filter_fields": build_filter_field_data(user, media_type),
+                "filter_fields": build_filter_field_data(user, media_type, precomputed_tags=tag_names),
                 "rows": [
                     {
                         "id": row.id,

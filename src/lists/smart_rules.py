@@ -952,6 +952,7 @@ def build_rule_filter_data(
     search: str,
     *,
     include_collection_only_untracked: bool = False,
+    precomputed_tags: list[str] | None = None,
 ):
     """Build menu options for smart-rule filters from matched candidate media."""
     target_media_types = _target_media_types(owner, media_types)
@@ -978,6 +979,7 @@ def build_rule_filter_data(
 
     items = Item.objects.filter(id__in=item_ids).only(
         "genres",
+        "implied_genres",
         "release_datetime",
         "source",
         "languages",
@@ -985,6 +987,7 @@ def build_rule_filter_data(
         "platforms",
         "format",
         "media_type",
+        "authors",
     )
 
     _FORMAT_LABELS = {
@@ -1095,12 +1098,15 @@ def build_rule_filter_data(
     if has_unknown_year:
         filter_data["years"].append({"value": "unknown", "label": "Unknown"})
 
-    from app.models import Tag
+    if precomputed_tags is not None:
+        filter_data["tags"] = precomputed_tags
+    else:
+        from app.models import Tag
 
-    filter_data["tags"] = list(
-        Tag.objects.filter(user=owner)
-        .values_list("name", flat=True)
-        .order_by("name")
-    )
+        filter_data["tags"] = list(
+            Tag.objects.filter(user=owner)
+            .values_list("name", flat=True)
+            .order_by("name")
+        )
 
     return filter_data
