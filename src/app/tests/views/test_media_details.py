@@ -311,6 +311,80 @@ class MediaDetailsViewTests(TestCase):
             lookup_policy="cached_only",
         )
 
+    @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
+    @patch("app.views.credits.sync_item_credits_from_metadata")
+    @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_secondary_fragment_syncs_reading_genres_without_error(
+        self,
+        mock_get_metadata,
+        _mock_apply_item_metadata,
+        _mock_sync_credits,
+        _mock_fetch_delay,
+    ):
+        """Regression: syncing stale genres on a tracked reading item must not 500.
+
+        When a book/comic/manga's stored genres differ from the freshly
+        resolved metadata, the secondary fragment updates the item and
+        invalidates the affected reading-activity statistics days. That path
+        calls ``_collect_reading_activity_day_keys``, which previously raised
+        ``NameError`` because it was never imported into this module, returning
+        a 500 that left the lazy fragment's skeleton loaders spinning forever.
+        """
+        mock_get_metadata.return_value = {
+            "media_id": "119735",
+            "title": "Test Manga",
+            "media_type": MediaTypes.MANGA.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/manga/119735",
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test synopsis",
+            "max_progress": 145,
+            # Genres deliberately differ from the stored item below so the
+            # genre-sync branch fires and marks genres as updated.
+            "genres": ["Comedy", "Romance"],
+            "details": {},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        item = Item.objects.create(
+            media_id="119735",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Test Manga",
+            image="http://example.com/image.jpg",
+            genres=["Drama"],
+        )
+        Manga.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=10,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 20, 12, 0, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.MANGA.value,
+                    "media_id": item.media_id,
+                    "title": "test-manga",
+                },
+            ),
+            {"fragment": "secondary"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/detail_secondary_content.html")
+        # The genre-sync branch ran and persisted the resolved genres.
+        item.refresh_from_db()
+        self.assertEqual(item.genres, ["Comedy", "Romance"])
+
     @patch("app.providers.services.session.get")
     def test_media_details_renders_service_unavailable_page_when_tmdb_is_unreachable(
         self,
