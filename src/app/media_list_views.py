@@ -1601,6 +1601,8 @@ def media_list(request, media_type):
             )
             logger.debug("DEBUG: Annotated max_progress for all media")
 
+            prefill_episode_runtime_index(media_list)
+
             # Apply time_left sorting
             media_list = _sort_tv_media_by_time_left(media_list, direction)
             logger.debug("DEBUG: Applied time_left sorting")
@@ -1613,6 +1615,12 @@ def media_list(request, media_type):
         items_per_page = 32
         paginator = Paginator(media_list, items_per_page)
         media_page = paginator.get_page(page)
+
+        BasicMedia.objects.annotate_max_progress(
+            _tracked_media_entries(media_page.object_list),
+            media_type,
+        )
+        prefill_episode_runtime_index(media_page.object_list)
 
         logger.debug(f"DEBUG: Paginated to page {page} of {paginator.num_pages} pages")
         logger.debug(f"DEBUG: This page has {len(media_page)} items")

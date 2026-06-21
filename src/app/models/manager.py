@@ -282,8 +282,6 @@ class MediaManager(models.Manager):
             "item__trakt_popularity_fetched_at",
             "item__metadata_fetched_at",
             "item__themes",
-            "item__studios",
-            "item__runtime",
             "item__provider_popularity",
             "item__provider_rating_count",
             "item__trakt_rating",
@@ -292,7 +290,6 @@ class MediaManager(models.Manager):
             "item__publishers",
             "item__source_material",
             "item__series_name",
-            "item__series_position",
         )
         queryset = self._apply_prefetch_related(queryset, media_type, list_mode=True)
 

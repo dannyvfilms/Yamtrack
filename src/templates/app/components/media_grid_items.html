@@ -55,7 +55,7 @@
         {% endif %}
       {% endwith %}
     {% elif current_sort == 'time_left' %}
-      {% with time_left=media.time_left_display|default:media.formatted_time_left %}
+      {% with time_left=media.time_left_display %}
         {% if media.episodes_left > 0 and time_left and time_left != '-' %}
           <p class="mt-2 text-sm font-semibold text-white">{{ time_left }} left</p>
         {% endif %}

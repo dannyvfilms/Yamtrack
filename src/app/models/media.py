@@ -454,6 +454,9 @@ class Media(models.Model):
                 total_runtime = 0
                 episodes_with_data = 0
                 remaining_progress = self.progress
+                # Use prefilled index (set by prefill_episode_runtime_index) when
+                # available to avoid one DB query per partially-watched season.
+                episode_runtime_index = getattr(self, "_episode_runtime_index", None)
 
                 for season_num in sorted(breakdown.keys()):
                     season_episode_count = breakdown[season_num]
@@ -464,20 +467,27 @@ class Media(models.Model):
                         watched_in_season = remaining_progress
                         remaining_progress = 0
 
-                        unwatched_episodes = Item.objects.filter(
-                            media_id=self.item.media_id,
-                            source=self.item.source,
-                            media_type=MediaTypes.EPISODE.value,
-                            season_number=season_num,
-                            episode_number__gt=watched_in_season,
-                            runtime_minutes__isnull=False,
-                        ).exclude(
-                            runtime_minutes=999999,  # Exclude placeholder for unknown runtime
-                        ).exclude(
-                            runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
-                        ).values_list("runtime_minutes", flat=True)
+                        if episode_runtime_index is not None:
+                            runtimes = [
+                                rt
+                                for ep_num, rt in episode_runtime_index.get(season_num, [])
+                                if ep_num > watched_in_season
+                            ]
+                        else:
+                            runtimes = list(
+                                Item.objects.filter(
+                                    media_id=self.item.media_id,
+                                    source=self.item.source,
+                                    media_type=MediaTypes.EPISODE.value,
+                                    season_number=season_num,
+                                    episode_number__gt=watched_in_season,
+                                    runtime_minutes__isnull=False,
+                                )
+                                .exclude(runtime_minutes=999999)
+                                .exclude(runtime_minutes=999998)
+                                .values_list("runtime_minutes", flat=True)
+                            )
 
-                        runtimes = list(unwatched_episodes)
                         if runtimes:
                             total_runtime += sum(runtimes)
                             episodes_with_data += len(runtimes)
