@@ -206,6 +206,20 @@ class TMDbDiscoverAdapter:
 
         return []
 
+    def airing_today(self, media_type: str, *, limit: int = 50) -> list[CandidateItem]:
+        if media_type != MediaTypes.TV.value:
+            return []
+        payload = self._cache_request(
+            "/tv/airing_today",
+            {},
+            ttl_seconds=CURRENT_CYCLE_TTL,
+        )
+        return self._normalize_results(
+            media_type,
+            payload.get("results", [])[:limit],
+            row_key="airing_today",
+        )
+
     def related(self, media_type: str, media_id: str, *, limit: int = 50) -> list[CandidateItem]:
         if not media_id:
             return []

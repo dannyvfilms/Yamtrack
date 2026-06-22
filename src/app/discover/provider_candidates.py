@@ -10,7 +10,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from app.discover import cache_repo
-from app.discover.adapters import TRAKT_ADAPTER
+from app.discover.adapters import TMDB_ADAPTER, TRAKT_ADAPTER
 from app.discover.schemas import CandidateItem
 from app.models import MediaTypes, Sources
 from app.providers import bgg, comicvine, igdb, mal, musicbrainz, openlibrary, services
@@ -1161,13 +1161,184 @@ def _igdb_games_candidates(
     return candidates[:limit]
 
 
+def _reassign_row_key(candidates: list[CandidateItem], row_key: str) -> list[CandidateItem]:
+    """Stamp the tab's row_key onto adapter-produced candidates."""
+    for candidate in candidates:
+        candidate.row_key = row_key
+    return candidates
+
+
+def _tmdb_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+    """Return candidates for TMDb-backed tabs, or None if not such a row."""
+    if media_type not in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
+        return None
+    if row_key == "tmdb_trending":
+        candidates = TMDB_ADAPTER.trending(media_type)
+    elif row_key == "tmdb_top_rated":
+        candidates = TMDB_ADAPTER.top_rated(media_type)
+    elif row_key == "tmdb_now_playing":
+        candidates = TMDB_ADAPTER.current_cycle(media_type)
+    elif row_key == "tmdb_on_the_air":
+        candidates = TMDB_ADAPTER.current_cycle(media_type)
+    elif row_key == "tmdb_airing_today":
+        candidates = TMDB_ADAPTER.airing_today(media_type)
+    else:
+        return None
+    return _reassign_row_key(candidates, row_key)
+
+
+def _trakt_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+    """Return candidates for extra Trakt tabs, or None if not such a row."""
+    if media_type == MediaTypes.MOVIE.value and row_key == "trakt_box_office":
+        return TRAKT_ADAPTER.movie_boxoffice(limit=100)
+    return None
+
+
+_OPENLIBRARY_PERIOD_ROWS = {
+    "openlibrary_weekly": "weekly",
+    "openlibrary_monthly": "monthly",
+    "openlibrary_yearly": "yearly",
+}
+
+
+def _openlibrary_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+    """Return candidates for OpenLibrary period tabs, or None if not such a row."""
+    if media_type == MediaTypes.BOOK.value and row_key in _OPENLIBRARY_PERIOD_ROWS:
+        return _openlibrary_trending_candidates(
+            period=_OPENLIBRARY_PERIOD_ROWS[row_key],
+            row_key=row_key,
+            source_reason="Open Library trending",
+        )
+    return None
+
+
+def _lastfm_top_artists_candidates(
+    *,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    if not settings.LASTFM_API_KEY:
+        return []
+
+    endpoint = "/2.0/chart.gettopartists"
+    params = {
+        "method": "chart.gettopartists",
+        "api_key": settings.LASTFM_API_KEY,
+        "format": "json",
+        "limit": min(max(limit, 1), 200),
+    }
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            "LASTFM",
+            "GET",
+            "https://ws.audioscrobbler.com/2.0/",
+            params=params,
+        )
+        artists = ((payload.get("artists") or {}).get("artist") or [])
+        if isinstance(artists, dict):
+            artists = [artists]
+        return [artist for artist in artists if isinstance(artist, dict)]
+
+    artists = _api_cached_results(
+        Sources.MUSICBRAINZ.value,
+        endpoint,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    candidates: list[CandidateItem] = []
+    for artist in artists:
+        mbid = str(artist.get("mbid") or "").strip()
+        title = str(artist.get("name") or "").strip()
+        if not mbid or not title:
+            continue
+        images = artist.get("image") or []
+        image = settings.IMG_NONE
+        if isinstance(images, list):
+            for img in reversed(images):
+                if isinstance(img, dict) and str(img.get("#text") or "").strip():
+                    image = str(img.get("#text")).strip()
+                    break
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.MUSIC.value,
+                source=Sources.MUSICBRAINZ.value,
+                media_id=mbid,
+                title=title,
+                image=image,
+                popularity=_safe_float(artist.get("playcount")) or _safe_float(artist.get("listeners")),
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+        if len(candidates) >= limit:
+            break
+
+    return candidates[:limit]
+
+
+def _igdb_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+    """Return candidates for extra IGDB tabs, or None if not such a row."""
+    if media_type != MediaTypes.GAME.value:
+        return None
+    base_fields = "fields name,cover.image_id,first_release_date,total_rating,total_rating_count,genres.name;"
+    if row_key == "igdb_top_rated":
+        query = (
+            f"{base_fields}"
+            " where total_rating != null & total_rating_count >= 50;"
+            " sort total_rating desc;"
+            " limit 100;"
+        )
+        return _igdb_games_candidates(
+            query=query,
+            endpoint_key="/games/igdb_top_rated",
+            row_key=row_key,
+            source_reason="IGDB top rated",
+            limit=100,
+        )
+    if row_key == "igdb_coming_soon":
+        future_cutoff = int(timezone.now().timestamp())
+        query = (
+            f"{base_fields}"
+            f" where first_release_date != null & first_release_date > {future_cutoff} & hypes != null;"
+            " sort hypes desc;"
+            " limit 100;"
+        )
+        return _igdb_games_candidates(
+            query=query,
+            endpoint_key="/games/igdb_coming_soon",
+            row_key=row_key,
+            source_reason="IGDB anticipated",
+            limit=100,
+        )
+    return None
+
+
 def _tab_row_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
     """Dispatch editorial tab rows to their provider builder.
 
     Returns None when the row_key is not a dedicated tab row, so the caller can
     fall through to the legacy trending/canon/coming-soon handling.
     """
-    return _mal_anime_tab_candidates(media_type, row_key)
+    for resolver in (
+        _mal_anime_tab_candidates,
+        _tmdb_tab_candidates,
+        _trakt_tab_candidates,
+        _openlibrary_tab_candidates,
+        _igdb_tab_candidates,
+    ):
+        candidates = resolver(media_type, row_key)
+        if candidates is not None:
+            return candidates
+    if media_type == MediaTypes.MUSIC.value and row_key == "lastfm_top_artists":
+        return _lastfm_top_artists_candidates(
+            row_key=row_key,
+            source_reason="Last.fm top artists",
+        )
+    return None
 
 
 def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:

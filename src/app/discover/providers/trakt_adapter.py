@@ -239,6 +239,58 @@ class TraktDiscoverAdapter:
 
         return candidates[:page_limit]
 
+    def movie_boxoffice(self, *, limit: int = 100) -> list[CandidateItem]:
+        """Return Trakt weekend box-office movies normalized to Discover candidates."""
+        if limit <= 0:
+            return []
+
+        params = {"extended": "full"}
+        payload = self._cache_request(
+            "/movies/boxoffice",
+            params,
+            ttl_seconds=WATCHED_WEEKLY_TTL,
+        )
+
+        candidates: list[CandidateItem] = []
+        for index, entry in enumerate(payload.get("results", []), start=1):
+            movie = entry.get("movie") if isinstance(entry, dict) else None
+            if not isinstance(movie, dict):
+                continue
+
+            ids = movie.get("ids") or {}
+            tmdb_id = ids.get("tmdb")
+            if not tmdb_id:
+                continue
+
+            title = (movie.get("title") or "").strip()
+            if not title:
+                continue
+
+            popularity = entry.get("revenue")
+            if popularity is None:
+                popularity = max(limit - index + 1, 1)
+
+            candidates.append(
+                CandidateItem(
+                    media_type=MediaTypes.MOVIE.value,
+                    source=Sources.TMDB.value,
+                    media_id=str(tmdb_id),
+                    title=title,
+                    original_title=title,
+                    localized_title=title,
+                    image=settings.IMG_NONE,
+                    release_date=movie.get("released"),
+                    genres=[str(genre).strip() for genre in (movie.get("genres") or []) if str(genre).strip()],
+                    popularity=float(popularity) if popularity is not None else None,
+                    rating=float(movie["rating"]) if movie.get("rating") is not None else None,
+                    rating_count=int(movie["votes"]) if movie.get("votes") is not None else None,
+                    row_key="trakt_box_office",
+                    source_reason="Trakt box office",
+                ),
+            )
+
+        return candidates[:limit]
+
     @staticmethod
     def _normalized_release_date(value: str | None) -> str | None:
         if not value:
