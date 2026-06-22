@@ -960,6 +960,7 @@ def serialize_settings_sections(user) -> list[dict]:
                         "summary": row_summary(row, user),
                     }
                     for row in media_rows
+                    if row.enabled
                 ],
             },
         )
@@ -1221,6 +1222,22 @@ def save_home_screen_configuration(user, raw_payload: str) -> None:
                     )
                 seen_recent_rows.add(media_type)
             replacement_rows.append(model_row)
+
+    submitted_types = {section["media_type"] for section in parsed_payload}
+    configured_types = {row.media_type for row in replacement_rows}
+    for media_type in submitted_types - configured_types:
+        replacement_rows.append(
+            HomeScreenRow(
+                user=user,
+                media_type=media_type,
+                position=0,
+                enabled=False,
+                row_type=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+                sort_by=MediaSortChoices.TITLE,
+                direction=DirectionChoices.ASC,
+                filters={},
+            )
+        )
 
     with transaction.atomic():
         HomeScreenRow.objects.filter(user=user, media_type__in=allowed_media_types).delete()
