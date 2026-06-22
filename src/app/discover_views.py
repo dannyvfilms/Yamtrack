@@ -14,6 +14,7 @@ from app import discover
 from app.discover import capabilities as discover_capabilities
 from app.discover import tab_cache as discover_tab_cache
 from app.discover import tabs as discover_tabs
+from app.discover.registry import DISCOVER_MEDIA_TYPES
 from app.models import (
     TV,
     DiscoverFeedback,
@@ -164,28 +165,42 @@ def _resolve_discover_tab(request, media_type: str, rows):
     }
 
 
+def _all_media_section_media_types(request):
+    """Return the ordered media types that get a section in the All Media view."""
+    enabled = [
+        media_type
+        for media_type in request.user.get_enabled_media_types()
+        if media_type in DISCOVER_MEDIA_TYPES
+    ]
+    return enabled or list(DISCOVER_MEDIA_TYPES)
+
+
 def _resolve_all_media_sections(request, rows):
     """Build per-media-type tabbed sections for the All Media view.
 
-    Each enabled media type contributes one section (its Trending row by default)
-    with its own tab bar; tabs swap that section's grid independently.
+    A section is created for every enabled media type so the tab bars render even
+    while the rows are still warming in the background; each section's grid shows
+    its own loading/empty state until its Trending row is ready. Tabs swap that
+    section's grid independently.
     """
-    sections = []
-    seen = set()
+    trending_by_media = {}
     for row in rows:
         media_type = row.component_media_type
-        if (
-            not media_type
-            or media_type in seen
-            or row.key != "trending_right_now"
-            or not _media_type_has_tabs(media_type)
-        ):
+        if media_type and row.key == "trending_right_now" and media_type not in trending_by_media:
+            trending_by_media[media_type] = row
+
+    sections = []
+    for media_type in _all_media_section_media_types(request):
+        if not _media_type_has_tabs(media_type):
             continue
-        seen.add(media_type)
         selected_tab = discover_capabilities.first_enabled_tab(media_type)
         tab = discover_tabs.get_tab(media_type, selected_tab)
-        section_row = row
-        if tab is not None and tab.row_key != row.key:
+        section_row = trending_by_media.get(media_type)
+        # Build on demand only when the default tab isn't the (cached) Trending row;
+        # a missing Trending row means it is still warming, so leave it to load.
+        if tab is not None and tab.row_key != "trending_right_now" and (
+            section_row is None or section_row.key != tab.row_key
+        ):
             section_row = discover.get_discover_tab_row(request.user, media_type, tab)
         sections.append(
             {

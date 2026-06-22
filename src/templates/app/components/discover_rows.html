@@ -104,7 +104,17 @@
           {% endfor %}
         </div>
         <div id="all-media-grid-{{ section.media_type }}">
-          {% include "app/components/discover_grid.html" with row=section.row discover_active_media_type="all" show_more=show_more discover_debug=discover_debug %}
+          {% if section.row %}
+            {% include "app/components/discover_grid.html" with row=section.row discover_active_media_type="all" show_more=show_more discover_debug=discover_debug %}
+          {% elif discover_loading %}
+            <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-5 text-sm text-amber-100">
+              Loading recommendations…
+            </div>
+          {% else %}
+            <div class="rounded-lg border border-dashed border-gray-700 bg-[#23272b] px-4 py-5 text-sm text-gray-400">
+              No items matched this row right now.
+            </div>
+          {% endif %}
         </div>
       </section>
     {% endfor %}

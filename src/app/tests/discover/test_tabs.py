@@ -295,3 +295,23 @@ class AllMediaTabsTests(TestCase):
         self.assertContains(response, 'id="all-media-grid-anime"')
         # Anime-only tab proves the bar is per-media-type.
         self.assertContains(response, "This Season")
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.warm_sibling_tabs")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_all_media_shows_tab_bars_while_loading(
+        self,
+        mock_get_tab_rows,
+        _mock_warm,
+        mock_get_tab_status,
+    ):
+        # No rows ready yet and the tab cache is still refreshing.
+        mock_get_tab_rows.return_value = []
+        mock_get_tab_status.return_value = {"is_refreshing": True}
+
+        response = self.client.get(reverse("discover"), {"media_type": "all"})
+
+        self.assertEqual(response.status_code, 200)
+        # Tab bars render even though the grids have no data yet.
+        self.assertContains(response, 'data-discover-media-section="tv"')
+        self.assertContains(response, "Loading recommendations")
