@@ -170,6 +170,8 @@ class RowResult:
             data["match_signal"] = self.match_signal
         if self.debug_payload:
             data["debug_payload"] = dict(self.debug_payload)
+        if self.component_media_type:
+            data["component_media_type"] = self.component_media_type
         return data
 
     @classmethod
@@ -194,6 +196,7 @@ class RowResult:
             source_state=str(payload.get("source_state", "live")),
             match_signal=payload.get("match_signal"),
             debug_payload=payload.get("debug_payload"),
+            component_media_type=payload.get("component_media_type"),
         )
 
 

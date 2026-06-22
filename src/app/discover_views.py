@@ -185,8 +185,14 @@ def _resolve_all_media_sections(request, rows):
     """
     trending_by_media = {}
     for row in rows:
+        if row.key != "trending_right_now":
+            continue
+        # component_media_type is set on fresh composition; fall back to the row's
+        # items when it is absent (e.g. rows restored from the serialized cache).
         media_type = row.component_media_type
-        if media_type and row.key == "trending_right_now" and media_type not in trending_by_media:
+        if not media_type and row.items:
+            media_type = row.items[0].media_type
+        if media_type and media_type not in trending_by_media:
             trending_by_media[media_type] = row
 
     sections = []
