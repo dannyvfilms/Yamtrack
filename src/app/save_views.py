@@ -8,6 +8,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
 from django.views.decorators.http import require_POST
 
 from app import cache_utils, helpers
@@ -340,11 +341,102 @@ def media_delete(request):
     return redirect_response
 
 
+def _write_episode_save_oob(
+    response,
+    request,
+    *,
+    episode,
+    related_season,
+    media_id,
+    source,
+    season_number,
+    episode_number,
+    next_path,
+):
+    """Write the OOB fragments for an episode watch/drop response.
+
+    The season-details episode list and the standalone episode page render
+    different markup (small round button + history line + season-progress spans
+    vs. a hero pill button + an always-present rating-chip slot), so each needs
+    its own OOB targets. We detect the standalone episode page from the `next`
+    path and emit the matching variant; sending the wrong one just no-ops since
+    HTMX silently drops OOB swaps with no matching element.
+    """
+    parsed_next = urlparse(next_path).path
+    path_parts = [segment for segment in parsed_next.split("/") if segment]
+    is_episode_page = (
+        len(path_parts) >= 2
+        and path_parts[0] == "details"
+        and "episode" in path_parts
+    )
+
+    if is_episode_page:
+        response.write(
+            render_to_string(
+                "app/components/detail_episode_hero_track_button.html",
+                {
+                    "episode": episode,
+                    "source": source,
+                    "media_id": media_id,
+                    "season_number": season_number,
+                    "episode_number": episode_number,
+                    "track_button_oob": True,
+                },
+                request=request,
+            ),
+        )
+        response.write(
+            render_to_string(
+                "app/components/detail_episode_rating_chip.html",
+                {
+                    "episode": episode,
+                    "current_instance": related_season,
+                    "user": request.user,
+                    "source": source,
+                    "media_id": media_id,
+                    "season_number": season_number,
+                    "episode_number": episode_number,
+                    "public_view": False,
+                    "rating_chip_oob": True,
+                },
+                request=request,
+            ),
+        )
+        # Season-progress spans only exist on the season page — nothing to target here.
+        return
+
+    response.write(
+        render_to_string(
+            "app/components/detail_episode_track_button.html",
+            {
+                "episode": episode,
+                "track_button_oob": True,
+            },
+            request=request,
+        ),
+    )
+    response.write(
+        render_to_string(
+            "app/components/detail_episode_history_line.html",
+            {
+                "episode": episode,
+                "user": request.user,
+                "history_oob": True,
+            },
+            request=request,
+        ),
+    )
+    response.write(
+        f'<span id="season-progress-mobile-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+    )
+    response.write(
+        f'<span id="season-progress-desktop-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+    )
+
+
 @require_POST
 def episode_save(request):
     """Handle the creation, deletion, and updating of episodes for a season."""
-    from django.template.loader import render_to_string
-
     media_id = request.POST["media_id"]
     season_number = int(request.POST["season_number"])
     episode_number = int(request.POST["episode_number"])
@@ -448,32 +540,16 @@ def episode_save(request):
         ).select_related("item").first()
 
         response = HttpResponse()
-        response.write(
-            render_to_string(
-                "app/components/detail_episode_track_button.html",
-                {
-                    "episode": episode,
-                    "track_button_oob": True,
-                },
-                request=request,
-            ),
-        )
-        response.write(
-            render_to_string(
-                "app/components/detail_episode_history_line.html",
-                {
-                    "episode": episode,
-                    "user": request.user,
-                    "history_oob": True,
-                },
-                request=request,
-            ),
-        )
-        response.write(
-            f'<span id="season-progress-mobile-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
-        )
-        response.write(
-            f'<span id="season-progress-desktop-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+        _write_episode_save_oob(
+            response,
+            request,
+            episode=episode,
+            related_season=related_season,
+            media_id=media_id,
+            source=source,
+            season_number=season_number,
+            episode_number=episode_number,
+            next_path=next_path,
         )
         response["HX-Trigger"] = json.dumps(
             {
@@ -495,8 +571,6 @@ def episode_save(request):
 @require_POST
 def episode_drop(request):
     """Mark an episode as dropped — advances progress without adding to watch history."""
-    from django.template.loader import render_to_string
-
     media_id = request.POST["media_id"]
     season_number = int(request.POST["season_number"])
     episode_number = int(request.POST["episode_number"])
@@ -601,32 +675,16 @@ def episode_drop(request):
         ).select_related("item").first()
 
         response = HttpResponse()
-        response.write(
-            render_to_string(
-                "app/components/detail_episode_track_button.html",
-                {
-                    "episode": episode,
-                    "track_button_oob": True,
-                },
-                request=request,
-            ),
-        )
-        response.write(
-            render_to_string(
-                "app/components/detail_episode_history_line.html",
-                {
-                    "episode": episode,
-                    "user": request.user,
-                    "history_oob": True,
-                },
-                request=request,
-            ),
-        )
-        response.write(
-            f'<span id="season-progress-mobile-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
-        )
-        response.write(
-            f'<span id="season-progress-desktop-{related_season.id}" hx-swap-oob="true" class="text-sm font-medium text-gray-400">Progress: {related_season.completed_episode_count}{f"/{related_season.max_progress}" if related_season.max_progress else ""}</span>',
+        _write_episode_save_oob(
+            response,
+            request,
+            episode=episode,
+            related_season=related_season,
+            media_id=media_id,
+            source=source,
+            season_number=season_number,
+            episode_number=episode_number,
+            next_path=next_path,
         )
         response["HX-Trigger"] = json.dumps(
             {
