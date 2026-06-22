@@ -10,7 +10,9 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_GET, require_POST
 
 from app import discover
+from app.discover import capabilities as discover_capabilities
 from app.discover import tab_cache as discover_tab_cache
+from app.discover import tabs as discover_tabs
 from app.models import (
     TV,
     DiscoverFeedback,
@@ -39,6 +41,12 @@ DISCOVER_ALLOWED_MEDIA_TYPES = {
     MediaTypes.BOARDGAME.value,
 }
 DISCOVER_HIDDEN_SECTION = "hidden"
+# Editorial registry rows now surfaced through the tab bar instead of stacked rows.
+TABBED_EDITORIAL_ROW_KEYS = {
+    "trending_right_now",
+    "all_time_greats_unseen",
+    "coming_soon",
+}
 DISCOVER_FAST_LOCAL_PLANNING_MEDIA_TYPES = {
     MediaTypes.TV.value,
     MediaTypes.ANIME.value,
@@ -99,6 +107,51 @@ def _discover_hidden_entries(user):
     )
 
 
+def _media_type_has_tabs(media_type: str) -> bool:
+    return bool(discover_tabs.get_tabs(media_type))
+
+
+def _discover_tabs_payload(media_type: str, *, selected_tab: str):
+    """Return the tab-bar payload (label, active state, availability) for templates."""
+    availability = discover_capabilities.tab_availability(media_type)
+    payload = []
+    for tab in discover_tabs.get_tabs(media_type):
+        state = availability.get(tab.key, {"enabled": True, "tooltip": None})
+        payload.append(
+            {
+                "key": tab.key,
+                "label": tab.label,
+                "enabled": state["enabled"],
+                "tooltip": state["tooltip"],
+                "active": tab.key == selected_tab,
+            },
+        )
+    return payload
+
+
+def _resolve_discover_tab(request, media_type: str, rows):
+    """Build the tab-bar payload, the selected tab's row, and the stacked rows.
+
+    The default ("trending") row is reused from the already-built ``rows`` when
+    present to avoid rebuilding it; remaining editorial rows are dropped from the
+    stacked list, leaving only the personalized rows.
+    """
+    selected_tab = discover_tabs.default_tab(media_type)
+    tab = discover_tabs.get_tab(media_type, selected_tab)
+    rows_by_key = {row.key: row for row in rows}
+    tab_row = rows_by_key.get(tab.row_key) if tab else None
+    if tab is not None and tab_row is None:
+        tab_row = discover.get_discover_tab_row(request.user, media_type, tab)
+    stacked_rows = [row for row in rows if row.key not in TABBED_EDITORIAL_ROW_KEYS]
+    return {
+        "has_tabs": True,
+        "discover_tabs": _discover_tabs_payload(media_type, selected_tab=selected_tab),
+        "selected_tab": selected_tab,
+        "tab_row": tab_row,
+        "rows": stacked_rows,
+    }
+
+
 def _discover_rows_context(
     request,
     *,
@@ -129,7 +182,7 @@ def _discover_rows_context(
         if not discover_debug
         else None
     )
-    return {
+    context = {
         "selected_media_type": selected_media_type,
         "show_more": show_more,
         "discover_debug": discover_debug,
@@ -142,8 +195,15 @@ def _discover_rows_context(
             if not discover_debug
             else ""
         ),
+        "has_tabs": False,
+        "discover_tabs": [],
+        "selected_tab": None,
+        "tab_row": None,
         "rows": rows,
     }
+    if _media_type_has_tabs(selected_media_type):
+        context.update(_resolve_discover_tab(request, selected_media_type, rows))
+    return context
 
 
 def _apply_discover_response_headers(
@@ -391,6 +451,37 @@ def discover_rows(request):
         show_more=show_more,
         discover_debug=discover_debug,
         rows=rows,
+    )
+
+
+@login_required
+@require_GET
+def discover_tab(request):
+    """Render a single editorial tab's grid for HTMX tab switching."""
+    selected_media_type = _resolve_discover_media_type_for_user(
+        request.user,
+        request.GET.get("media_type"),
+    )
+    if not _media_type_has_tabs(selected_media_type):
+        return HttpResponseBadRequest("Tabs are not available for this media type.")
+
+    tab_key = (request.GET.get("tab") or "").strip()
+    tab = discover_tabs.get_tab(selected_media_type, tab_key)
+    if tab is None:
+        return HttpResponseBadRequest("Unknown Discover tab.")
+
+    availability = discover_capabilities.tab_availability(selected_media_type)
+    if not availability.get(tab_key, {}).get("enabled", False):
+        return HttpResponseBadRequest("This Discover tab is not available.")
+
+    discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
+    tab_row = discover.get_discover_tab_row(request.user, selected_media_type, tab)
+    return _render_discover_row_fragment(
+        request,
+        selected_media_type=selected_media_type,
+        show_more=False,
+        discover_debug=discover_debug,
+        row=tab_row,
     )
 
 

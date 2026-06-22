@@ -98,6 +98,31 @@ TAB_REGISTRY: dict[str, list[TabDefinition]] = {
 }
 
 
+# Subtitle copy for tab rows that are not in the row registry (new tabs). Registry
+# rows (trending_right_now / all_time_greats_unseen / coming_soon) keep their own copy.
+TAB_ROW_DESCRIPTIONS: dict[str, str] = {
+    "tmdb_trending": "What's trending today.",
+    "tmdb_top_rated": "The highest rated of all time.",
+    "tmdb_now_playing": "Playing in theaters right now.",
+    "tmdb_on_the_air": "On the air this week.",
+    "tmdb_airing_today": "New episodes airing today.",
+    "trakt_box_office": "This weekend's top earners.",
+    "mal_this_season": "New anime airing this season.",
+    "mal_last_season": "Standouts from last season.",
+    "mal_anime_top_rated": "The highest rated anime of all time.",
+    "mal_anime_airing": "Top anime currently airing.",
+    "mal_anime_popular": "The most popular anime by members.",
+    "mal_anime_upcoming": "Upcoming anime to look forward to.",
+    "mal_manga_publishing": "Top manga currently publishing.",
+    "openlibrary_weekly": "What readers picked up this week.",
+    "openlibrary_monthly": "What readers picked up this month.",
+    "openlibrary_yearly": "What readers picked up this year.",
+    "lastfm_top_artists": "The most played artists right now.",
+    "igdb_top_rated": "The highest rated games of all time.",
+    "igdb_coming_soon": "The most anticipated upcoming games.",
+}
+
+
 def get_tabs(media_type: str) -> list[TabDefinition]:
     """Return ordered tab definitions for the media type (empty if unsupported)."""
     return TAB_REGISTRY.get(media_type, [])

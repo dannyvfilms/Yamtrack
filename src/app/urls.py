@@ -10,6 +10,7 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("discover", views.discover_page, name="discover"),
     path("discover/rows", views.discover_rows, name="discover_rows"),
+    path("discover/tab", views.discover_tab, name="discover_tab"),
     path("discover/refresh", views.refresh_discover, name="refresh_discover"),
     path("discover/action", views.discover_action, name="discover_action"),
     path("discover/toggle-hidden", views.discover_toggle_hidden, name="discover_toggle_hidden"),

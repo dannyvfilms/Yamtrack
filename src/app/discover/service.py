@@ -50,7 +50,7 @@ from app.discover.movie_comfort import (
 from app.discover.profile import get_or_compute_taste_profile
 from app.discover.provider_candidates import _provider_row_candidates
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
-from app.discover.tabs import TAB_REGISTRY
+from app.discover.tabs import TAB_REGISTRY, TAB_ROW_DESCRIPTIONS
 from app.discover.row_cache_schema import (
     ROW_CACHE_ACTIVITY_VERSION_META_KEY,
     _apply_row_definition_metadata,
@@ -642,7 +642,10 @@ def _build_row_candidates(
 
 
 def _blocked_statuses_for_row(row_definition: RowDefinition) -> set[str] | None:
-    if row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}:
+    if (
+        row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}
+        or row_definition.key in _PROVIDER_TAB_ROW_KEYS
+    ):
         return {
             Status.COMPLETED.value,
             Status.DROPPED.value,
@@ -1272,6 +1275,54 @@ def get_discover_rows(
         rows.append(row)
 
     return rows
+
+
+def _tab_row_definition(media_type: str, tab) -> RowDefinition:
+    """Return the RowDefinition backing a tab.
+
+    Reuses the registry definition when the tab maps to an existing row (so the
+    Trakt canon/anticipated build paths and copy are preserved); otherwise
+    synthesizes a definition for the new tab-only row.
+    """
+    for row_definition in get_rows(media_type, include_show_more=True):
+        if row_definition.key == tab.row_key:
+            return row_definition
+    return RowDefinition(
+        key=tab.row_key,
+        title=tab.label,
+        mission="",
+        why=TAB_ROW_DESCRIPTIONS.get(tab.row_key, ""),
+        source=tab.provider,
+    )
+
+
+def get_discover_tab_row(user, media_type: str, tab) -> RowResult:
+    """Build a single editorial tab row on demand.
+
+    Unlike the stacked rows, a user-selected tab always renders (even when sparse),
+    so the min-items / drop-if-empty filtering used by get_discover_rows is skipped.
+    """
+    media_type = _coerce_media_type(media_type)
+    media_type = tab_cache.resolve_media_type_for_user(user, media_type)
+    row_definition = _tab_row_definition(media_type, tab)
+    profile_payload = get_or_compute_taste_profile(user, media_type)
+    row = _build_and_cache_row(
+        user,
+        media_type,
+        row_definition,
+        profile_payload,
+        defer_artwork=False,
+        show_more=False,
+    )
+    deduped_items = dedupe_candidates(row.items, seen_identities=set())
+    row.items = deduped_items[:MAX_ITEMS_PER_ROW]
+    row.reserve_items = deduped_items[MAX_ITEMS_PER_ROW:]
+    row.match_signal = _row_match_signal_with_details(
+        row_definition.key,
+        row.items,
+        profile_payload,
+    )[0]
+    return row
 
 
 def get_discover_payload(
