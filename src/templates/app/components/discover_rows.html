@@ -25,7 +25,9 @@
   </div>
 {% elif has_tabs %}
   <div class="space-y-8">
-    <div role="tablist" aria-label="Discover categories" class="flex flex-wrap gap-2 border-b border-gray-700 pb-3">
+    <div role="tablist" aria-label="Discover categories"
+         x-init="selectedTab = '{{ selected_tab|default:'trending'|escapejs }}'"
+         class="flex flex-wrap gap-2 border-b border-gray-700 pb-3">
       {% for tab in discover_tabs %}
         {% if tab.enabled %}
           <button type="button"

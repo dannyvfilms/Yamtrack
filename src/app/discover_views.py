@@ -129,19 +129,22 @@ def _discover_tabs_payload(media_type: str, *, selected_tab: str):
     return payload
 
 
-def _resolve_discover_tab(media_type: str, rows):
+def _resolve_discover_tab(request, media_type: str, rows):
     """Build the tab-bar payload, the selected tab's row, and the stacked rows.
 
-    The default ("trending") row is reused from the already-built ``rows`` (it is
-    produced by the background tab cache like before, so it is not rebuilt
-    synchronously here); remaining editorial rows are dropped from the stacked
-    list, leaving only the personalized rows. Non-default tabs build on demand via
-    the ``discover_tab`` endpoint.
+    The default tab is the first *enabled* one (so a media type whose Trending
+    provider key is missing opens on the first usable tab). When that default is
+    the trending row, it is reused from the already-built ``rows`` (produced by
+    the background tab cache, not rebuilt here); otherwise it is built on demand.
+    Remaining editorial rows are dropped from the stacked list, leaving only the
+    personalized rows.
     """
-    selected_tab = discover_tabs.default_tab(media_type)
+    selected_tab = discover_capabilities.first_enabled_tab(media_type)
     tab = discover_tabs.get_tab(media_type, selected_tab)
     rows_by_key = {row.key: row for row in rows}
     tab_row = rows_by_key.get(tab.row_key) if tab else None
+    if tab is not None and tab_row is None and tab.row_key not in TABBED_EDITORIAL_ROW_KEYS:
+        tab_row = discover.get_discover_tab_row(request.user, media_type, tab)
     stacked_rows = [row for row in rows if row.key not in TABBED_EDITORIAL_ROW_KEYS]
     return {
         "has_tabs": True,
@@ -202,7 +205,7 @@ def _discover_rows_context(
         "rows": rows,
     }
     if _media_type_has_tabs(selected_media_type):
-        context.update(_resolve_discover_tab(selected_media_type, rows))
+        context.update(_resolve_discover_tab(request, selected_media_type, rows))
     return context
 
 

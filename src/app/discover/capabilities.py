@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from django.conf import settings
 
-from app.discover.tabs import get_tabs
+from app.discover.tabs import default_tab, get_tabs
 
 # capability_key -> (human label, env var to set)
 _PROVIDER_INFO: dict[str, tuple[str, str]] = {
@@ -41,6 +41,18 @@ def _tooltip(capability_key: str | None) -> str | None:
         return None
     label, env_var = _PROVIDER_INFO.get(capability_key, (capability_key, capability_key))
     return f"Set the {env_var} environment variable with your {label} API key to enable this tab."
+
+
+def first_enabled_tab(media_type: str) -> str | None:
+    """Return the first tab whose key is enabled, falling back to the first tab.
+
+    The fallback keeps a tab selected even when every provider key is missing, so
+    the page never renders without an active tab.
+    """
+    for tab in get_tabs(media_type):
+        if _capability_available(tab.capability_key):
+            return tab.key
+    return default_tab(media_type)
 
 
 def tab_availability(media_type: str) -> dict[str, dict[str, object]]:

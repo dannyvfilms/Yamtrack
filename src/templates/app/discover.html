@@ -513,7 +513,8 @@
             return;
           }
           this.selectedMedia = mediaType;
-          this.selectedTab = "trending";
+          // selectedTab is re-synced from the server's first-enabled tab by the
+          // tablist x-init once the swapped rows render.
           this.manualRefreshPending = false;
           this.dismissRefreshStatus();
           this.resetRefreshState();

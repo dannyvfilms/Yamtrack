@@ -133,6 +133,15 @@ class TabAvailabilityTests(TestCase):
         availability = capabilities.tab_availability("game")
         self.assertFalse(availability["top_rated"]["enabled"])
 
+    @override_settings(MAL_API="real-key")
+    def test_first_enabled_tab_is_trending_when_available(self):
+        self.assertEqual(capabilities.first_enabled_tab("anime"), "trending")
+
+    @override_settings(LASTFM_API_KEY="")
+    def test_first_enabled_tab_skips_disabled_trending(self):
+        # Music trending needs Last.fm; the first usable tab is MusicBrainz coming-soon.
+        self.assertEqual(capabilities.first_enabled_tab("music"), "coming_soon")
+
 
 class DiscoverTabViewTests(TestCase):
     def setUp(self):
