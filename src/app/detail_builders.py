@@ -614,10 +614,6 @@ def _build_trakt_popularity_context(detail_item, route_media_type):
 
 def _build_imdb_score_context(detail_item):
     """Return IMDB rating context dict for the detail page, or None."""
-    from django.conf import settings as _settings  # noqa: PLC0415
-
-    if not getattr(_settings, "IMDB_RATINGS", True):
-        return None
     if detail_item is None:
         return None
     if detail_item.imdb_rating is None:

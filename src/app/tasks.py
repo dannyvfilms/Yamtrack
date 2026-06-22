@@ -475,9 +475,7 @@ def nightly_metadata_quality_backfill_task(
             countdown=NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_COUNTDOWN,
         )
 
-    from app.providers import imdb_datasets as _imdb_datasets  # noqa: PLC0415
-    if _imdb_datasets.is_enabled():
-        refresh_imdb_ratings_from_datasets.apply_async(countdown=60)
+    refresh_imdb_ratings_from_datasets.apply_async(countdown=60)
 
     summary = {
         "selected": {

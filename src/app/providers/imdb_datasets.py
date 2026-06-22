@@ -11,18 +11,12 @@ import io
 import logging
 import urllib.request
 
-from django.conf import settings
-
 logger = logging.getLogger(__name__)
 
 RATINGS_URL = "https://datasets.imdbws.com/title.ratings.tsv.gz"
 EPISODE_URL = "https://datasets.imdbws.com/title.episode.tsv.gz"
 
 _DOWNLOAD_TIMEOUT = 120
-
-
-def is_enabled() -> bool:
-    return bool(getattr(settings, "IMDB_RATINGS", True))
 
 
 def download_ratings() -> dict[str, tuple[float, int]]:
