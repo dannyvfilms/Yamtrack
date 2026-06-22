@@ -1,0 +1,71 @@
+{% load humanize %}
+{% comment %}
+HTMX polling fragment for the IMDB series graph inner content.
+Returned by /api/imdb-series-graph/<source>/<media_id>/.
+
+When poll_for_graph is True the rendered div carries hx-trigger so HTMX
+keeps polling. When False (all episodes done), the trigger is absent and
+HTMX stops automatically — same pattern as the Trakt series graph.
+{% endcomment %}
+<div id="imdb-series-graph-{{ source }}-{{ media_id }}"
+     {% if poll_for_graph %}
+       hx-get="{% url 'imdb_series_graph_fragment' source=source media_id=media_id %}"
+       hx-trigger="every 5s"
+       hx-target="this"
+       hx-swap="outerHTML"
+     {% endif %}>
+
+  <div class="mb-2 flex items-center justify-between gap-3">
+    <div class="text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">Series Graph</div>
+    {% if poll_for_graph %}
+      <div class="text-xs text-gray-500">Syncing IMDB ratings…</div>
+    {% endif %}
+  </div>
+
+  {% if graph_data %}
+
+    <div class="grid justify-start gap-2"
+         style="grid-template-columns: max-content {% for _ in graph_data.seasons %}3rem {% endfor %};">
+
+      <div></div>
+      {% for season in graph_data.seasons %}
+        <div class="text-center text-[11px] font-semibold text-gray-400">{{ season.label }}</div>
+      {% endfor %}
+
+      {% for ep_row in graph_data.episode_rows %}
+        <div class="flex items-center justify-end pr-1 text-[11px] text-gray-500 select-none">
+          {% if ep_row.ep %}{{ graph_data.row_label|default:"E" }}{{ ep_row.ep }}{% endif %}
+        </div>
+        {% for cell in ep_row.cells %}
+          {% if cell.color %}
+            <div class="rounded-lg py-3 text-center text-[13px] font-bold leading-none cursor-default"
+                 title="{{ cell.score }} · {{ cell.votes|intcomma }} vote{{ cell.votes|pluralize }}"
+                 style="background-color: {{ cell.color }}; color: {% if cell.score >= 6.0 and cell.score < 8.0 %}rgba(0,0,0,0.8){% else %}#ffffff{% endif %};">
+              {{ cell.score }}
+            </div>
+          {% else %}
+            <div class="rounded-lg py-3 text-center text-[12px] leading-none select-none"
+                 style="background-color: rgba(255,255,255,0.05); color: rgba(255,255,255,0.15);">—</div>
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+
+    </div>
+
+  {% else %}
+
+    <div class="flex items-center gap-2 py-5 px-1 text-xs text-gray-500">
+      {% if poll_for_graph %}
+        <span class="flex gap-1">
+          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:0ms"></span>
+          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:150ms"></span>
+          <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:300ms"></span>
+        </span>
+        Syncing IMDB ratings…
+      {% else %}
+        No IMDB episode ratings available.
+      {% endif %}
+    </div>
+
+  {% endif %}
+</div>

@@ -210,7 +210,7 @@
 
       <div class="flex flex-col sm:contents">
       {# Score chips #}
-      {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}
+      {% if media.score_count is not None or imdb_score or trakt_score or user_medias and current_instance and not public_view|default:False %}
         <div class="order-2 mt-0 mb-5 flex w-full items-center justify-start gap-2 sm:order-1 sm:mt-4 sm:flex-wrap">
           {% if media.score_count is not None %}
             <div class="relative"
@@ -254,6 +254,63 @@
               </button>
               {% if provider_series_graph_data %}
                 {% include "app/components/series_graph_tooltip.html" with graph_data=provider_series_graph_data provider_label=display_provider only %}
+              {% endif %}
+            </div>
+          {% endif %}
+
+          {% if imdb_score %}
+            <div class="relative"
+                 x-data="{ graphOpen: false }"
+                 @mouseenter="graphOpen = true"
+                 @mouseleave="graphOpen = false"
+                 @click.outside="graphOpen = false">
+              <button type="button"
+                      class="inline-flex h-[1.875rem] min-w-0 cursor-help items-center gap-0.5 overflow-hidden rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-150 sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm"
+                      title="IMDb ratings"
+                      :aria-expanded="graphOpen.toString()"
+                      aria-haspopup="true">
+                <span class="sr-only">IMDb score</span>
+                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8">
+                  <img src="{% static 'img/imdb-logo.png' %}"
+                       alt=""
+                       aria-hidden="true"
+                       class="h-3.5 w-3.5 object-contain sm:h-4 sm:w-4">
+                </span>
+                <span class="text-[12px] font-semibold text-white sm:text-sm">{{ imdb_score.rating }}</span>
+                <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
+                <span class="truncate text-[12px] text-gray-300 sm:text-sm">{{ imdb_score.rating_count|intcomma }} vote{{ imdb_score.rating_count|pluralize }}</span>
+              </button>
+              {% if media_type == MediaTypes.TV.value or media_type == MediaTypes.ANIME.value %}
+                <div x-show="graphOpen"
+                     x-cloak
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0 -translate-y-1"
+                     x-transition:enter-end="opacity-100 translate-y-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100 translate-y-0"
+                     x-transition:leave-end="opacity-0 -translate-y-1"
+                     class="absolute left-0 top-full z-20 mt-2 rounded-2xl border border-white/10 bg-[#20252b]/95 p-3 shadow-2xl backdrop-blur-sm"
+                     style="min-width: max-content;">
+                  <div id="imdb-series-graph-{{ display_provider }}-{{ media.media_id }}"
+                       hx-get="{% url 'imdb_series_graph_fragment' source=display_provider media_id=media.media_id %}"
+                       hx-trigger="load delay:300ms, every 5s"
+                       hx-target="this"
+                       hx-swap="outerHTML">
+                    <div class="mb-2 flex items-center justify-between gap-3">
+                      <div class="text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">Series Graph</div>
+                    </div>
+                    <div class="flex items-center gap-2 py-5 px-1 text-xs text-gray-500">
+                      <span class="flex gap-1">
+                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:0ms"></span>
+                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:150ms"></span>
+                        <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-500" style="animation-delay:300ms"></span>
+                      </span>
+                      Syncing IMDB ratings…
+                    </div>
+                  </div>
+                </div>
+              {% elif imdb_series_graph_data %}
+                {% include "app/components/series_graph_tooltip.html" with graph_data=imdb_series_graph_data provider_label="IMDb" only %}
               {% endif %}
             </div>
           {% endif %}
@@ -326,9 +383,9 @@
       {% endif %}
 
       {% if not public_view|default:False %}
-        {% if not activity_subtitle and media.score_count is None and not trakt_score and not user_medias %}
+        {% if not activity_subtitle and media.score_count is None and not imdb_score and not trakt_score and not user_medias %}
           <div class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
-        {% elif not activity_subtitle and media.score_count is None and not trakt_score and user_medias and not current_instance %}
+        {% elif not activity_subtitle and media.score_count is None and not imdb_score and not trakt_score and user_medias and not current_instance %}
           <div class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
         {% else %}
           <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">

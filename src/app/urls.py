@@ -174,6 +174,11 @@ urlpatterns = [
         name="trakt_series_graph_fragment",
     ),
     path(
+        "api/imdb-series-graph/<str:source>/<str:media_id>/",
+        views.imdb_series_graph_fragment,
+        name="imdb_series_graph_fragment",
+    ),
+    path(
         "api/active-playback/",
         views.active_playback_fragment,
         name="active_playback_fragment",

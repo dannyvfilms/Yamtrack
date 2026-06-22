@@ -507,6 +507,13 @@ def movie(media_id):
                 media_id
             ),
             "providers": response.get("watch/providers", {}).get("results", {}),
+            "provider_external_ids": {
+                k: v
+                for k, v in {
+                    "imdb_id": (response.get("external_ids") or {}).get("imdb_id"),
+                }.items()
+                if v
+            },
         }
 
         cache.set(cache_key, data)
@@ -1075,6 +1082,14 @@ def process_tv(response, media_id=None):
         "last_episode_season": last_episode["season_number"] if last_episode else None,
         "next_episode_season": next_episode["season_number"] if next_episode else None,
         "providers": response.get("watch/providers", {}).get("results", {}),
+        "provider_external_ids": {
+            k: v
+            for k, v in {
+                "imdb_id": external_ids.get("imdb_id"),
+                "tvdb_id": external_ids.get("tvdb_id"),
+            }.items()
+            if v
+        },
     }
 
 

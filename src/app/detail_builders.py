@@ -285,6 +285,7 @@ def _build_series_graph_data(
     season_number=None,
     *,
     use_trakt=False,
+    use_imdb=False,
     include_unrated=False,
 ):
     """Query stored episode ratings and return series graph data dict or None.
@@ -309,8 +310,15 @@ def _build_series_graph_data(
     else:
         filters["season_number__gt"] = 0
 
-    rating_field = "trakt_rating" if use_trakt else "provider_rating"
-    count_field = "trakt_rating_count" if use_trakt else "provider_rating_count"
+    if use_imdb:
+        rating_field = "imdb_rating"
+        count_field = "imdb_rating_count"
+    elif use_trakt:
+        rating_field = "trakt_rating"
+        count_field = "trakt_rating_count"
+    else:
+        rating_field = "provider_rating"
+        count_field = "provider_rating_count"
 
     episode_query = Item.objects.filter(**filters)
     if not include_unrated:
@@ -601,6 +609,22 @@ def _build_trakt_popularity_context(detail_item, route_media_type):
         "rank": detail_item.trakt_popularity_rank,
         "score": detail_item.trakt_popularity_score,
         "fetched_at": detail_item.trakt_popularity_fetched_at,
+    }
+
+
+def _build_imdb_score_context(detail_item):
+    """Return IMDB rating context dict for the detail page, or None."""
+    from django.conf import settings as _settings  # noqa: PLC0415
+
+    if not getattr(_settings, "IMDB_RATINGS", True):
+        return None
+    if detail_item is None:
+        return None
+    if detail_item.imdb_rating is None:
+        return None
+    return {
+        "rating": round(detail_item.imdb_rating, 1),
+        "rating_count": detail_item.imdb_rating_count or 0,
     }
 
 

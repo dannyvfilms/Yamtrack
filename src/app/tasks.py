@@ -58,6 +58,7 @@ from app.tasks_trakt import (  # noqa: E402
     populate_trakt_popularity_data_for_items,
     reconcile_trakt_popularity,
 )
+from app.tasks_imdb import refresh_imdb_ratings_from_datasets  # noqa: E402
 from app.tasks_genre import (  # noqa: E402
     GENRE_BACKFILL_ITEMS_QUEUE_KEY,
     GENRE_BACKFILL_ITEMS_SCHEDULED_KEY,
@@ -473,6 +474,10 @@ def nightly_metadata_quality_backfill_task(
             trakt_popularity_item_ids,
             countdown=NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_COUNTDOWN,
         )
+
+    from app.providers import imdb_datasets as _imdb_datasets  # noqa: PLC0415
+    if _imdb_datasets.is_enabled():
+        refresh_imdb_ratings_from_datasets.apply_async(countdown=60)
 
     summary = {
         "selected": {

@@ -907,6 +907,8 @@ ANILIST_ID = config(
     ),
 )
 
+IMDB_RATINGS = config("IMDB_RATINGS", default=True, cast=bool)
+
 ANILIST_SECRET = config(
     "ANILIST_SECRET",
     default=secret(

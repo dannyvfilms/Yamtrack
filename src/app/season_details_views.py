@@ -17,6 +17,7 @@ from app.activity_builders import (
 from app.detail_builders import (
     _build_detail_link_sections,
     _build_detail_person_rows,
+    _build_imdb_score_context,
     _build_series_graph_data,
     _build_series_graph_from_raw,
     _build_trakt_popularity_context,
@@ -723,6 +724,7 @@ def season_details(
         season_item,
         MediaTypes.SEASON.value,
     )
+    imdb_score = _build_imdb_score_context(season_item)
     episode_load_more = None
     if render_secondary_only and season_metadata.get("episodes"):
         season_metadata["episodes"] = _normalize_detail_episode_actions(
@@ -783,6 +785,10 @@ def season_details(
         ),
         "trakt_series_graph_data": _build_series_graph_data(
             source, media_id, season_number, use_trakt=True
+        ),
+        "imdb_score": imdb_score,
+        "imdb_series_graph_data": _build_series_graph_data(
+            source, media_id, season_number, use_imdb=True
         ),
         "season_provider_metadata_status": season_provider_metadata_status,
         "season_provider_metadata_banner": LOCAL_ONLY_MISSING_SEASON_BANNER,
