@@ -50,6 +50,7 @@ from app.discover.movie_comfort import (
 from app.discover.profile import get_or_compute_taste_profile
 from app.discover.provider_candidates import _provider_row_candidates
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
+from app.discover.tabs import TAB_REGISTRY
 from app.discover.row_cache_schema import (
     ROW_CACHE_ACTIVITY_VERSION_META_KEY,
     _apply_row_definition_metadata,
@@ -99,6 +100,12 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Row keys backed by an external provider tab (derived from the tab registry so
+# new tabs route through _provider_row_candidates without touching this module).
+_PROVIDER_TAB_ROW_KEYS = frozenset(
+    tab.row_key for tabs in TAB_REGISTRY.values() for tab in tabs
+)
 
 STALE_REFRESH_LOCK_SECONDS = 60
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
@@ -541,7 +548,7 @@ def _build_row_candidates(
             source_reason="Planned and unplayed",
         )
 
-    if row_key in {
+    if row_key in _PROVIDER_TAB_ROW_KEYS or row_key in {
         "trending_right_now",
         "trending_tv",
         "new_noteworthy",

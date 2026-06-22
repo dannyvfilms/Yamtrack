@@ -893,6 +893,208 @@ def _mal_manga_ranking_candidates(
     return candidates[:limit]
 
 
+MAL_ANIME_LIST_FIELDS = (
+    "media_type,start_date,genres,mean,num_scoring_users,num_list_users,"
+    "main_picture,alternative_titles,start_season"
+)
+_MAL_SEASONS = ("winter", "spring", "summer", "fall")
+
+
+def _current_anime_season(now=None) -> tuple[int, str]:
+    """Return the (year, season) for the current calendar quarter."""
+    now = now or timezone.now()
+    return now.year, _MAL_SEASONS[(now.month - 1) // 3]
+
+
+def _previous_anime_season(year: int, season: str) -> tuple[int, str]:
+    """Return the (year, season) immediately preceding the given one."""
+    index = _MAL_SEASONS.index(season)
+    if index == 0:
+        return year - 1, _MAL_SEASONS[-1]
+    return year, _MAL_SEASONS[index - 1]
+
+
+def _mal_anime_node_candidate(
+    node: dict,
+    *,
+    row_key: str,
+    source_reason: str,
+    popularity: float | None,
+) -> CandidateItem | None:
+    media_id = _safe_int(node.get("id"))
+    title = (mal.get_localized_title(node) or node.get("title") or "").strip()
+    if not media_id or not title:
+        return None
+    genres = [
+        str(genre.get("name")).strip()
+        for genre in (node.get("genres") or [])
+        if isinstance(genre, dict) and str(genre.get("name") or "").strip()
+    ]
+    return CandidateItem(
+        media_type=MediaTypes.ANIME.value,
+        source=Sources.MAL.value,
+        media_id=str(media_id),
+        title=title,
+        original_title=node.get("title") or title,
+        localized_title=title,
+        image=mal.get_image_url(node),
+        release_date=_iso_date(node.get("start_date")),
+        genres=genres,
+        popularity=popularity,
+        rating=_safe_float(node.get("mean")),
+        rating_count=_safe_int(node.get("num_scoring_users")),
+        row_key=row_key,
+        source_reason=source_reason,
+    )
+
+
+def _mal_anime_ranking_candidates(
+    *,
+    ranking_type: str,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/anime/ranking"
+    params = {
+        "ranking_type": ranking_type,
+        "limit": min(max(limit, 1), 100),
+        "fields": MAL_ANIME_LIST_FIELDS,
+    }
+    if settings.MAL_NSFW:
+        params["nsfw"] = "true"
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.MAL.value,
+            "GET",
+            f"{mal.base_url}{endpoint}",
+            params=params,
+            headers={"X-MAL-CLIENT-ID": settings.MAL_API},
+        )
+        return [entry for entry in (payload.get("data") or []) if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.MAL.value,
+        f"{endpoint}:{ranking_type}",
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        node = entry.get("node") or {}
+        ranking = entry.get("ranking") or {}
+        popularity = _safe_float(ranking.get("rank"))
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+        else:
+            popularity = max(1.0, 1000.0 - popularity)
+        candidate = _mal_anime_node_candidate(
+            node,
+            row_key=row_key,
+            source_reason=source_reason,
+            popularity=popularity,
+        )
+        if candidate:
+            candidates.append(candidate)
+
+    return candidates[:limit]
+
+
+def _mal_anime_season_candidates(
+    *,
+    year: int,
+    season: str,
+    row_key: str,
+    source_reason: str,
+    sort: str = "anime_num_list_users",
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = f"/anime/season/{year}/{season}"
+    params = {
+        "sort": sort,
+        "limit": min(max(limit, 1), 100),
+        "fields": MAL_ANIME_LIST_FIELDS,
+    }
+    if settings.MAL_NSFW:
+        params["nsfw"] = "true"
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.MAL.value,
+            "GET",
+            f"{mal.base_url}{endpoint}",
+            params=params,
+            headers={"X-MAL-CLIENT-ID": settings.MAL_API},
+        )
+        return [entry for entry in (payload.get("data") or []) if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.MAL.value,
+        endpoint,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        node = entry.get("node") or {}
+        popularity = _safe_float(node.get("num_list_users"))
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+        candidate = _mal_anime_node_candidate(
+            node,
+            row_key=row_key,
+            source_reason=source_reason,
+            popularity=popularity,
+        )
+        if candidate:
+            candidates.append(candidate)
+
+    return candidates[:limit]
+
+
+def _mal_anime_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+    """Return candidates for anime/manga tab rows, or None if not such a row."""
+    if media_type == MediaTypes.ANIME.value:
+        if row_key == "mal_this_season":
+            year, season = _current_anime_season()
+            return _mal_anime_season_candidates(
+                year=year,
+                season=season,
+                row_key=row_key,
+                source_reason="MAL current season",
+            )
+        if row_key == "mal_last_season":
+            year, season = _previous_anime_season(*_current_anime_season())
+            return _mal_anime_season_candidates(
+                year=year,
+                season=season,
+                row_key=row_key,
+                source_reason="MAL previous season",
+            )
+        ranking_map = {
+            "mal_anime_top_rated": "all",
+            "mal_anime_airing": "airing",
+            "mal_anime_popular": "bypopularity",
+            "mal_anime_upcoming": "upcoming",
+        }
+        if row_key in ranking_map:
+            return _mal_anime_ranking_candidates(
+                ranking_type=ranking_map[row_key],
+                row_key=row_key,
+                source_reason="MAL ranking",
+            )
+    if media_type == MediaTypes.MANGA.value and row_key == "mal_manga_publishing":
+        return _mal_manga_ranking_candidates(
+            ranking_type="manga",
+            row_key=row_key,
+            source_reason="MAL publishing",
+        )
+    return None
+
+
 def _igdb_games_candidates(
     *,
     query: str,
@@ -959,7 +1161,20 @@ def _igdb_games_candidates(
     return candidates[:limit]
 
 
+def _tab_row_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+    """Dispatch editorial tab rows to their provider builder.
+
+    Returns None when the row_key is not a dedicated tab row, so the caller can
+    fall through to the legacy trending/canon/coming-soon handling.
+    """
+    return _mal_anime_tab_candidates(media_type, row_key)
+
+
 def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:
+    tab_candidates = _tab_row_candidates(media_type, row_key)
+    if tab_candidates is not None:
+        return tab_candidates
+
     if row_key == "trending_right_now":
         if media_type == MediaTypes.MOVIE.value:
             return TRAKT_ADAPTER.movie_watched_weekly(limit=100)
