@@ -23,6 +23,52 @@
       </div>
     {% endif %}
   </div>
+{% elif has_tabs %}
+  <div class="space-y-8">
+    <div role="tablist" aria-label="Discover categories" class="flex flex-wrap gap-2 border-b border-gray-700 pb-3">
+      {% for tab in discover_tabs %}
+        {% if tab.enabled %}
+          <button type="button"
+                  role="tab"
+                  @click="switchTab('{{ tab.key }}')"
+                  class="rounded-full border px-3 py-1.5 text-sm transition-colors cursor-pointer"
+                  :class="selectedTab === '{{ tab.key }}'
+                    ? 'border-indigo-500 bg-indigo-600 text-white'
+                    : 'border-gray-700 bg-[#2a2f35] text-gray-300 hover:border-gray-500 hover:text-white'">
+            {{ tab.label }}
+          </button>
+        {% else %}
+          <button type="button"
+                  role="tab"
+                  disabled
+                  aria-disabled="true"
+                  {% if tab.tooltip %}title="{{ tab.tooltip }}"{% endif %}
+                  class="rounded-full border border-gray-700 bg-[#2a2f35] px-3 py-1.5 text-sm text-gray-400 cursor-not-allowed opacity-40">
+            {{ tab.label }}
+          </button>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <div id="discover-tab-content">
+      {% if tab_row %}
+        {% include "app/components/discover_row.html" with row=tab_row discover_debug=discover_debug selected_media_type=selected_media_type show_more=show_more %}
+      {% else %}
+        <div class="rounded-lg border border-gray-700 bg-[#2a2f35] p-6 text-center">
+          <h2 class="text-lg font-semibold text-white">Nothing to show here yet</h2>
+          <p class="mt-1 text-sm text-gray-400">Try another tab or check this provider's API key.</p>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if rows %}
+      <div class="space-y-8 border-t border-gray-800 pt-8">
+        {% for row in rows %}
+          {% include "app/components/discover_row.html" with row=row discover_debug=discover_debug selected_media_type=selected_media_type show_more=show_more %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
 {% elif rows %}
   <div class="space-y-8">
     {% for row in rows %}
