@@ -1,4 +1,4 @@
-# ruff: noqa: D102, D101, D100
+# ruff: noqa: D102, D101
 
 from unittest.mock import patch
 
@@ -30,26 +30,34 @@ class TabRegistryTests(TestCase):
         self.assertEqual(tab.row_key, "mal_this_season")
         self.assertIsNone(tabs.get_tab("anime", "nope"))
 
-    def test_new_tab_row_keys_dispatch_to_a_builder(self):
+    @patch("app.discover.provider_candidates._api_cached_results", return_value=[])
+    @patch("app.discover.provider_candidates.TRAKT_ADAPTER")
+    @patch("app.discover.provider_candidates.TMDB_ADAPTER")
+    def test_new_tab_row_keys_dispatch_to_a_builder(
+        self,
+        mock_tmdb,
+        mock_trakt,
+        _mock_cache,
+    ):
         # Tab-only row keys (not the legacy registry keys) must resolve in the
         # tab dispatcher rather than silently returning nothing.
+        for method in ("trending", "top_rated", "current_cycle", "airing_today"):
+            getattr(mock_tmdb, method).return_value = []
+        mock_trakt.movie_boxoffice.return_value = []
         legacy = {"trending_right_now", "all_time_greats_unseen", "coming_soon"}
-        with patch.object(provider_candidates, "_api_cached_results", return_value=[]), \
-                patch.object(provider_candidates.TMDB_ADAPTER, "trending", return_value=[]), \
-                patch.object(provider_candidates.TMDB_ADAPTER, "top_rated", return_value=[]), \
-                patch.object(provider_candidates.TMDB_ADAPTER, "current_cycle", return_value=[]), \
-                patch.object(provider_candidates.TMDB_ADAPTER, "airing_today", return_value=[]), \
-                patch.object(provider_candidates.TRAKT_ADAPTER, "movie_boxoffice", return_value=[]):
-            for media_type, tab_list in TAB_REGISTRY.items():
-                for tab in tab_list:
-                    if tab.row_key in legacy:
-                        continue
-                    result = provider_candidates._tab_row_candidates(media_type, tab.row_key)
-                    self.assertIsInstance(
-                        result,
-                        list,
-                        msg=f"{media_type}/{tab.row_key} did not dispatch to a builder",
-                    )
+        for media_type, tab_list in TAB_REGISTRY.items():
+            for tab in tab_list:
+                if tab.row_key in legacy:
+                    continue
+                result = provider_candidates._tab_row_candidates(
+                    media_type,
+                    tab.row_key,
+                )
+                self.assertIsInstance(
+                    result,
+                    list,
+                    msg=f"{media_type}/{tab.row_key} did not dispatch to a builder",
+                )
 
 
 class AnimeSeasonHelperTests(TestCase):

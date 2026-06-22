@@ -50,7 +50,6 @@ from app.discover.movie_comfort import (
 from app.discover.profile import get_or_compute_taste_profile
 from app.discover.provider_candidates import _provider_row_candidates
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
-from app.discover.tabs import TAB_REGISTRY, TAB_ROW_DESCRIPTIONS
 from app.discover.row_cache_schema import (
     ROW_CACHE_ACTIVITY_VERSION_META_KEY,
     _apply_row_definition_metadata,
@@ -82,6 +81,7 @@ from app.discover.service_helpers import (
     _model_has_field,
     _rewatch_counts,
 )
+from app.discover.tabs import TAB_REGISTRY, TAB_ROW_DESCRIPTIONS
 from app.discover.trakt_candidates import (
     ROW_CACHE_SCHEMA_META_KEY,
     _genre_discovery_candidates,

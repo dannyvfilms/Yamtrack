@@ -129,7 +129,7 @@ def _discover_tabs_payload(media_type: str, *, selected_tab: str):
     return payload
 
 
-def _resolve_discover_tab(request, media_type: str, rows):
+def _resolve_discover_tab(media_type: str, rows):
     """Build the tab-bar payload, the selected tab's row, and the stacked rows.
 
     The default ("trending") row is reused from the already-built ``rows`` (it is
@@ -202,7 +202,7 @@ def _discover_rows_context(
         "rows": rows,
     }
     if _media_type_has_tabs(selected_media_type):
-        context.update(_resolve_discover_tab(request, selected_media_type, rows))
+        context.update(_resolve_discover_tab(selected_media_type, rows))
     return context
 
 
