@@ -37,55 +37,113 @@ class TabDefinition:
 
 TAB_REGISTRY: dict[str, list[TabDefinition]] = {
     MediaTypes.MOVIE.value: [
-        TabDefinition("trending", "Trending", "trending_right_now", "trakt", "TRAKT_API"),
-        TabDefinition("trending_now", "Trending Now", "tmdb_trending", "tmdb", "TMDB_API"),
+        TabDefinition(
+            "trending", "Trending", "trending_right_now", "trakt", "TRAKT_API"
+        ),
+        TabDefinition(
+            "trending_now", "Trending Now", "tmdb_trending", "tmdb", "TMDB_API"
+        ),
         TabDefinition("top_rated", "Top Rated", "tmdb_top_rated", "tmdb", "TMDB_API"),
-        TabDefinition("popular", "Popular", "all_time_greats_unseen", "trakt", "TRAKT_API"),
-        TabDefinition("now_playing", "Now Playing", "tmdb_now_playing", "tmdb", "TMDB_API"),
+        TabDefinition(
+            "popular", "Popular", "all_time_greats_unseen", "trakt", "TRAKT_API"
+        ),
+        TabDefinition(
+            "now_playing", "Now Playing", "tmdb_now_playing", "tmdb", "TMDB_API"
+        ),
         TabDefinition("upcoming", "Upcoming", "coming_soon", "trakt", "TRAKT_API"),
-        TabDefinition("box_office", "Box Office", "trakt_box_office", "trakt", "TRAKT_API"),
+        TabDefinition(
+            "box_office", "Box Office", "trakt_box_office", "trakt", "TRAKT_API"
+        ),
     ],
     MediaTypes.TV.value: [
-        TabDefinition("trending", "Trending", "trending_right_now", "trakt", "TRAKT_API"),
-        TabDefinition("trending_now", "Trending Now", "tmdb_trending", "tmdb", "TMDB_API"),
+        TabDefinition(
+            "trending", "Trending", "trending_right_now", "trakt", "TRAKT_API"
+        ),
+        TabDefinition(
+            "trending_now", "Trending Now", "tmdb_trending", "tmdb", "TMDB_API"
+        ),
         TabDefinition("top_rated", "Top Rated", "tmdb_top_rated", "tmdb", "TMDB_API"),
-        TabDefinition("popular", "Popular", "all_time_greats_unseen", "trakt", "TRAKT_API"),
-        TabDefinition("on_the_air", "On The Air", "tmdb_on_the_air", "tmdb", "TMDB_API"),
-        TabDefinition("airing_today", "Airing Today", "tmdb_airing_today", "tmdb", "TMDB_API"),
-        TabDefinition("coming_soon", "Coming Soon", "coming_soon", "trakt", "TRAKT_API"),
+        TabDefinition(
+            "popular", "Popular", "all_time_greats_unseen", "trakt", "TRAKT_API"
+        ),
+        TabDefinition(
+            "on_the_air", "On The Air", "tmdb_on_the_air", "tmdb", "TMDB_API"
+        ),
+        TabDefinition(
+            "airing_today", "Airing Today", "tmdb_airing_today", "tmdb", "TMDB_API"
+        ),
+        TabDefinition(
+            "coming_soon", "Coming Soon", "coming_soon", "trakt", "TRAKT_API"
+        ),
     ],
     MediaTypes.ANIME.value: [
-        TabDefinition("trending", "Trending", "trending_right_now", "trakt", "TRAKT_API"),
-        TabDefinition("this_season", "This Season", "mal_this_season", "mal", "MAL_API"),
-        TabDefinition("last_season", "Last Season", "mal_last_season", "mal", "MAL_API"),
-        TabDefinition("top_rated", "Top Rated", "mal_anime_top_rated", "mal", "MAL_API"),
+        TabDefinition(
+            "trending", "Trending", "trending_right_now", "trakt", "TRAKT_API"
+        ),
+        TabDefinition(
+            "this_season", "This Season", "mal_this_season", "mal", "MAL_API"
+        ),
+        TabDefinition(
+            "last_season", "Last Season", "mal_last_season", "mal", "MAL_API"
+        ),
+        TabDefinition(
+            "top_rated", "Top Rated", "mal_anime_top_rated", "mal", "MAL_API"
+        ),
         TabDefinition("top_airing", "Top Airing", "mal_anime_airing", "mal", "MAL_API"),
-        TabDefinition("most_popular", "Most Popular", "mal_anime_popular", "mal", "MAL_API"),
-        TabDefinition("coming_soon", "Coming Soon", "mal_anime_upcoming", "mal", "MAL_API"),
+        TabDefinition(
+            "most_popular", "Most Popular", "mal_anime_popular", "mal", "MAL_API"
+        ),
+        TabDefinition(
+            "coming_soon", "Coming Soon", "mal_anime_upcoming", "mal", "MAL_API"
+        ),
     ],
     MediaTypes.MANGA.value: [
         TabDefinition("trending", "Trending", "trending_right_now", "mal", "MAL_API"),
-        TabDefinition("top_rated", "Top Rated", "all_time_greats_unseen", "mal", "MAL_API"),
-        TabDefinition("publishing_now", "Publishing Now", "mal_manga_publishing", "mal", "MAL_API"),
+        TabDefinition(
+            "top_rated", "Top Rated", "all_time_greats_unseen", "mal", "MAL_API"
+        ),
+        TabDefinition(
+            "publishing_now", "Publishing Now", "mal_manga_publishing", "mal", "MAL_API"
+        ),
     ],
     MediaTypes.BOOK.value: [
-        TabDefinition("trending", "Trending", "trending_right_now", "openlibrary", None),
-        TabDefinition("this_week", "This Week", "openlibrary_weekly", "openlibrary", None),
-        TabDefinition("this_month", "This Month", "openlibrary_monthly", "openlibrary", None),
-        TabDefinition("this_year", "This Year", "openlibrary_yearly", "openlibrary", None),
+        TabDefinition(
+            "trending", "Trending", "trending_right_now", "openlibrary", None
+        ),
+        TabDefinition(
+            "this_week", "This Week", "openlibrary_weekly", "openlibrary", None
+        ),
+        TabDefinition(
+            "this_month", "This Month", "openlibrary_monthly", "openlibrary", None
+        ),
+        TabDefinition(
+            "this_year", "This Year", "openlibrary_yearly", "openlibrary", None
+        ),
         TabDefinition("coming_soon", "Coming Soon", "coming_soon", "openlibrary", None),
     ],
     MediaTypes.COMIC.value: [
-        TabDefinition("trending", "Trending", "trending_right_now", "comicvine", "COMICVINE_API"),
-        TabDefinition("coming_soon", "Coming Soon", "coming_soon", "comicvine", "COMICVINE_API"),
+        TabDefinition(
+            "trending", "Trending", "trending_right_now", "comicvine", "COMICVINE_API"
+        ),
+        TabDefinition(
+            "coming_soon", "Coming Soon", "coming_soon", "comicvine", "COMICVINE_API"
+        ),
     ],
     MediaTypes.BOARDGAME.value: [
         TabDefinition("trending", "Hot", "trending_right_now", "bgg", "BGG_API_TOKEN"),
     ],
     MediaTypes.MUSIC.value: [
-        TabDefinition("trending", "Trending", "trending_right_now", "lastfm", "LASTFM_API_KEY"),
+        TabDefinition(
+            "trending", "Trending", "trending_right_now", "lastfm", "LASTFM_API_KEY"
+        ),
         TabDefinition("coming_soon", "Coming Soon", "coming_soon", "musicbrainz", None),
-        TabDefinition("top_artists", "Top Artists", "lastfm_top_artists", "lastfm", "LASTFM_API_KEY"),
+        TabDefinition(
+            "top_artists",
+            "Top Artists",
+            "lastfm_top_artists",
+            "lastfm",
+            "LASTFM_API_KEY",
+        ),
     ],
     MediaTypes.PODCAST.value: [
         TabDefinition("trending", "Top", "trending_right_now", "itunes", None),
@@ -93,7 +151,9 @@ TAB_REGISTRY: dict[str, list[TabDefinition]] = {
     MediaTypes.GAME.value: [
         TabDefinition("trending", "Trending", "trending_right_now", "igdb", "IGDB_ID"),
         TabDefinition("top_rated", "Top Rated", "igdb_top_rated", "igdb", "IGDB_ID"),
-        TabDefinition("coming_soon", "Coming Soon", "igdb_coming_soon", "igdb", "IGDB_ID"),
+        TabDefinition(
+            "coming_soon", "Coming Soon", "igdb_coming_soon", "igdb", "IGDB_ID"
+        ),
     ],
 }
 

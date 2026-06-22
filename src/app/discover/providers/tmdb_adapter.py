@@ -54,7 +54,7 @@ class TMDbDiscoverAdapter:
                 ttl_seconds=ttl_seconds,
             )
             return response
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             if payload:
                 logger.warning(
                     "discover_tmdb_cache_fallback endpoint=%s error=%s",
@@ -207,6 +207,7 @@ class TMDbDiscoverAdapter:
         return []
 
     def airing_today(self, media_type: str, *, limit: int = 50) -> list[CandidateItem]:
+        """Return TV shows airing today as candidate items."""
         if media_type != MediaTypes.TV.value:
             return []
         payload = self._cache_request(

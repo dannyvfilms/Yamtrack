@@ -153,7 +153,11 @@ def _resolve_discover_tab(request, media_type: str, rows):
     tab = discover_tabs.get_tab(media_type, selected_tab)
     rows_by_key = {row.key: row for row in rows}
     tab_row = rows_by_key.get(tab.row_key) if tab else None
-    if tab is not None and tab_row is None and tab.row_key not in TABBED_EDITORIAL_ROW_KEYS:
+    if (
+        tab is not None
+        and tab_row is None
+        and tab.row_key not in TABBED_EDITORIAL_ROW_KEYS
+    ):
         tab_row = discover.get_discover_tab_row(request.user, media_type, tab)
     stacked_rows = [row for row in rows if row.key not in TABBED_EDITORIAL_ROW_KEYS]
     return {

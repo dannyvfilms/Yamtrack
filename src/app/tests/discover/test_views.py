@@ -10,6 +10,7 @@ from django.urls import reverse
 
 from app.discover.schemas import CandidateItem, RowResult
 from app.models import (
+    TV,
     DiscoverFeedback,
     DiscoverFeedbackType,
     Item,
@@ -17,7 +18,6 @@ from app.models import (
     Movie,
     Sources,
     Status,
-    TV,
 )
 from app.services.tracking_hydration import HydratedItemResult
 from users.models import DateFormatChoices

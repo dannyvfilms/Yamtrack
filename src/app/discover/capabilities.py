@@ -39,8 +39,13 @@ def _capability_available(capability_key: str | None) -> bool:
 def _tooltip(capability_key: str | None) -> str | None:
     if capability_key is None:
         return None
-    label, env_var = _PROVIDER_INFO.get(capability_key, (capability_key, capability_key))
-    return f"Set the {env_var} environment variable with your {label} API key to enable this tab."
+    label, env_var = _PROVIDER_INFO.get(
+        capability_key, (capability_key, capability_key)
+    )
+    return (
+        f"Set the {env_var} environment variable with your {label} API key "
+        "to enable this tab."
+    )
 
 
 def first_enabled_tab(media_type: str) -> str | None:
@@ -56,7 +61,10 @@ def first_enabled_tab(media_type: str) -> str | None:
 
 
 def tab_availability(media_type: str) -> dict[str, dict[str, object]]:
-    """Return ``{tab_key: {"enabled": bool, "tooltip": str | None}}`` for the media type."""
+    """Return availability info per tab key for the media type.
+
+    Shape: ``{tab_key: {"enabled": bool, "tooltip": str | None}}``.
+    """
     availability: dict[str, dict[str, object]] = {}
     for tab in get_tabs(media_type):
         available = _capability_available(tab.capability_key)

@@ -53,7 +53,7 @@ class TraktDiscoverAdapter:
                 ttl_seconds=ttl_seconds,
             )
             return normalized_payload
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:
             if payload:
                 logger.warning(
                     "discover_trakt_cache_fallback endpoint=%s error=%s",
@@ -110,10 +110,20 @@ class TraktDiscoverAdapter:
                     localized_title=title,
                     image=settings.IMG_NONE,
                     release_date=movie.get("released"),
-                    genres=[str(genre).strip() for genre in (movie.get("genres") or []) if str(genre).strip()],
+                    genres=[
+                        str(genre).strip()
+                        for genre in (movie.get("genres") or [])
+                        if str(genre).strip()
+                    ],
                     popularity=float(popularity) if popularity is not None else None,
-                    rating=float(movie["rating"]) if movie.get("rating") is not None else None,
-                    rating_count=int(movie["votes"]) if movie.get("votes") is not None else None,
+                    rating=(
+                        float(movie["rating"])
+                        if movie.get("rating") is not None
+                        else None
+                    ),
+                    rating_count=(
+                        int(movie["votes"]) if movie.get("votes") is not None else None
+                    ),
                     row_key="trending_right_now",
                     source_reason="Trakt watched weekly",
                 ),
@@ -167,10 +177,20 @@ class TraktDiscoverAdapter:
                     localized_title=title,
                     image=settings.IMG_NONE,
                     release_date=movie.get("released"),
-                    genres=[str(genre).strip() for genre in (movie.get("genres") or []) if str(genre).strip()],
+                    genres=[
+                        str(genre).strip()
+                        for genre in (movie.get("genres") or [])
+                        if str(genre).strip()
+                    ],
                     popularity=float(popularity) if popularity is not None else None,
-                    rating=float(movie["rating"]) if movie.get("rating") is not None else None,
-                    rating_count=int(movie["votes"]) if movie.get("votes") is not None else None,
+                    rating=(
+                        float(movie["rating"])
+                        if movie.get("rating") is not None
+                        else None
+                    ),
+                    rating_count=(
+                        int(movie["votes"]) if movie.get("votes") is not None else None
+                    ),
                     row_key="all_time_greats_unseen",
                     source_reason="Trakt popular",
                 ),
@@ -228,10 +248,20 @@ class TraktDiscoverAdapter:
                     localized_title=title,
                     image=settings.IMG_NONE,
                     release_date=movie.get("released"),
-                    genres=[str(genre).strip() for genre in (movie.get("genres") or []) if str(genre).strip()],
+                    genres=[
+                        str(genre).strip()
+                        for genre in (movie.get("genres") or [])
+                        if str(genre).strip()
+                    ],
                     popularity=float(popularity) if popularity is not None else None,
-                    rating=float(movie["rating"]) if movie.get("rating") is not None else None,
-                    rating_count=int(movie["votes"]) if movie.get("votes") is not None else None,
+                    rating=(
+                        float(movie["rating"])
+                        if movie.get("rating") is not None
+                        else None
+                    ),
+                    rating_count=(
+                        int(movie["votes"]) if movie.get("votes") is not None else None
+                    ),
                     row_key="coming_soon",
                     source_reason="Trakt anticipated",
                 ),
@@ -280,10 +310,20 @@ class TraktDiscoverAdapter:
                     localized_title=title,
                     image=settings.IMG_NONE,
                     release_date=movie.get("released"),
-                    genres=[str(genre).strip() for genre in (movie.get("genres") or []) if str(genre).strip()],
+                    genres=[
+                        str(genre).strip()
+                        for genre in (movie.get("genres") or [])
+                        if str(genre).strip()
+                    ],
                     popularity=float(popularity) if popularity is not None else None,
-                    rating=float(movie["rating"]) if movie.get("rating") is not None else None,
-                    rating_count=int(movie["votes"]) if movie.get("votes") is not None else None,
+                    rating=(
+                        float(movie["rating"])
+                        if movie.get("rating") is not None
+                        else None
+                    ),
+                    rating_count=(
+                        int(movie["votes"]) if movie.get("votes") is not None else None
+                    ),
                     row_key="trakt_box_office",
                     source_reason="Trakt box office",
                 ),
@@ -322,7 +362,7 @@ class TraktDiscoverAdapter:
         media_type: str,
         row_key: str,
         source_reason: str,
-        popularity: float | int | None,
+        popularity: float | None,
         trakt_genres: list[str] | None = None,
     ) -> CandidateItem | None:
         if not show:

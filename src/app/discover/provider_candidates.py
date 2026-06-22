@@ -540,7 +540,7 @@ def _bgg_hot_candidates(
     )
 
     ids = [str(entry.get("id")) for entry in entries[:limit] if entry.get("id")]
-    thumbnails = bgg._fetch_thumbnails(ids) if ids else {}  # noqa: SLF001
+    thumbnails = bgg._fetch_thumbnails(ids) if ids else {}
 
     candidates: list[CandidateItem] = []
     for index, entry in enumerate(entries, start=1):
@@ -583,7 +583,7 @@ def _musicbrainz_coming_soon_recording_candidates(
     start_date = timezone.localdate().isoformat()
     end_date = (timezone.localdate() + timedelta(days=PROVIDER_COMING_SOON_WINDOW_DAYS)).isoformat()
     params = {
-        "query": f'firstreleasedate:[{start_date} TO {end_date}]',
+        "query": f"firstreleasedate:[{start_date} TO {end_date}]",
         "limit": min(max(limit, 1), 100),
         "offset": 0,
         "fmt": "json",
@@ -842,7 +842,9 @@ def _mal_manga_ranking_candidates(
             params=params,
             headers={"X-MAL-CLIENT-ID": settings.MAL_API},
         )
-        return [entry for entry in (payload.get("data") or []) if isinstance(entry, dict)]
+        return [
+            entry for entry in (payload.get("data") or []) if isinstance(entry, dict)
+        ]
 
     entries = _api_cached_results(
         Sources.MAL.value,
@@ -972,7 +974,9 @@ def _mal_anime_ranking_candidates(
             params=params,
             headers={"X-MAL-CLIENT-ID": settings.MAL_API},
         )
-        return [entry for entry in (payload.get("data") or []) if isinstance(entry, dict)]
+        return [
+            entry for entry in (payload.get("data") or []) if isinstance(entry, dict)
+        ]
 
     entries = _api_cached_results(
         Sources.MAL.value,
@@ -1028,7 +1032,9 @@ def _mal_anime_season_candidates(
             params=params,
             headers={"X-MAL-CLIENT-ID": settings.MAL_API},
         )
-        return [entry for entry in (payload.get("data") or []) if isinstance(entry, dict)]
+        return [
+            entry for entry in (payload.get("data") or []) if isinstance(entry, dict)
+        ]
 
     entries = _api_cached_results(
         Sources.MAL.value,
@@ -1055,7 +1061,9 @@ def _mal_anime_season_candidates(
     return candidates[:limit]
 
 
-def _mal_anime_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+def _mal_anime_tab_candidates(
+    media_type: str, row_key: str
+) -> list[CandidateItem] | None:
     """Return candidates for anime/manga tab rows, or None if not such a row."""
     if media_type == MediaTypes.ANIME.value:
         if row_key == "mal_this_season":
@@ -1161,7 +1169,9 @@ def _igdb_games_candidates(
     return candidates[:limit]
 
 
-def _reassign_row_key(candidates: list[CandidateItem], row_key: str) -> list[CandidateItem]:
+def _reassign_row_key(
+    candidates: list[CandidateItem], row_key: str
+) -> list[CandidateItem]:
     """Stamp the tab's row_key onto adapter-produced candidates."""
     for candidate in candidates:
         candidate.row_key = row_key
@@ -1176,9 +1186,7 @@ def _tmdb_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] |
         candidates = TMDB_ADAPTER.trending(media_type)
     elif row_key == "tmdb_top_rated":
         candidates = TMDB_ADAPTER.top_rated(media_type)
-    elif row_key == "tmdb_now_playing":
-        candidates = TMDB_ADAPTER.current_cycle(media_type)
-    elif row_key == "tmdb_on_the_air":
+    elif row_key in {"tmdb_now_playing", "tmdb_on_the_air"}:
         candidates = TMDB_ADAPTER.current_cycle(media_type)
     elif row_key == "tmdb_airing_today":
         candidates = TMDB_ADAPTER.airing_today(media_type)
@@ -1201,7 +1209,9 @@ _OPENLIBRARY_PERIOD_ROWS = {
 }
 
 
-def _openlibrary_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] | None:
+def _openlibrary_tab_candidates(
+    media_type: str, row_key: str
+) -> list[CandidateItem] | None:
     """Return candidates for OpenLibrary period tabs, or None if not such a row."""
     if media_type == MediaTypes.BOOK.value and row_key in _OPENLIBRARY_PERIOD_ROWS:
         return _openlibrary_trending_candidates(
@@ -1269,7 +1279,10 @@ def _lastfm_top_artists_candidates(
                 media_id=mbid,
                 title=title,
                 image=image,
-                popularity=_safe_float(artist.get("playcount")) or _safe_float(artist.get("listeners")),
+                popularity=(
+                    _safe_float(artist.get("playcount"))
+                    or _safe_float(artist.get("listeners"))
+                ),
                 row_key=row_key,
                 source_reason=source_reason,
             ),
@@ -1284,7 +1297,10 @@ def _igdb_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] |
     """Return candidates for extra IGDB tabs, or None if not such a row."""
     if media_type != MediaTypes.GAME.value:
         return None
-    base_fields = "fields name,cover.image_id,first_release_date,total_rating,total_rating_count,genres.name;"
+    base_fields = (
+        "fields name,cover.image_id,first_release_date,"
+        "total_rating,total_rating_count,genres.name;"
+    )
     if row_key == "igdb_top_rated":
         query = (
             f"{base_fields}"
@@ -1303,7 +1319,8 @@ def _igdb_tab_candidates(media_type: str, row_key: str) -> list[CandidateItem] |
         future_cutoff = int(timezone.now().timestamp())
         query = (
             f"{base_fields}"
-            f" where first_release_date != null & first_release_date > {future_cutoff} & hypes != null;"
+            " where first_release_date != null"
+            f" & first_release_date > {future_cutoff} & hypes != null;"
             " sort hypes desc;"
             " limit 100;"
         )
@@ -1341,7 +1358,7 @@ def _tab_row_candidates(media_type: str, row_key: str) -> list[CandidateItem] | 
     return None
 
 
-def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:
+def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:  # noqa: C901, PLR0911, PLR0912
     tab_candidates = _tab_row_candidates(media_type, row_key)
     if tab_candidates is not None:
         return tab_candidates

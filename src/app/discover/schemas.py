@@ -81,7 +81,7 @@ class CandidateItem:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "CandidateItem":
+    def from_dict(cls, payload: dict[str, Any]) -> CandidateItem:
         """Create CandidateItem from dict payload."""
         return cls(
             media_type=str(payload.get("media_type", "")),
@@ -175,7 +175,7 @@ class RowResult:
         return data
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "RowResult":
+    def from_dict(cls, payload: dict[str, Any]) -> RowResult:
         """Deserialize row cache payload."""
         return cls(
             key=str(payload.get("key", "")),
