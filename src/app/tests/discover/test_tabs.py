@@ -15,6 +15,7 @@ from app.discover.provider_candidates import (
 )
 from app.discover.schemas import CandidateItem, RowResult
 from app.discover.tabs import TAB_REGISTRY
+from app.discover_views import _discover_tabs_payload
 
 
 class TabRegistryTests(TestCase):
@@ -222,6 +223,20 @@ class DiscoverTabViewTests(TestCase):
         self.assertContains(response, "Fullmetal Alchemist: Brotherhood")
         # Grid fragment must not include the row header wrapper template.
         self.assertTemplateNotUsed(response, "app/components/discover_row.html")
+
+
+class TabSourceIconTests(TestCase):
+    def test_multi_source_media_shows_source_icons(self):
+        icons = {
+            p["label"]: p["source_icon"]
+            for p in _discover_tabs_payload("tv", selected_tab="trending")
+        }
+        self.assertIn("trakt-logo", icons["Trending"])
+        self.assertIn("tmdb-logo", icons["Top Rated"])
+
+    def test_single_source_media_has_no_icons(self):
+        payload = _discover_tabs_payload("manga", selected_tab="trending")
+        self.assertTrue(all(p["source_icon"] is None for p in payload))
 
 
 class AllMediaTabsTests(TestCase):

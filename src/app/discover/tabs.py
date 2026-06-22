@@ -123,9 +123,30 @@ TAB_ROW_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+# Static logo path (under STATIC_URL) per provider, shown on tabs only when a
+# media type mixes more than one source so the user can tell them apart.
+SOURCE_ICONS: dict[str, str] = {
+    "tmdb": "img/tmdb-logo.png",
+    "trakt": "img/trakt-logo.svg",
+    "mal": "img/myanimelist-logo.svg",
+    "lastfm": "img/lastfm-logo.png",
+    "musicbrainz": "img/musicbrainz-logo.ico",
+}
+
+
 def get_tabs(media_type: str) -> list[TabDefinition]:
     """Return ordered tab definitions for the media type (empty if unsupported)."""
     return TAB_REGISTRY.get(media_type, [])
+
+
+def media_type_is_multi_source(media_type: str) -> bool:
+    """Return True when a media type's tabs are backed by more than one provider."""
+    return len({tab.provider for tab in get_tabs(media_type)}) > 1
+
+
+def source_icon_path(provider: str) -> str | None:
+    """Return the static logo path for a provider, or None when unmapped."""
+    return SOURCE_ICONS.get(provider)
 
 
 def default_tab(media_type: str) -> str | None:

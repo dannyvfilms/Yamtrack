@@ -37,7 +37,7 @@
                   :class="selectedTab === '{{ tab.key }}'
                     ? 'border-indigo-500 bg-indigo-600 text-white'
                     : 'border-gray-700 bg-[#2a2f35] text-gray-300 hover:border-gray-500 hover:text-white'">
-            {{ tab.label }}
+            {% if tab.source_icon %}<img src="{{ tab.source_icon }}" alt="" aria-hidden="true" class="mr-1.5 inline-block h-3.5 w-3.5 object-contain align-text-bottom">{% endif %}{{ tab.label }}
           </button>
         {% else %}
           <button type="button"
@@ -46,7 +46,7 @@
                   aria-disabled="true"
                   {% if tab.tooltip %}title="{{ tab.tooltip }}"{% endif %}
                   class="rounded-full border border-gray-700 bg-[#2a2f35] px-3 py-1.5 text-sm text-gray-400 cursor-not-allowed opacity-40">
-            {{ tab.label }}
+            {% if tab.source_icon %}<img src="{{ tab.source_icon }}" alt="" aria-hidden="true" class="mr-1.5 inline-block h-3.5 w-3.5 object-contain align-text-bottom">{% endif %}{{ tab.label }}
           </button>
         {% endif %}
       {% endfor %}
@@ -92,13 +92,13 @@
                       :class="(selectedTabByMedia['{{ section.media_type }}'] || '{{ section.selected_tab|default:'trending'|escapejs }}') === '{{ tab.key }}'
                         ? 'border-indigo-500 bg-indigo-600 text-white'
                         : 'border-gray-700 bg-[#2a2f35] text-gray-300 hover:border-gray-500 hover:text-white'">
-                {{ tab.label }}
+                {% if tab.source_icon %}<img src="{{ tab.source_icon }}" alt="" aria-hidden="true" class="mr-1.5 inline-block h-3.5 w-3.5 object-contain align-text-bottom">{% endif %}{{ tab.label }}
               </button>
             {% else %}
               <button type="button" role="tab" disabled aria-disabled="true"
                       {% if tab.tooltip %}title="{{ tab.tooltip }}"{% endif %}
                       class="rounded-full border border-gray-700 bg-[#2a2f35] px-3 py-1.5 text-sm text-gray-400 cursor-not-allowed opacity-40">
-                {{ tab.label }}
+                {% if tab.source_icon %}<img src="{{ tab.source_icon }}" alt="" aria-hidden="true" class="mr-1.5 inline-block h-3.5 w-3.5 object-contain align-text-bottom">{% endif %}{{ tab.label }}
               </button>
             {% endif %}
           {% endfor %}

@@ -7,6 +7,7 @@ from django.apps import apps
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.templatetags.static import static
 from django.views.decorators.http import require_GET, require_POST
 
 from app import discover
@@ -114,9 +115,16 @@ def _media_type_has_tabs(media_type: str) -> bool:
 def _discover_tabs_payload(media_type: str, *, selected_tab: str):
     """Return the tab-bar payload (label, active state, availability) for templates."""
     availability = discover_capabilities.tab_availability(media_type)
+    # Show a source logo on each tab only when the media type mixes providers.
+    multi_source = discover_tabs.media_type_is_multi_source(media_type)
     payload = []
     for tab in discover_tabs.get_tabs(media_type):
         state = availability.get(tab.key, {"enabled": True, "tooltip": None})
+        source_icon = None
+        if multi_source:
+            icon_path = discover_tabs.source_icon_path(tab.provider)
+            if icon_path:
+                source_icon = static(icon_path)
         payload.append(
             {
                 "key": tab.key,
@@ -124,6 +132,7 @@ def _discover_tabs_payload(media_type: str, *, selected_tab: str):
                 "enabled": state["enabled"],
                 "tooltip": state["tooltip"],
                 "active": tab.key == selected_tab,
+                "source_icon": source_icon,
             },
         )
     return payload
