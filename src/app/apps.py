@@ -41,6 +41,9 @@ class AppConfig(AppConfig):
         history_cache_available = self._add_startup_cache_key(
             "history_day_coverage_startup_scheduled",
         )
+        imdb_cache_available = self._add_startup_cache_key(
+            "imdb_ratings_startup_scheduled",
+        )
 
         if (
             not settings.TESTING
@@ -65,6 +68,8 @@ class AppConfig(AppConfig):
         if not settings.TESTING and not is_celery_worker:
             self._schedule_genre_backfill_reconcile()
             self._schedule_trakt_popularity_reconcile()
+            if imdb_cache_available:
+                self._schedule_imdb_ratings_bootstrap()
 
     def _add_startup_cache_key(self, cache_key: str) -> bool:
         """Return whether a once-per-day startup task can be scheduled."""
@@ -215,3 +220,24 @@ class AppConfig(AppConfig):
             )
         except Exception as error:  # noqa: BLE001
             logger.warning("Failed to schedule Trakt popularity reconcile: %s", error)
+
+    def _schedule_imdb_ratings_bootstrap(self):
+        """Download IMDB dataset once on startup so ratings are immediately
+        available without waiting for the nightly Celery Beat schedule."""
+        try:
+            from app.providers import imdb_datasets as _imdb_datasets  # noqa: PLC0415
+
+            if not _imdb_datasets.is_enabled():
+                return
+            from app.models import Item  # noqa: PLC0415
+
+            if Item.objects.filter(imdb_rating__isnull=False).exists():
+                return
+            tasks_imdb = import_module("app.tasks_imdb")
+            tasks_imdb.refresh_imdb_ratings_from_datasets.apply_async(
+                countdown=120,
+                priority=getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1),
+            )
+            logger.info("Scheduled IMDB ratings bootstrap on startup")
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to schedule IMDB ratings bootstrap: %s", error)
