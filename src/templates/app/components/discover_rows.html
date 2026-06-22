@@ -53,6 +53,11 @@
     <div id="discover-tab-content">
       {% if tab_row %}
         {% include "app/components/discover_row.html" with row=tab_row discover_debug=discover_debug selected_media_type=selected_media_type show_more=show_more %}
+      {% elif discover_loading %}
+        <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-6 text-center">
+          <h2 class="text-lg font-semibold text-white">Building Discover rows</h2>
+          <p class="mt-1 text-sm text-amber-100">Recommendations are refreshing in the background and will appear automatically.</p>
+        </div>
       {% else %}
         <div class="rounded-lg border border-gray-700 bg-[#2a2f35] p-6 text-center">
           <h2 class="text-lg font-semibold text-white">Nothing to show here yet</h2>

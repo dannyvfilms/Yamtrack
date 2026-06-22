@@ -132,16 +132,16 @@ def _discover_tabs_payload(media_type: str, *, selected_tab: str):
 def _resolve_discover_tab(request, media_type: str, rows):
     """Build the tab-bar payload, the selected tab's row, and the stacked rows.
 
-    The default ("trending") row is reused from the already-built ``rows`` when
-    present to avoid rebuilding it; remaining editorial rows are dropped from the
-    stacked list, leaving only the personalized rows.
+    The default ("trending") row is reused from the already-built ``rows`` (it is
+    produced by the background tab cache like before, so it is not rebuilt
+    synchronously here); remaining editorial rows are dropped from the stacked
+    list, leaving only the personalized rows. Non-default tabs build on demand via
+    the ``discover_tab`` endpoint.
     """
     selected_tab = discover_tabs.default_tab(media_type)
     tab = discover_tabs.get_tab(media_type, selected_tab)
     rows_by_key = {row.key: row for row in rows}
     tab_row = rows_by_key.get(tab.row_key) if tab else None
-    if tab is not None and tab_row is None:
-        tab_row = discover.get_discover_tab_row(request.user, media_type, tab)
     stacked_rows = [row for row in rows if row.key not in TABBED_EDITORIAL_ROW_KEYS]
     return {
         "has_tabs": True,
