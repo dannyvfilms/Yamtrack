@@ -76,6 +76,39 @@
       </div>
     {% endif %}
   </div>
+{% elif all_media_sections %}
+  <div class="space-y-10">
+    {% for section in all_media_sections %}
+      <section data-discover-media-section="{{ section.media_type }}">
+        <h2 class="mb-3 text-xl font-semibold text-white">{{ section.label }}</h2>
+        <div role="tablist" aria-label="{{ section.label }} categories"
+             x-init="selectedTabByMedia['{{ section.media_type }}'] = selectedTabByMedia['{{ section.media_type }}'] || '{{ section.selected_tab|default:'trending'|escapejs }}'"
+             class="mb-4 flex flex-wrap gap-2 border-b border-gray-700 pb-3">
+          {% for tab in section.tabs %}
+            {% if tab.enabled %}
+              <button type="button" role="tab"
+                      @click="switchTabFor('{{ section.media_type }}', '{{ tab.key }}')"
+                      class="rounded-full border px-3 py-1.5 text-sm transition-colors cursor-pointer"
+                      :class="(selectedTabByMedia['{{ section.media_type }}'] || '{{ section.selected_tab|default:'trending'|escapejs }}') === '{{ tab.key }}'
+                        ? 'border-indigo-500 bg-indigo-600 text-white'
+                        : 'border-gray-700 bg-[#2a2f35] text-gray-300 hover:border-gray-500 hover:text-white'">
+                {{ tab.label }}
+              </button>
+            {% else %}
+              <button type="button" role="tab" disabled aria-disabled="true"
+                      {% if tab.tooltip %}title="{{ tab.tooltip }}"{% endif %}
+                      class="rounded-full border border-gray-700 bg-[#2a2f35] px-3 py-1.5 text-sm text-gray-400 cursor-not-allowed opacity-40">
+                {{ tab.label }}
+              </button>
+            {% endif %}
+          {% endfor %}
+        </div>
+        <div id="all-media-grid-{{ section.media_type }}">
+          {% include "app/components/discover_grid.html" with row=section.row discover_active_media_type="all" show_more=show_more discover_debug=discover_debug %}
+        </div>
+      </section>
+    {% endfor %}
+  </div>
 {% elif rows %}
   <div class="space-y-8">
     {% for row in rows %}

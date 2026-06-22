@@ -1013,6 +1013,7 @@ def _compose_all_media_rows(
         row_prefix = _media_type_readable_plural(component_media_type)
         for row in component_rows:
             row.title = f"{row_prefix}: {row.title}"
+            row.component_media_type = component_media_type
             rows.append(row)
 
     return rows

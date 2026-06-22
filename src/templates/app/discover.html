@@ -107,6 +107,7 @@
       return {
         selectedMedia: initialMedia || "all",
         selectedTab: initialTab || "trending",
+        selectedTabByMedia: {},
         showMore: Boolean(initialShowMore),
         discoverDebug: Boolean(initialDebug),
         refreshing: false,
@@ -534,6 +535,27 @@
           }
           htmx.ajax("GET", `{% url 'discover_tab' %}?${params.toString()}`, {
             target: "#discover-tab-content",
+            swap: "innerHTML",
+          });
+        },
+        switchTabFor(mediaType, tabKey) {
+          if (!mediaType || !tabKey) {
+            return;
+          }
+          if ((this.selectedTabByMedia[mediaType] || "trending") === tabKey) {
+            return;
+          }
+          this.selectedTabByMedia = { ...this.selectedTabByMedia, [mediaType]: tabKey };
+          const params = new URLSearchParams();
+          params.set("media_type", mediaType);
+          params.set("tab", tabKey);
+          params.set("layout", "grid");
+          params.set("active_media_type", "all");
+          if (this.discoverDebug) {
+            params.set("discover_debug", "1");
+          }
+          htmx.ajax("GET", `{% url 'discover_tab' %}?${params.toString()}`, {
+            target: `#all-media-grid-${mediaType}`,
             swap: "innerHTML",
           });
         },

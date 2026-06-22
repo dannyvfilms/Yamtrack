@@ -204,3 +204,79 @@ class DiscoverTabViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         mock_get_tab_row.assert_not_called()
+
+    @patch("app.discover_views.discover.get_discover_tab_row")
+    def test_grid_layout_returns_grid_only_fragment(self, mock_get_tab_row):
+        mock_get_tab_row.return_value = self._row(row_key="tmdb_top_rated")
+        response = self.client.get(
+            reverse("discover_tab"),
+            {
+                "media_type": "tv",
+                "tab": "top_rated",
+                "layout": "grid",
+                "active_media_type": "all",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/discover_grid.html")
+        self.assertContains(response, "Fullmetal Alchemist: Brotherhood")
+        # Grid fragment must not include the row header wrapper template.
+        self.assertTemplateNotUsed(response, "app/components/discover_row.html")
+
+
+class AllMediaTabsTests(TestCase):
+    def setUp(self):
+        self.credentials = {"username": "all-media-user", "password": "secret123"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.warmup_patcher = patch(
+            "app.middleware.discover_tab_cache.maybe_schedule_user_warmup",
+            return_value=0,
+        )
+        self.warmup_patcher.start()
+        self.client.login(**self.credentials)
+
+    def tearDown(self):
+        self.warmup_patcher.stop()
+
+    def _trending_row(self, media_type):
+        return RowResult(
+            key="trending_right_now",
+            title=f"{media_type.title()}: Trending Right Now",
+            mission="",
+            why="What everyone has been watching this week.",
+            source="trakt",
+            items=[
+                CandidateItem(
+                    media_type=media_type,
+                    source="tmdb",
+                    media_id="1",
+                    title=f"{media_type} pick",
+                ),
+            ],
+            component_media_type=media_type,
+        )
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.warm_sibling_tabs")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_all_media_renders_per_media_tab_bars(
+        self,
+        mock_get_tab_rows,
+        _mock_warm,
+        mock_get_tab_status,
+    ):
+        mock_get_tab_rows.return_value = [
+            self._trending_row("tv"),
+            self._trending_row("anime"),
+        ]
+        mock_get_tab_status.return_value = {"is_refreshing": False}
+
+        response = self.client.get(reverse("discover"), {"media_type": "all"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-discover-media-section="tv"')
+        self.assertContains(response, 'data-discover-media-section="anime"')
+        self.assertContains(response, 'id="all-media-grid-tv"')
+        self.assertContains(response, 'id="all-media-grid-anime"')
+        # Anime-only tab proves the bar is per-media-type.
+        self.assertContains(response, "This Season")

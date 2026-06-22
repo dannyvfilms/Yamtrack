@@ -155,6 +155,41 @@ def _resolve_discover_tab(request, media_type: str, rows):
     }
 
 
+def _resolve_all_media_sections(request, rows):
+    """Build per-media-type tabbed sections for the All Media view.
+
+    Each enabled media type contributes one section (its Trending row by default)
+    with its own tab bar; tabs swap that section's grid independently.
+    """
+    sections = []
+    seen = set()
+    for row in rows:
+        media_type = row.component_media_type
+        if (
+            not media_type
+            or media_type in seen
+            or row.key != "trending_right_now"
+            or not _media_type_has_tabs(media_type)
+        ):
+            continue
+        seen.add(media_type)
+        selected_tab = discover_capabilities.first_enabled_tab(media_type)
+        tab = discover_tabs.get_tab(media_type, selected_tab)
+        section_row = row
+        if tab is not None and tab.row_key != row.key:
+            section_row = discover.get_discover_tab_row(request.user, media_type, tab)
+        sections.append(
+            {
+                "media_type": media_type,
+                "label": app_tags.media_type_readable_plural(media_type),
+                "tabs": _discover_tabs_payload(media_type, selected_tab=selected_tab),
+                "selected_tab": selected_tab,
+                "row": section_row,
+            },
+        )
+    return sections
+
+
 def _discover_rows_context(
     request,
     *,
@@ -202,10 +237,13 @@ def _discover_rows_context(
         "discover_tabs": [],
         "selected_tab": None,
         "tab_row": None,
+        "all_media_sections": [],
         "rows": rows,
     }
     if _media_type_has_tabs(selected_media_type):
         context.update(_resolve_discover_tab(request, selected_media_type, rows))
+    elif selected_media_type == "all":
+        context["all_media_sections"] = _resolve_all_media_sections(request, rows)
     return context
 
 
@@ -479,6 +517,29 @@ def discover_tab(request):
 
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
     tab_row = discover.get_discover_tab_row(request.user, selected_media_type, tab)
+
+    # All-media sections swap only their grid (header + tab bar stay put) and keep
+    # the "all" action context, so post-action refresh stays on the All Media tab.
+    if request.GET.get("layout") == "grid":
+        active_media_type = request.GET.get("active_media_type") or selected_media_type
+        response = render(
+            request,
+            "app/components/discover_grid.html",
+            {
+                "row": tab_row,
+                "discover_active_media_type": active_media_type,
+                "show_more": False,
+                "discover_debug": discover_debug,
+            },
+        )
+        return _apply_discover_response_headers(
+            response,
+            user_id=request.user.id,
+            selected_media_type=selected_media_type,
+            show_more=False,
+            discover_debug=discover_debug,
+        )
+
     return _render_discover_row_fragment(
         request,
         selected_media_type=selected_media_type,

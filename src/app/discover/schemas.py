@@ -147,6 +147,9 @@ class RowResult:
     source_state: str = "live"
     match_signal: str | None = None
     debug_payload: dict[str, Any] | None = None
+    # Set only for All-Media composition: the concrete media type this row belongs
+    # to. Runtime-only (not serialized to the row cache).
+    component_media_type: str | None = None
 
     def to_dict(self, *, include_reserve: bool = False) -> dict[str, Any]:
         """Serialize row payload for DB row cache."""
