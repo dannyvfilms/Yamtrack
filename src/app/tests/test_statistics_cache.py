@@ -38,7 +38,7 @@ class StatisticsRefreshSchedulingTests(TestCase):
             settings.CELERY_TASK_PRIORITY_INTERACTIVE,
         )
 
-    @patch("app.statistics_cache.schedule_statistics_refresh")
+    @patch("app.statistics_refresh.schedule_statistics_refresh")
     def test_schedule_all_ranges_refresh_prioritizes_preferred_and_cached_all_time(
         self,
         mock_schedule_statistics_refresh,
@@ -79,7 +79,7 @@ class StatisticsRefreshSchedulingTests(TestCase):
         )
         self.assertEqual(mock_schedule_statistics_refresh.call_count, 2)
 
-    @patch("app.statistics_cache.schedule_statistics_refresh")
+    @patch("app.statistics_refresh.schedule_statistics_refresh")
     def test_schedule_all_ranges_refresh_skips_uncached_all_time(
         self,
         mock_schedule_statistics_refresh,

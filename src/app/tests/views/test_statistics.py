@@ -1510,7 +1510,7 @@ class StatisticsViewTests(TestCase):
             mock_enqueue_genre_backfill_items.mock_calls,
         )
 
-    @patch("app.statistics_cache._aggregate_top_talent")
+    @patch("app.statistics_aggregator._aggregate_top_talent")
     def test_statistics_all_time_uses_aware_boundaries_for_top_talent(self, mock_top_talent):
         """All-time aggregation should pass aware datetime boundaries to top talent."""
         mock_top_talent.return_value = {
