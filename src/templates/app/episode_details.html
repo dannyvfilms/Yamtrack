@@ -71,10 +71,7 @@
     </div>
 
     <div class="flex flex-col sm:contents">
-      {# Score chips row — mirrors media_details.html order-2/order-1 chip row.
-         Render whenever a TMDB score exists OR the viewer is logged in with an
-         episode, so the always-present rating-chip slot is in the DOM on first
-         load (before any watch) and episode_save can OOB-swap it in place. #}
+      {# Score chips row — mirrors media_details.html order-2/order-1 chip row. Render whenever a TMDB score exists OR the viewer is logged in with an episode, so the always-present rating-chip slot is in the DOM on first load (before any watch) and episode_save can OOB-swap it in place. #}
       {% if episode_metadata.score_count or not public_view and episode %}
         <div class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2">
           {# TMDB provider score chip #}
@@ -93,8 +90,7 @@
               <span class="text-[12px] text-gray-300 sm:text-sm">{{ episode_metadata.score_count|intcomma }} vote{{ episode_metadata.score_count|pluralize }}</span>
             </div>
           {% endif %}
-          {# User episode rating chip — always-present slot so it can be OOB-swapped
-             into place on first watch without a page refresh. #}
+          {# User episode rating chip — always-present slot so it can be OOB-swapped into place on first watch without a page refresh. #}
           {% if not public_view and episode %}
             {% include "app/components/detail_episode_rating_chip.html" with episode=episode current_instance=current_instance episode_number=episode_number user=user csrf_token=csrf_token source=source media_id=media_id season_number=season_number public_view=public_view %}
           {% endif %}

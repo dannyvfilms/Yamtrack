@@ -1,12 +1,6 @@
 {% load app_tags %}
 
-{# Hero variant of the episode track button used on the standalone episode page.
-
-   The wrapper id is keyed on the stable source/media/season/episode identifiers
-   (NOT episode.item.id) so that episode_save can target it with an OOB swap even
-   on the very first watch, when no episode Item exists yet. The enclosing
-   x-data="{ trackOpen: false }" scope and the track modal live in the parent
-   template, so only this button is replaced on swap. #}
+{# Hero variant of the episode track button used on the standalone episode page. The wrapper id is keyed on the stable source/media/season/episode identifiers (NOT episode.item.id) so that episode_save can target it with an OOB swap even on the very first watch, when no episode Item exists yet. The enclosing x-data="{ trackOpen: false }" scope and the track modal live in the parent template, so only this button is replaced on swap. #}
 <div id="episode-track-button-{{ source }}-{{ media_id }}-{{ season_number }}-{{ episode_number }}"
      {% if track_button_oob %}hx-swap-oob="true"{% endif %}>
   <button type="button"

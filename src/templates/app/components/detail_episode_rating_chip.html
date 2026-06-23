@@ -1,13 +1,7 @@
 {% load app_tags %}
 {% load user_tags %}
 
-{# Always-present rating-chip slot for the standalone episode page.
-
-   The wrapper div is rendered even when the user has no watch history yet (it is
-   simply empty), so episode_save can OOB-swap the populated chip in on the first
-   watch without a page reload. `class="contents"` keeps the wrapper out of the
-   flex layout. The inner chip is only rendered once history + a season instance
-   exist. #}
+{# Always-present rating-chip slot for the standalone episode page. The wrapper div is rendered even when the user has no watch history yet (it is simply empty), so episode_save can OOB-swap the populated chip in on the first watch without a page reload. `class="contents"` keeps the wrapper out of the flex layout. The inner chip is only rendered once history + a season instance exist. #}
 <div id="episode-rating-chip-{{ source }}-{{ media_id }}-{{ season_number }}-{{ episode_number }}"
      {% if rating_chip_oob %}hx-swap-oob="true"{% endif %}
      class="contents">
@@ -30,11 +24,13 @@
           {% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 sm:h-4 sm:w-4" %}
         </span>
         <span class="inline-flex items-center gap-1 sm:gap-2">
-          <span class="text-[12px] font-semibold text-white sm:text-sm {% if ep_score is None %}hidden{% endif %}"
-                :class="rating ? '' : 'hidden'"
+          <span class="text-[12px] font-semibold text-white sm:text-sm"
+                x-cloak
+                x-show="rating"
                 x-text="formatRating(rating)">{% if ep_score is not None %}{{ ep_score|score_display:user }}{% endif %}</span>
-          <span class="text-[12px] text-gray-500 sm:text-sm {% if ep_score is None %}hidden{% endif %}"
-                :class="rating ? '' : 'hidden'">|</span>
+          <span class="text-[12px] text-gray-500 sm:text-sm"
+                x-cloak
+                x-show="rating">|</span>
           <span class="text-[12px] font-medium text-gray-200 sm:text-sm"
                 x-text="rating ? 'Edit rating' : 'Add rating'">{% if ep_score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
         </span>
