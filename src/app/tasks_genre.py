@@ -174,11 +174,17 @@ def _tmdb_tv_item_is_tvdb_anime(item: Item, tmdb_metadata: dict | None) -> bool:
     if not tvdb_id:
         return False
 
-    tvdb_metadata_result = services.get_media_metadata(
-        MediaTypes.TV.value,
-        tvdb_id,
-        Sources.TVDB.value,
-    )
+    from app.providers.services import ProviderAPIError  # noqa: PLC0415
+
+    tvdb_metadata_result = None
+    try:
+        tvdb_metadata_result = services.get_media_metadata(
+            MediaTypes.TV.value,
+            tvdb_id,
+            Sources.TVDB.value,
+        )
+    except ProviderAPIError:
+        pass
 
     if not isinstance(tvdb_metadata_result, dict):
         healed_id = _resolve_tvdb_id_via_imdb(tmdb_metadata, stale_tvdb_id=tvdb_id)
