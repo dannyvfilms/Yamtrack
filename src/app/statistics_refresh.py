@@ -37,6 +37,7 @@ from app.statistics_cache import (
     STATISTICS_WARM_DAYS,
     _cache_key,
     _collect_stale_reading_score_days,
+    _dirty_days_key,
     _get_empty_statistics_data,
     _get_history_version,
     _load_dirty_days,
@@ -115,6 +116,39 @@ def _build_predefined_range_from_day_caches(user, start_date, end_date, range_na
         range_name,
     )
     return data
+
+
+def invalidate_all_statistics_days(user_id: int, reason: str | None = None) -> int:
+    """Remove all warmed per-day statistics caches for a user."""
+    user_model = get_user_model()
+    try:
+        user = user_model.objects.get(id=user_id)
+    except user_model.DoesNotExist:
+        return 0
+
+    bounds = _get_activity_bounds(user)
+    day_keys = []
+    if bounds:
+        start_day = min(bounds)
+        end_day = max(bounds)
+        for day in _iter_day_range(start_day, end_day):
+            key = _day_cache_key(user_id, day)
+            if key:
+                day_keys.append(key)
+
+    if day_keys:
+        cache.delete_many(day_keys)
+
+    cache.delete(_dirty_days_key(user_id))
+    _set_history_version(user_id)
+
+    logger.info(
+        "stats_day_invalidate_all user_id=%s days=%s reason=%s",
+        user_id,
+        len(day_keys),
+        reason or "unspecified",
+    )
+    return len(day_keys)
 
 
 def invalidate_statistics_cache(user_id: int, range_name: str = None):
@@ -628,4 +662,3 @@ def schedule_all_ranges_refresh(
             allow_inline=False,
             priority=all_time_priority,
         )
-

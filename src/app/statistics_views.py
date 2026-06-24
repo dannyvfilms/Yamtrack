@@ -633,6 +633,10 @@ def refresh_statistics(request):
     if range_name not in statistics_cache.PREDEFINED_RANGES:
         return JsonResponse({"error": "Invalid range_name"}, status=400)
 
+    statistics_cache.invalidate_all_statistics_days(
+        request.user.id,
+        reason=f"manual_statistics_refresh:{range_name}",
+    )
     statistics_cache.invalidate_statistics_cache(request.user.id, range_name)
     statistics_cache.schedule_statistics_refresh(
         request.user.id,
@@ -765,6 +769,10 @@ def update_statistics_preferences(request):
     if fields_to_update:
         request.user.save(update_fields=fields_to_update)
         if invalidate_cache:
+            statistics_cache.invalidate_all_statistics_days(
+                request.user.id,
+                reason="statistics_preferences_changed",
+            )
             statistics_cache.invalidate_statistics_cache(request.user.id)
             statistics_cache.schedule_all_ranges_refresh(
                 request.user.id,

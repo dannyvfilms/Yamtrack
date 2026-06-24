@@ -879,6 +879,7 @@ from app.statistics_refresh import (  # noqa: E402
     _get_predefined_range_dates,
     _get_sparse_activity_days,
     _has_covering_range_cache,
+    invalidate_all_statistics_days,
     _range_cache_covers_days,
     _range_day_bounds,
     _resolve_day_list,

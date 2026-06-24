@@ -2997,8 +2997,10 @@ class StatisticsViewTests(TestCase):
 
     @patch("app.statistics_cache.schedule_all_ranges_refresh")
     @patch("app.statistics_cache.invalidate_statistics_cache")
+    @patch("app.statistics_cache.invalidate_all_statistics_days")
     def test_update_statistics_preferences_saves_tv_anime_split_and_invalidates_cache(
         self,
+        mock_invalidate_all_days,
         mock_invalidate_cache,
         mock_schedule_refresh,
     ):
@@ -3013,10 +3015,45 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.user.refresh_from_db()
         self.assertTrue(self.user.stats_split_tv_anime)
+        mock_invalidate_all_days.assert_called_once_with(
+            self.user.id,
+            reason="statistics_preferences_changed",
+        )
         mock_invalidate_cache.assert_called_once_with(self.user.id)
         mock_schedule_refresh.assert_called_once_with(
             self.user.id,
             debounce_seconds=0,
+        )
+
+    @patch("app.views.statistics_cache.schedule_statistics_refresh")
+    @patch("app.views.statistics_cache.invalidate_statistics_cache")
+    @patch("app.views.statistics_cache.invalidate_all_statistics_days")
+    def test_refresh_statistics_clears_day_caches_before_scheduling_range_refresh(
+        self,
+        mock_invalidate_all_days,
+        mock_invalidate_cache,
+        mock_schedule_refresh,
+    ):
+        """Manual statistics refresh should force a full day-cache reset for the range."""
+        response = self.client.post(
+            reverse("refresh_statistics"),
+            {"range_name": "This Year"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        mock_invalidate_all_days.assert_called_once_with(
+            self.user.id,
+            reason="manual_statistics_refresh:This Year",
+        )
+        mock_invalidate_cache.assert_called_once_with(self.user.id, "This Year")
+        mock_schedule_refresh.assert_called_once_with(
+            self.user.id,
+            "This Year",
+            debounce_seconds=0,
+            countdown=0,
+            allow_inline=True,
         )
 
     def test_get_user_media_splits_tvdb_tagged_tv_into_anime_bucket(self):
