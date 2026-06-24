@@ -246,7 +246,7 @@ class LastFMTaskTests(TestCase):
         self.assertIn("Continuing with page 6 of 12", result["message"])
         mock_delay.assert_called_once_with(user_id=self.user.id, reset=False)
 
-    @patch("integrations.tasks._enqueue_lastfm_music_enrichment")
+    @patch("integrations.tasks._lastfm._enqueue_lastfm_music_enrichment")
     @patch("integrations.lastfm_sync.sync_lastfm_account")
     def test_import_lastfm_history_completes_without_mutating_incremental_cursor(
         self,

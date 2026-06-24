@@ -55,10 +55,10 @@ class CollectionUpdateModeTest(TestCase):
                 status=Status.COMPLETED.value,
             )
 
-    @patch("integrations.tasks.plex_api.list_resources")
-    @patch("integrations.tasks.plex_api.fetch_history")
-    @patch("integrations.tasks.plex_api.fetch_metadata")
-    @patch("integrations.tasks.extract_collection_metadata_from_plex")
+    @patch("integrations.tasks._plex_collection.plex_api.list_resources")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_history")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_metadata")
+    @patch("integrations.tasks._plex_collection.extract_collection_metadata_from_plex")
     def test_update_collection_metadata_from_plex(
         self,
         mock_extract,

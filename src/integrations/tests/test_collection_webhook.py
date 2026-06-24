@@ -30,8 +30,8 @@ class CollectionWebhookTest(TestCase):
             image="http://example.com/image.jpg",
         )
 
-    @patch("integrations.tasks.plex_api.fetch_metadata")
-    @patch("integrations.tasks.extract_collection_metadata_from_plex")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_metadata")
+    @patch("integrations.tasks._plex_collection.extract_collection_metadata_from_plex")
     def test_update_collection_metadata_from_plex_webhook(self, mock_extract, mock_fetch):
         """Test collection metadata update from Plex webhook task."""
         # Mock Plex metadata response
@@ -114,9 +114,9 @@ class CollectionWebhookTest(TestCase):
                 "test_token",
             )
 
-    @patch("integrations.tasks.logger.warning")
-    @patch("integrations.tasks.plex_api.fetch_section_all_items")
-    @patch("integrations.tasks.plex_api.list_resources")
+    @patch("integrations.tasks._plex_collection.logger.warning")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_section_all_items")
+    @patch("integrations.tasks._plex_collection.plex_api.list_resources")
     def test_fetch_collection_metadata_timeout_logs_without_traceback(
         self,
         mock_list_resources,
@@ -159,7 +159,7 @@ class CollectionWebhookTest(TestCase):
         self.assertTrue(matching_calls)
         self.assertNotIn("exc_info", matching_calls[0].kwargs)
 
-    @patch("integrations.tasks.plex_api.fetch_section_all_items")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_section_all_items")
     def test_fetch_collection_metadata_cached_only_uses_item_lookup(
         self,
         mock_fetch_section_all_items,
@@ -192,10 +192,10 @@ class CollectionWebhookTest(TestCase):
         )
         mock_fetch_section_all_items.assert_not_called()
 
-    @patch("integrations.tasks.plex_api.fetch_section_all_items")
-    @patch("integrations.tasks.plex_api.list_resources")
-    @patch("integrations.tasks.plex_api.fetch_metadata")
-    @patch("integrations.tasks.update_collection_metadata_from_plex_webhook")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_section_all_items")
+    @patch("integrations.tasks._plex_collection.plex_api.list_resources")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_metadata")
+    @patch("integrations.tasks._plex_collection.update_collection_metadata_from_plex_webhook")
     def test_fetch_collection_metadata_cached_only_uses_episode_derived_show_key(
         self,
         mock_update_collection,
@@ -254,10 +254,10 @@ class CollectionWebhookTest(TestCase):
         mock_list_resources.assert_not_called()
         mock_fetch_section_all_items.assert_not_called()
 
-    @patch("integrations.tasks.plex_api.fetch_section_all_items")
-    @patch("integrations.tasks.plex_api.list_sections")
-    @patch("integrations.tasks.plex_api.list_resources")
-    @patch("integrations.tasks.update_collection_metadata_from_plex_webhook")
+    @patch("integrations.tasks._plex_collection.plex_api.fetch_section_all_items")
+    @patch("integrations.tasks._plex_collection.plex_api.list_sections")
+    @patch("integrations.tasks._plex_collection.plex_api.list_resources")
+    @patch("integrations.tasks._plex_collection.update_collection_metadata_from_plex_webhook")
     def test_fetch_collection_metadata_cached_only_skips_library_enumeration_when_uncached(
         self,
         mock_update_collection,

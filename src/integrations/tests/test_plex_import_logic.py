@@ -1301,8 +1301,8 @@ class TestPlexPostImportSideEffects(TestCase):
 
     @patch("integrations.tasks.update_collection_metadata_from_plex.apply_async")
     @patch("app.statistics_cache.schedule_all_ranges_refresh")
-    @patch("integrations.tasks.history_cache.invalidate_history_cache")
-    @patch("integrations.tasks.events.tasks.reload_calendar.delay")
+    @patch("integrations.tasks._media_imports.history_cache.invalidate_history_cache")
+    @patch("integrations.tasks._media_imports.events.tasks.reload_calendar.delay")
     @patch("integrations.imports.plex.importer")
     def test_plex_import_schedules_history_statistics_and_collection_refresh(
         self,
