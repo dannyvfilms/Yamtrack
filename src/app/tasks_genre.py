@@ -284,6 +284,53 @@ def _populate_genres_for_items(items, delay_seconds):
     return updated_count, error_count
 
 
+def populate_genres_for_item_sync(item: Item, metadata: dict) -> None:
+    """Synchronously populate genres for a single TMDB TV item during a manual refresh.
+
+    Runs the full pipeline inline (including TVDB anime check + ID healing) so
+    the corrected genres are persisted before the page reloads. Errors are caught
+    and logged rather than raised so they don't abort the surrounding sync.
+    """
+    from app.providers import tvdb  # noqa: PLC0415
+
+    source_genres = metadata_utils.extract_metadata_genres(metadata)
+    incoming_genres = source_genres or metadata_utils.normalize_genres(item.genres)
+    if not incoming_genres:
+        logger.warning("populate_genres_for_item_sync: no genres for %s", item.title)
+        return
+
+    add_anime = False
+    strategy_version = GENRE_BACKFILL_VERSION
+    if tvdb.enabled():
+        try:
+            add_anime = _tmdb_tv_item_is_tvdb_anime(item, metadata)
+        except Exception as exc:
+            logger.warning(
+                "populate_genres_for_item_sync tvdb_check_failed item_id=%s error=%s",
+                item.id,
+                exception_summary(exc),
+            )
+            strategy_version = None
+    else:
+        strategy_version = None
+
+    genre_update_fields = metadata_utils.apply_item_genres(
+        item,
+        incoming_genres,
+        add_anime=add_anime,
+    )
+    if genre_update_fields:
+        with transaction.atomic():
+            item.save(update_fields=genre_update_fields)
+        logger.info(
+            "populate_genres_for_item_sync updated item_id=%s genres=%s",
+            item.id,
+            item.genres,
+        )
+
+    _record_backfill_success(item, MetadataBackfillField.GENRES, strategy_version=strategy_version)
+
+
 def enqueue_genre_backfill_items(item_ids, countdown=10):
     normalized = _normalize_item_ids(item_ids)
     normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.GENRES)

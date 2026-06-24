@@ -1229,10 +1229,8 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         )
 
         if source == Sources.TMDB.value and tracking_media_type == MediaTypes.TV.value:
-            from app.tasks_backfill_state import _reset_genre_backfill_state  # noqa: PLC0415
-            from app.tasks_genre import enqueue_genre_backfill_items  # noqa: PLC0415
-            _reset_genre_backfill_state(item)
-            enqueue_genre_backfill_items([item.id])
+            from app.tasks_genre import populate_genres_for_item_sync  # noqa: PLC0415
+            populate_genres_for_item_sync(item, metadata)
 
         preferred_provider = metadata_resolution.get_preferred_provider(
             request.user,
