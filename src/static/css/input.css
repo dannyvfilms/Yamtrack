@@ -60,7 +60,7 @@
 }
 
 .track-release-shortcut-mobile-label {
-  display: inline;
+  display: none;
 }
 
 .track-release-shortcut-desktop-label {

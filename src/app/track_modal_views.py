@@ -407,6 +407,9 @@ def _render_standard_track_modal(
             user=request.user,
         )
 
+    notes_value = (media.notes or "") if media and hasattr(media, "notes") else ""
+    notes_count = len([line for line in notes_value.split("\n") if line.strip()])
+
     hidden_field_names = {
         "instance_id",
         "media_type",
@@ -613,6 +616,7 @@ def _render_standard_track_modal(
         "track_form_id": track_form_id,
         "track_action_update": track_action_update,
         "initial_active_tab": initial_active_tab,
+        "notes_count": notes_count,
         "episode_plays_tab_available": episode_plays_tab_available,
         "episode_plays_form": episode_plays_form,
         "episode_plays_formaction": reverse("episode_bulk_save"),

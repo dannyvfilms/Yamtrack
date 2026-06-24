@@ -3,56 +3,56 @@
 <div class="bg-[#262a2f] rounded-xl shadow-2xl overflow-hidden"
      data-track-modal-root
      x-data="{ activeTab: '{{ initial_active_tab|default:"general" }}' }">
-  <div class="flex items-center justify-between px-7 py-4 bg-[#2a2f35] border-b border-[#2c3136]">
+  <div class="flex items-center justify-between px-5 py-3 sm:px-7 sm:py-4 bg-[#2a2f35] border-b border-[#2c3136]">
     <div>
-      <h2 class="text-xl md:text-2xl font-bold text-white line-clamp-2">{{ title }}</h2>
+      <h2 class="text-lg sm:text-xl md:text-2xl font-bold text-white line-clamp-2">{{ title }}</h2>
     </div>
     <button type="button"
             class="text-gray-400 hover:text-white cursor-pointer shrink-0"
             @click="closeTrackModal($el)">{% include "app/icons/x.svg" with classes="w-5 h-5" %}</button>
   </div>
 
-  <div class="flex flex-col sm:flex-row min-h-[36rem]">
-    <aside class="sm:w-56 shrink-0 bg-[#20252c] border-b sm:border-b-0 sm:border-r border-[#2c3136]">
-      <nav class="flex flex-col gap-1 p-3">
+  <div class="flex flex-col sm:flex-row sm:min-h-[36rem]">
+    <aside class="bg-[#20252c] border-b sm:border-b-0 sm:border-r border-[#2c3136] sm:w-56 shrink-0">
+      <nav class="flex flex-row sm:flex-col sm:gap-1 p-2 sm:p-3">
         <button type="button"
                 @click="activeTab = 'general'"
-                class="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-left transition-colors cursor-pointer"
-                :class="activeTab === 'general' ? 'bg-[#2c3136] text-white' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
-          {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-          <span class="font-medium">General</span>
+                class="flex flex-1 sm:flex-none items-center justify-center sm:justify-start gap-2 sm:gap-3 px-3 py-2 sm:px-4 sm:py-3 w-full rounded-lg text-left transition-colors cursor-pointer"
+                :class="activeTab === 'general' ? 'text-white bg-[#2c3136]' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
+          {% include "app/icons/edit.svg" with classes="w-4 h-4 sm:w-5 sm:h-5 shrink-0" %}
+          <span class="font-medium text-xs sm:text-sm">General</span>
         </button>
         {% if metadata_tab_available %}
           <button type="button"
                   @click="activeTab = 'metadata'"
-                  class="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-left transition-colors cursor-pointer"
-                  :class="activeTab === 'metadata' ? 'bg-[#2c3136] text-white' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
-            {% include "app/icons/database.svg" with classes="w-5 h-5 shrink-0" %}
-            <span class="font-medium">Metadata</span>
+                  class="flex flex-1 sm:flex-none items-center justify-center sm:justify-start gap-2 sm:gap-3 px-3 py-2 sm:px-4 sm:py-3 w-full rounded-lg text-left transition-colors cursor-pointer"
+                  :class="activeTab === 'metadata' ? 'text-white bg-[#2c3136]' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
+            {% include "app/icons/database.svg" with classes="w-4 h-4 sm:w-5 sm:h-5 shrink-0" %}
+            <span class="font-medium text-xs sm:text-sm">Metadata</span>
           </button>
         {% endif %}
         {% if episode_plays_tab_available %}
           <button type="button"
                   @click="activeTab = 'episode-plays'"
-                  class="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-left transition-colors cursor-pointer"
-                  :class="activeTab === 'episode-plays' ? 'bg-[#2c3136] text-white' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
-            {% include "app/icons/history.svg" with classes="w-5 h-5 shrink-0" %}
-            <span class="font-medium">{{ episode_plays_tab_label|default:"Episode Plays" }}</span>
+                  class="flex flex-1 sm:flex-none items-center justify-center sm:justify-start gap-2 sm:gap-3 px-3 py-2 sm:px-4 sm:py-3 w-full rounded-lg text-left transition-colors cursor-pointer"
+                  :class="activeTab === 'episode-plays' ? 'text-white bg-[#2c3136]' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
+            {% include "app/icons/history.svg" with classes="w-4 h-4 sm:w-5 sm:h-5 shrink-0" %}
+            <span class="font-medium text-xs sm:text-sm">{{ episode_plays_tab_label|default:"Episode Plays" }}</span>
           </button>
         {% endif %}
         {% if discover_tab_available %}
           <button type="button"
                   @click="activeTab = 'discover'"
-                  class="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-left transition-colors cursor-pointer"
-                  :class="activeTab === 'discover' ? 'bg-[#2c3136] text-white' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
-            {% include "app/icons/eye.svg" with classes="w-5 h-5 shrink-0" %}
-            <span class="font-medium">Discover</span>
+                  class="flex flex-1 sm:flex-none items-center justify-center sm:justify-start gap-2 sm:gap-3 px-3 py-2 sm:px-4 sm:py-3 w-full rounded-lg text-left transition-colors cursor-pointer"
+                  :class="activeTab === 'discover' ? 'text-white bg-[#2c3136]' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
+            {% include "app/icons/eye.svg" with classes="w-4 h-4 sm:w-5 sm:h-5 shrink-0" %}
+            <span class="font-medium text-xs sm:text-sm">Discover</span>
           </button>
         {% endif %}
       </nav>
     </aside>
 
-    <div class="flex-1 min-w-0 p-5 md:p-6 overflow-y-auto bg-[#262a2f]">
+    <div class="flex-1 min-w-0 p-4 sm:p-5 md:p-6 overflow-y-auto bg-[#262a2f]">
           <section x-show="activeTab === 'general'" x-cloak>
             <form id="{{ track_form_id }}"
                   method="post"
@@ -69,19 +69,28 @@
             {{ hidden_field }}
           {% endfor %}
 
-          {% if general_fields|length > 1 %}<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4">{% endif %}
+          {% if general_fields|length > 1 %}<div class="grid grid-cols-2 gap-x-4">{% endif %}
             {% for field in general_fields %}
-              <div class="mb-5">
-                <label class="block text-sm font-medium mb-1 text-gray-300"
-                       for="{{ field.id_for_label }}">{{ field.label }}</label>
+              <div class="mb-4 sm:mb-5 {% if field.name == 'progress' or field.name == 'start_date' or field.name == 'end_date' %}col-span-2 sm:col-span-1{% endif %}">
+                {% if field.name == "start_date" %}
+                  <label class="block text-xs font-medium mb-1 text-gray-300 sm:hidden">Dates</label>
+                  <label class="hidden sm:block text-sm font-medium mb-1 text-gray-300"
+                         for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {% elif field.name == "end_date" %}
+                  <label class="hidden sm:block text-sm font-medium mb-1 text-gray-300"
+                         for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {% else %}
+                  <label class="block text-xs sm:text-sm font-medium mb-1 text-gray-300"
+                         for="{{ field.id_for_label }}">{{ field.label }}</label>
+                {% endif %}
                 <div class="relative flex items-stretch">
                   {% if field.name == "status" %}
-                    {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none" }}
+                    {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none" }}
                     <div class="absolute inset-y-0 right-2 flex items-center pointer-events-none">
                       {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
                     </div>
                   {% elif field.field.widget.input_type == 'number' %}
-                    {{ field|add_class:"w-full p-2 pr-12 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" }}
+                    {{ field|add_class:"w-full p-2 pr-12 bg-[#39404b] rounded-md text-white text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" }}
                     <div class="absolute inset-y-0 right-0 flex flex-col border-l border-gray-600">
                       <button type="button"
                               class="flex-1 px-2 hover:bg-gray-700 transition-colors rounded-tr-md border-t border-r border-gray-600"
@@ -97,7 +106,8 @@
                   {% elif field.name == "start_date" or field.name == "end_date" %}
                     {% if release_date_shortcut %}
                       <div class="flex-1 flex items-stretch border border-gray-600 rounded-md bg-[#39404b] focus-within:ring-2 focus-within:ring-[#4a9eff]">
-                        {{ field|add_class:"flex-1 p-2 bg-transparent border-0 outline-none text-white text-sm" }}
+                        <span class="sm:hidden text-xs text-gray-400 pl-2 pr-1 flex items-center whitespace-nowrap">{% if field.name == "start_date" %}Start:{% else %}End:{% endif %}</span>
+                        {{ field|add_class:"flex-1 p-2 bg-transparent border-0 outline-none text-white text-sm min-w-0" }}
                         <div class="w-px bg-gray-600 self-stretch my-1"></div>
                         <button type="button"
                                 onclick="clearTrackModalDate(this, '{{ field.name }}')"
@@ -116,7 +126,8 @@
                       </div>
                     {% else %}
                       <div class="flex-1 flex items-stretch border border-gray-600 rounded-md bg-[#39404b] focus-within:ring-2 focus-within:ring-[#4a9eff]">
-                        {{ field|add_class:"flex-1 p-2 bg-transparent border-0 outline-none text-white text-sm" }}
+                        <span class="sm:hidden text-xs text-gray-400 pl-2 pr-1 flex items-center whitespace-nowrap">{% if field.name == "start_date" %}Start:{% else %}End:{% endif %}</span>
+                        {{ field|add_class:"flex-1 p-2 bg-transparent border-0 outline-none text-white text-sm min-w-0" }}
                         <div class="w-px bg-gray-600 self-stretch my-1"></div>
                         <button type="button"
                                 onclick="clearTrackModalDate(this, '{{ field.name }}')"
@@ -127,7 +138,7 @@
                       </div>
                     {% endif %}
                   {% else %}
-                    {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                    {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
                   {% endif %}
                 </div>
               </div>
@@ -135,7 +146,33 @@
           {% if general_fields|length > 1 %}</div>{% endif %}
 
           {% if form.notes %}
-            {% include "app/components/markdown_notes.html" with notes_field=form.notes only %}
+            <div class="mb-4 sm:mb-5" x-data="{ notesOpen: false }">
+              <label class="sm:hidden block text-xs font-medium mb-1 text-gray-300">Notes</label>
+              <button type="button"
+                      @click="notesOpen = !notesOpen"
+                      class="sm:hidden w-full flex items-center gap-3 p-3 bg-[#39404b] rounded-md border border-gray-600 hover:bg-[#454d5a] transition-colors text-left cursor-pointer">
+                <div class="flex-shrink-0 w-9 h-9 bg-indigo-700/30 rounded-md flex items-center justify-center">
+                  {% include "app/icons/page.svg" with classes="w-5 h-5 text-indigo-400" %}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-white">Notes</div>
+                  <div class="text-xs text-gray-400">
+                    {% if notes_count > 0 %}
+                      {{ notes_count }} note{{ notes_count|pluralize }} added
+                    {% else %}
+                      Tap to add or view notes
+                    {% endif %}
+                  </div>
+                </div>
+                <span :class="notesOpen ? 'rotate-180' : ''" class="transition-transform shrink-0">
+                  {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
+                </span>
+              </button>
+
+              <div x-show="notesOpen" x-cloak class="sm:!block mt-2 sm:mt-0">
+                {% include "app/components/markdown_notes.html" with notes_field=form.notes only %}
+              </div>
+            </div>
           {% endif %}
 
           <div class="flex flex-row-reverse justify-between mt-6">
