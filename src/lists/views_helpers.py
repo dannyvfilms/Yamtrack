@@ -5,6 +5,7 @@ Nothing in this module handles HTTP requests directly — all symbols are
 pure helpers called by views in views.py (and its submodules).
 """
 
+import datetime
 import logging
 
 from django.apps import apps
@@ -12,7 +13,7 @@ from django.conf import settings
 from django.db.models import Count, F, Q
 from django.urls import reverse
 
-from app.models import Item, MediaTypes
+from app.models import Item, MediaManager, MediaTypes
 from app.providers import services
 from integrations.imports import helpers as import_helpers
 from integrations.models import TraktAccount
@@ -510,3 +511,119 @@ def _get_trakt_credentials(user):
         )
         return None
     return client_id, client_secret
+
+
+# ---------------------------------------------------------------------------
+# Media aggregation helpers (shared by smart-list and regular-list detail views)
+# ---------------------------------------------------------------------------
+
+
+def _attach_media_with_aggregation(item_list, media_user):
+    """Attach `.media` to each item in item_list using the given user's library data.
+
+    Uses the smart-list version of Episode normalization so that Episode entries
+    expose `status`, `score`, `progress`, and `max_progress` compatible with list
+    card templates.
+    """
+    media_by_item_id = {}
+    media_types_in_items = {item.media_type for item in item_list}
+    media_manager = MediaManager()
+
+    for media_type in media_types_in_items:
+        model = apps.get_model("app", media_type)
+        item_ids = [item.id for item in item_list if item.media_type == media_type]
+        if not item_ids:
+            continue
+
+        if media_type == MediaTypes.EPISODE.value:
+            filter_kwargs = {
+                "item_id__in": item_ids,
+                "related_season__user": media_user,
+            }
+        else:
+            filter_kwargs = {
+                "item_id__in": item_ids,
+                "user": media_user,
+            }
+
+        select_related_fields = ["item"]
+        if media_type == MediaTypes.EPISODE.value:
+            select_related_fields.extend(
+                [
+                    "related_season",
+                    "related_season__item",
+                    "related_season__related_tv",
+                    "related_season__related_tv__item",
+                ],
+            )
+        queryset = model.objects.filter(**filter_kwargs).select_related(*select_related_fields)
+        queryset = media_manager._apply_prefetch_related(queryset, media_type)
+        media_manager.annotate_max_progress(queryset, media_type)
+
+        entries_by_item = {}
+        for entry in queryset:
+            if media_type == MediaTypes.EPISODE.value:
+                # Episode does not inherit Media; expose compatible fields for list templates.
+                if not hasattr(entry, "status"):
+                    entry.status = getattr(entry.related_season, "status", None)
+                if not hasattr(entry, "score"):
+                    entry.score = None
+                if not hasattr(entry, "progress"):
+                    entry.progress = entry.item.episode_number
+                if not hasattr(entry, "max_progress"):
+                    entry.max_progress = getattr(entry.related_season, "max_progress", None)
+            entries_by_item.setdefault(entry.item_id, []).append(entry)
+
+        for item_id, entries in entries_by_item.items():
+            entries.sort(key=lambda entry: entry.created_at, reverse=True)
+            display_media = entries[0]
+            if len(entries) > 1:
+                media_manager._aggregate_item_data(display_media, entries)
+            media_by_item_id[item_id] = display_media
+
+    for item in item_list:
+        item.media = media_by_item_id.get(item.id)
+    _attach_list_card_overrides(item_list)
+
+
+def _rating_value(media):
+    if not media:
+        return -1
+    aggregated_score = getattr(media, "aggregated_score", None)
+    if aggregated_score is not None:
+        return aggregated_score
+    score = getattr(media, "score", None)
+    if score is not None:
+        return score
+    return -1
+
+
+def _progress_value(media):
+    if not media:
+        return -1
+    aggregated_progress = getattr(media, "aggregated_progress", None)
+    if aggregated_progress is not None:
+        return aggregated_progress
+    progress = getattr(media, "progress", None)
+    if progress is not None:
+        return progress
+    return -1
+
+
+def _media_date_value(media, attr_name):
+    if not media:
+        return None
+    aggregated_value = getattr(media, f"aggregated_{attr_name}", None)
+    if aggregated_value is not None:
+        return aggregated_value
+    return getattr(media, attr_name, None)
+
+
+def _date_sort_value(value, direction):
+    if value is None:
+        return float("inf") if direction == "asc" else float("-inf")
+    if isinstance(value, datetime.datetime):
+        return value.timestamp()
+    if isinstance(value, datetime.date):
+        return datetime.datetime.combine(value, datetime.time.min).timestamp()
+    return float("inf") if direction == "asc" else float("-inf")
