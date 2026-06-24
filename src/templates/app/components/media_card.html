@@ -184,8 +184,13 @@
                     {% if ep_status == Status.IN_PROGRESS.value %}
                       {% next_episode_url item media as next_ep_href %}
                       {% if next_ep_href %}
+                        {# No hx-boost: this link lives inside the home row's
+                           hx-target="this"/hx-swap="beforeend" scroll container,
+                           and a boosted link would inherit those attributes and
+                           swap the episode page into the row instead of
+                           navigating. A plain link navigates normally. #}
                         <a href="{{ next_ep_href }}"
-                           hx-boost="true"
+                           hx-disable
                            class="absolute top-2 right-2 z-20 bg-gray-900/90 hover:bg-indigo-600 text-white text-[11px] font-medium px-2 py-1 rounded-md flex items-center gap-0.5 shadow-md transition-colors"
                            title="Jump to next episode">
                           {% include "app/icons/chevron-right.svg" with classes="w-3 h-3" %}
