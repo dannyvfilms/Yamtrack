@@ -195,6 +195,8 @@ def _tmdb_tv_item_is_tvdb_anime(item: Item, tmdb_metadata: dict | None) -> bool:
                 tvdb_id,
                 Sources.TVDB.value,
             )
+            from app.providers import tmdb as tmdb_provider  # noqa: PLC0415
+            tmdb_provider.set_tvdb_id_override(item.media_id, healed_id)
 
     if not isinstance(tvdb_metadata_result, dict):
         msg = "no tvdb metadata"
