@@ -482,6 +482,15 @@
           else if (status === 'Dropped') parts.push('Dropped');
           else parts.push('Library');
 
+          if (section.media_type === 'music') {
+            const subview = row.filters?.subview || 'tracks';
+            const subviewField = (section.filter_fields || []).find(field => field.key === 'subview');
+            const subviewOption = (subviewField?.options || []).find(option => option.value === subview);
+            const subviewLabel = subviewOption ? subviewOption.label : subview;
+            if (parts[0] === 'Library') parts[0] = subviewLabel;
+            else parts.splice(1, 0, subviewLabel);
+          }
+
           const labelFor = (key, value) => {
             const field = (section.filter_fields || []).find(candidate => candidate.key === key);
             if (!field) return value;
@@ -557,6 +566,7 @@
           const defaults = this.defaultFilters(section, 'library_query');
           for (const [key, value] of Object.entries(defaults)) {
             if (key === 'status') continue;
+            if (key === 'subview') continue;
             row.filters[key] = value;
           }
         },
@@ -593,7 +603,7 @@
         },
         defaultFilters(section, rowType) {
           if (rowType !== 'library_query') return {};
-          return {
+          const defaults = {
             status: 'In progress',
             progress: ['tv', 'anime'].includes(section.media_type) ? 'not_caught_up' : 'all',
             rating: 'all',
@@ -611,6 +621,8 @@
             tag: '',
             tag_exclude: ''
           };
+          if (section.media_type === 'music') defaults.subview = 'tracks';
+          return defaults;
         },
         removeRow(section, clientId) {
           section.rows = section.rows.filter(row => row.client_id !== clientId);
