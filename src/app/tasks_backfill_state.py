@@ -114,6 +114,20 @@ def _record_backfill_success(
     state.save(update_fields=update_fields)
 
 
+def _reset_genre_backfill_state(item: Item) -> None:
+    """Clear any genre backfill block so the item is eligible for reprocessing."""
+    MetadataBackfillState.objects.filter(
+        item=item,
+        field=MetadataBackfillField.GENRES,
+    ).update(
+        give_up=False,
+        fail_count=0,
+        next_retry_at=None,
+        last_success_at=None,
+        last_error="",
+    )
+
+
 def _filter_backfill_item_ids(item_ids, field: str):
     if not item_ids:
         return []

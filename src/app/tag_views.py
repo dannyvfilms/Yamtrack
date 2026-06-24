@@ -26,8 +26,15 @@ def _detail_request_url(request, *, fragment: str | None = None) -> str:
 
 
 def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
-    """Return detail-page genres sourced from metadata, request state, or stored item data."""
-    genres = []
+    """Return detail-page genres sourced from stored item data, request state, or metadata.
+
+    Priority: fallback_genres (in-progress edits) → item.genres (backfill-enriched) →
+    metadata genres (live API, may lack provider-specific tags like Anime).
+    """
+    if fallback_genres:
+        return stats._coerce_genre_list(fallback_genres)
+    if item is not None and item.genres:
+        return list(item.genres)
     if isinstance(media_metadata, dict):
         details = media_metadata.get("details")
         genres = stats._coerce_genre_list(
@@ -36,11 +43,9 @@ def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
             or media_metadata.get("genre")
             or (details.get("genre") if isinstance(details, dict) else None),
         )
-    if not genres and fallback_genres:
-        genres = stats._coerce_genre_list(fallback_genres)
-    if not genres and item is not None:
-        genres = list(item.genres or [])
-    return genres
+        if genres:
+            return genres
+    return []
 
 
 def _resolve_detail_tag_implied_genres(

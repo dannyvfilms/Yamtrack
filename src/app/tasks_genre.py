@@ -119,6 +119,49 @@ def _resolve_tmdb_tv_item_tvdb_id(item: Item, tmdb_metadata: dict | None) -> str
     return str(tvdb_id) if tvdb_id else None
 
 
+def _resolve_tvdb_id_via_imdb(
+    tmdb_metadata: dict | None,
+    *,
+    stale_tvdb_id: str | None = None,
+) -> str | None:
+    """Return a TVDB series ID found via IMDb remote-ID lookup, or None.
+
+    Used as a fallback when the stored TVDB ID is stale/wrong and the direct
+    fetch returns 404. The existing upsert_provider_links call in the caller
+    will persist the corrected ID automatically.
+    """
+    import re  # noqa: PLC0415
+    from app.providers import tvdb  # noqa: PLC0415
+
+    imdb_link = ((tmdb_metadata or {}).get("external_links") or {}).get("IMDb", "")
+    if not imdb_link:
+        return None
+
+    m = re.search(r"/(tt\d+)", imdb_link)
+    if not m:
+        return None
+    imdb_id = m.group(1)
+
+    results = tvdb.search_remote_id(imdb_id)
+    for result in results or []:
+        if not isinstance(result, dict):
+            continue
+        series_data = result.get("series")
+        if not isinstance(series_data, dict):
+            continue
+        found_id = str(series_data.get("id") or "").strip()
+        if found_id and found_id != stale_tvdb_id:
+            logger.info(
+                "tvdb_id_healed_via_imdb imdb_id=%s stale_tvdb_id=%s new_tvdb_id=%s",
+                imdb_id,
+                stale_tvdb_id,
+                found_id,
+            )
+            return found_id
+
+    return None
+
+
 def _tmdb_tv_item_is_tvdb_anime(item: Item, tmdb_metadata: dict | None) -> bool:
     """Return whether TVDB classifies a TMDB TV item as Anime."""
     from app.providers import tvdb  # noqa: PLC0415
@@ -131,22 +174,33 @@ def _tmdb_tv_item_is_tvdb_anime(item: Item, tmdb_metadata: dict | None) -> bool:
     if not tvdb_id:
         return False
 
-    tvdb_metadata = services.get_media_metadata(
+    tvdb_metadata_result = services.get_media_metadata(
         MediaTypes.TV.value,
         tvdb_id,
         Sources.TVDB.value,
     )
-    if not isinstance(tvdb_metadata, dict):
+
+    if not isinstance(tvdb_metadata_result, dict):
+        healed_id = _resolve_tvdb_id_via_imdb(tmdb_metadata, stale_tvdb_id=tvdb_id)
+        if healed_id:
+            tvdb_id = healed_id
+            tvdb_metadata_result = services.get_media_metadata(
+                MediaTypes.TV.value,
+                tvdb_id,
+                Sources.TVDB.value,
+            )
+
+    if not isinstance(tvdb_metadata_result, dict):
         msg = "no tvdb metadata"
         raise ValueError(msg)
 
     metadata_resolution.upsert_provider_links(
         item,
-        tvdb_metadata,
+        tvdb_metadata_result,
         provider=Sources.TVDB.value,
         provider_media_type=MediaTypes.TV.value,
     )
-    return tvdb.series_has_anime_genre(tvdb_id, tv_data=tvdb_metadata)
+    return tvdb.series_has_anime_genre(tvdb_id, tv_data=tvdb_metadata_result)
 
 
 def _populate_genres_for_items(items, delay_seconds):
