@@ -12,6 +12,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from app import statistics as stats
+from app.metadata_utils import ANIME_SUPPLEMENT_GENRE, genre_list_has_name
 from app.models import MediaTypes, Sources
 from app.statistics_talent import (
     _resolve_missing_credit_item_ids,
@@ -94,6 +95,10 @@ def build_stats_for_day(user_id: int, day_value):
     active_media_types = set(getattr(user, "get_active_media_types", lambda: [])())
     if not active_media_types:
         active_media_types = set(MediaTypes.values)
+    split_tv_anime = (
+        not getattr(user, "anime_enabled", True)
+        and getattr(user, "stats_split_tv_anime", False)
+    )
 
     items_by_type: dict[str, dict[int, dict]] = defaultdict(dict)
     top_played_by_type: dict[str, dict[int, dict]] = defaultdict(dict)
@@ -263,7 +268,13 @@ def build_stats_for_day(user_id: int, day_value):
         for row in episodes:
             play_dt = row.get("end_date")
             ep_lib_type = row.get("related_season__related_tv__item__library_media_type")
-            ep_type = MediaTypes.ANIME.value if ep_lib_type == MediaTypes.ANIME.value else MediaTypes.TV.value
+            tv_item_genres = row.get("related_season__related_tv__item__genres")
+            ep_type = (
+                MediaTypes.ANIME.value
+                if ep_lib_type == MediaTypes.ANIME.value
+                or (split_tv_anime and genre_list_has_name(tv_item_genres, ANIME_SUPPLEMENT_GENRE))
+                else MediaTypes.TV.value
+            )
             plays_by_type[ep_type] += 1
             play_count += 1
             _add_hour(ep_type, play_dt)
@@ -305,7 +316,7 @@ def build_stats_for_day(user_id: int, day_value):
                 )
                 if runtime_minutes > 0 and not _add_genres(
                     genre_map,
-                    row.get("related_season__related_tv__item__genres"),
+                    tv_item_genres,
                     runtime_minutes,
                 ):
                     missing_genres += 1

@@ -3075,3 +3075,63 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(media_count["anime"], 1)
         self.assertFalse(user_media["tv"].exists())
         self.assertTrue(user_media["anime"].filter(pk=tv.pk).exists())
+
+    def test_refresh_statistics_cache_splits_tvdb_tagged_tv_into_anime_bucket(self):
+        """Predefined-range cache refresh should classify TVDB-tagged anime under Anime."""
+        cache.clear()
+        self.user.anime_enabled = False
+        self.user.stats_split_tv_anime = True
+        self.user.save(update_fields=["anime_enabled", "stats_split_tv_anime"])
+
+        watched_at = timezone.now()
+        tv_item = Item.objects.create(
+            media_id="tvdb-anime-tv-cache-1",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Cached Genre Anime Show",
+            image="http://example.com/cached-genre-anime.jpg",
+            genres=["Anime", "Action"],
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="tvdb-anime-tv-cache-1-s1",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Cached Genre Anime Show Season 1",
+            image="http://example.com/cached-genre-anime-s1.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="tvdb-anime-tv-cache-1-s1e1",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Cached Genre Anime Show Episode 1",
+            image="http://example.com/cached-genre-anime-s1e1.jpg",
+            season_number=1,
+            episode_number=1,
+            runtime_minutes=24,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=watched_at,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        stats_data = statistics_cache.refresh_statistics_cache(self.user.id, "This Year")
+
+        self.assertIsNotNone(stats_data)
+        self.assertTrue(stats_data["anime_consumption"]["has_data"])
+        self.assertFalse(stats_data["tv_consumption"]["has_data"])
+        self.assertEqual(stats_data["hours_per_media_type"]["anime"], "0h 24min")
+        self.assertEqual(stats_data["top_played"]["anime"][0]["media"].item.title, "Cached Genre Anime Show")
