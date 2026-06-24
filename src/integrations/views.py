@@ -2,8 +2,9 @@
 
 import json
 import logging
+import re
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import requests
 from django.conf import settings
@@ -11,7 +12,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import Q
-from django.http import HttpResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -34,12 +35,20 @@ from integrations.models import (
     PocketCastsAccount,
     RadarrAccount,
     SonarrAccount,
+    StorytellerAccount,
 )
 from integrations.lastfm_api import LastFMAPIError, LastFMClientError, LastFMRateLimitError
 from integrations.plex_watchlist import WATCHLIST_SYNC_INTERVAL_MINUTES, WATCHLIST_TASK_NAME
 from integrations.gpodder_api import GPodderAuthError, GPodderClientError
 from integrations.pocketcasts_api import PocketCastsAuthError
 from integrations.imports.audiobookshelf import AudiobookshelfAuthError, AudiobookshelfClient
+from integrations.imports.storyteller import (
+    StorytellerClient,
+    StorytellerClientError,
+)
+from integrations.webhooks import emby, jellyfin
+from integrations.webhooks import jellyseerr as jellyseerr_webhooks
+from integrations.webhooks import plex as plex_webhooks
 
 logger = logging.getLogger(__name__)
 ARR_SYNC_INTERVAL_HOURS = 2
@@ -1059,6 +1068,173 @@ def import_audiobookshelf(request):
 
     messages.info(request, "Audiobookshelf import queued.")
     return redirect("import_data")
+
+
+STORYTELLER_RECURRING_TASK_NAME = "Import from Storyteller (Recurring)"
+STORYTELLER_PENDING_SESSION_KEY = "storyteller_pending_auth"
+
+
+def _fix_storyteller_uri(uri, base_url):
+    """Rewrite a verification URI's host to the configured server URL.
+
+    Storyteller may return verification URLs with an internal host/port
+    (e.g. 0.0.0.0:80); keep only the path and re-root it on the server URL.
+    """
+    if not uri:
+        return uri
+    match = re.match(r"^https?://[^/]+(/.*)$", uri) or re.match(r"^(/.*)$", uri)
+    if match:
+        return base_url + match.group(1)
+    return uri
+
+
+def _ensure_storyteller_schedule(user):
+    """Create the recurring Storyteller import schedule if missing."""
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    existing_task = PeriodicTask.objects.filter(
+        task=STORYTELLER_RECURRING_TASK_NAME,
+        kwargs__contains=f'"user_id": {user.id}',
+        enabled=True,
+    ).first()
+    if existing_task:
+        return
+
+    crontab, _ = CrontabSchedule.objects.get_or_create(
+        minute=0,
+        hour="*/2",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+        timezone=timezone.get_default_timezone(),
+    )
+    PeriodicTask.objects.create(
+        name=f"Import from Storyteller for {user.username} (every 2 hours)",
+        task=STORYTELLER_RECURRING_TASK_NAME,
+        crontab=crontab,
+        kwargs=json.dumps({"user_id": user.id}),
+        start_time=timezone.now(),
+        enabled=True,
+    )
+
+
+@require_POST
+def storyteller_connect(request):
+    """Begin the Storyteller device-code login flow."""
+    server_url = request.POST.get("server_url", "").strip().rstrip("/")
+    if not server_url:
+        messages.error(request, "Storyteller server URL is required.")
+        return redirect("import_data")
+
+    try:
+        data = StorytellerClient(server_url).start_device_auth()
+    except StorytellerClientError as exc:
+        messages.error(request, str(exc))
+        return redirect("import_data")
+    except Exception as exc:  # noqa: BLE001
+        messages.error(request, f"Failed to reach Storyteller: {exc}")
+        return redirect("import_data")
+
+    device_code = data.get("device_code")
+    if not device_code:
+        messages.error(request, "Storyteller did not return a device code.")
+        return redirect("import_data")
+
+    expires_in = int(data.get("expires_in") or 600)
+    request.session[STORYTELLER_PENDING_SESSION_KEY] = {
+        "server_url": server_url,
+        "device_code": device_code,
+        "user_code": data.get("user_code") or "",
+        "verification_uri": _fix_storyteller_uri(data.get("verification_uri"), server_url),
+        "verification_uri_complete": _fix_storyteller_uri(
+            data.get("verification_uri_complete"),
+            server_url,
+        ),
+        "interval": int(data.get("interval") or 5),
+        "expires_at": (timezone.now() + timedelta(seconds=expires_in)).isoformat(),
+    }
+    request.session.modified = True
+    messages.info(request, "Approve the login on your Storyteller server to finish connecting.")
+    return redirect("import_data")
+
+
+@require_GET
+def storyteller_poll(request):
+    """Poll Storyteller for the access token during device login."""
+    pending = request.session.get(STORYTELLER_PENDING_SESSION_KEY)
+    if not pending:
+        return JsonResponse({"status": "idle"})
+
+    expires_at = pending.get("expires_at")
+    if expires_at and timezone.now() > datetime.fromisoformat(expires_at):
+        request.session.pop(STORYTELLER_PENDING_SESSION_KEY, None)
+        return JsonResponse({"status": "expired"})
+
+    client = StorytellerClient(pending["server_url"])
+    try:
+        data, status_code = client.poll_device_token(pending["device_code"])
+    except Exception as exc:  # noqa: BLE001
+        return JsonResponse({"status": "pending", "detail": str(exc)})
+
+    access_token = data.get("access_token") if isinstance(data, dict) else None
+    if access_token:
+        StorytellerAccount.objects.update_or_create(
+            user=request.user,
+            defaults={
+                "server_url": pending["server_url"],
+                "auth_token": helpers.encrypt(access_token),
+                "connection_broken": False,
+                "last_error_message": "",
+            },
+        )
+        request.session.pop(STORYTELLER_PENDING_SESSION_KEY, None)
+        tasks.import_storyteller.delay(user_id=request.user.id, mode="new")
+        _ensure_storyteller_schedule(request.user)
+        return JsonResponse({"status": "connected"})
+
+    error = data.get("error") if isinstance(data, dict) else None
+    if error in ("authorization_pending", "slow_down") or status_code == 400:
+        return JsonResponse({"status": "pending"})
+
+    request.session.pop(STORYTELLER_PENDING_SESSION_KEY, None)
+    return JsonResponse({"status": "error", "message": error or "Login failed."})
+
+
+@require_POST
+def storyteller_cancel(request):
+    """Cancel an in-progress Storyteller device login."""
+    request.session.pop(STORYTELLER_PENDING_SESSION_KEY, None)
+    messages.info(request, "Storyteller login cancelled.")
+    return redirect("import_data")
+
+
+@require_POST
+def storyteller_disconnect(request):
+    """Disconnect the Storyteller integration."""
+    from django_celery_beat.models import PeriodicTask
+
+    PeriodicTask.objects.filter(
+        task=STORYTELLER_RECURRING_TASK_NAME,
+        kwargs__contains=f'"user_id": {request.user.id}',
+    ).delete()
+    StorytellerAccount.objects.filter(user=request.user).delete()
+    messages.info(request, "Disconnected Storyteller.")
+    return redirect("import_data")
+
+
+@require_POST
+def import_storyteller(request):
+    """Queue a Storyteller import and ensure the recurring schedule exists."""
+    account = getattr(request.user, "storyteller_account", None)
+    if not account:
+        messages.error(request, "Connect Storyteller before importing.")
+        return redirect("import_data")
+
+    tasks.import_storyteller.delay(user_id=request.user.id, mode="new")
+    _ensure_storyteller_schedule(request.user)
+    messages.info(request, "Storyteller import queued.")
+    return redirect("import_data")
+
 
 @require_POST
 def pocketcasts_connect(request):

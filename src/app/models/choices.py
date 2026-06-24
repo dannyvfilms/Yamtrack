@@ -17,6 +17,7 @@ class Sources(models.TextChoices):
     POCKETCASTS = "pocketcasts", "Pocket Casts"
     GPODDER = "gpodder", "GPodder"
     AUDIOBOOKSHELF = "audiobookshelf", "Audiobookshelf"
+    STORYTELLER = "storyteller", "Storyteller"
     MANUAL = "manual", "Manual"
 
 

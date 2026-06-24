@@ -978,6 +978,10 @@ def import_data(request):
     # Get Audiobookshelf account
     audiobookshelf_account = getattr(user, "audiobookshelf_account", None)
 
+    # Get Storyteller account and any in-progress device login
+    storyteller_account = getattr(user, "storyteller_account", None)
+    storyteller_pending = request.session.get("storyteller_pending_auth")
+
     # Get Pocket Casts account
     pocketcasts_account = getattr(user, "pocketcasts_account", None)
     gpodder_account = getattr(user, "gpodder_account", None)
@@ -1026,6 +1030,8 @@ def import_data(request):
         "plex_sections": plex_sections,
         "plex_sections_json": json.dumps(plex_sections),
         "audiobookshelf_account": audiobookshelf_account,
+        "storyteller_account": storyteller_account,
+        "storyteller_pending": storyteller_pending,
         "pocketcasts_account": pocketcasts_account,
         "gpodder_account": gpodder_account,
         "lastfm_account": lastfm_account,

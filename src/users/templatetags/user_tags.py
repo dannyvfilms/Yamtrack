@@ -65,6 +65,10 @@ SOURCES_CONFIG = {
         "name": "Audiobookshelf",
         "logo": static("img/audiobookshelf-logo.svg"),
     },
+    "storyteller": {
+        "name": "Storyteller",
+        "logo": static("img/storyteller-logo.svg"),
+    },
     "pocketcasts": {
         "name": "Pocket Casts",
         "logo": static("img/pocketcasts-logo.svg"),

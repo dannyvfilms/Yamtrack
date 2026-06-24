@@ -653,6 +653,119 @@
           {% endif %}
         </div>
 
+        {# Storyteller #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['reading'])"
+             x-transition.opacity.duration.150ms>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "storyteller" %}</div>
+            {% if storyteller_account and storyteller_account.is_connected %}
+              <form method="post" action="{% url 'storyteller_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+
+          {% if storyteller_account and storyteller_account.is_connected %}
+            <p class="text-sm text-gray-400">Sync the books you're reading from Storyteller every 2 hours.</p>
+            <div class="text-sm text-gray-400 space-y-1">
+              <div class="truncate">{{ storyteller_account.server_url }}</div>
+              {% if storyteller_account.last_sync_at %}
+                <div>Last sync: {{ storyteller_account.last_sync_at|user_datetime_format:user }}</div>
+              {% endif %}
+            </div>
+            {% if storyteller_account.last_error_message %}
+              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>Error:</strong> {{ storyteller_account.last_error_message }}
+              </div>
+            {% endif %}
+            <div class="space-y-3">
+              <form method="post" action="{% url 'import_storyteller' %}">
+                {% csrf_token %}
+                <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                  Sync now
+                </button>
+              </form>
+              <form method="post" action="{% url 'storyteller_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-red-600 text-white hover:bg-red-700">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          {% elif storyteller_pending %}
+            <p class="text-sm text-gray-400">Approve this login on your Storyteller server to finish connecting.</p>
+            <div class="text-sm text-gray-300 space-y-2 bg-[#2a2f35] rounded-md p-3 border border-gray-600">
+              {% if storyteller_pending.user_code %}
+                <div>Enter code: <span class="font-mono text-lg text-white tracking-widest">{{ storyteller_pending.user_code }}</span></div>
+              {% endif %}
+              {% if storyteller_pending.verification_uri_complete %}
+                <a href="{{ storyteller_pending.verification_uri_complete }}" target="_blank" rel="noopener"
+                   class="inline-block text-indigo-300 hover:text-indigo-200 underline break-all">Open approval page</a>
+              {% elif storyteller_pending.verification_uri %}
+                <a href="{{ storyteller_pending.verification_uri }}" target="_blank" rel="noopener"
+                   class="inline-block text-indigo-300 hover:text-indigo-200 underline break-all">{{ storyteller_pending.verification_uri }}</a>
+              {% endif %}
+              <div class="text-xs text-gray-400" id="storyteller-poll-status">Waiting for approval…</div>
+            </div>
+            <form method="post" action="{% url 'storyteller_cancel' %}">
+              {% csrf_token %}
+              <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-gray-600 text-white hover:bg-gray-700">
+                Cancel
+              </button>
+            </form>
+            <script>
+              (function () {
+                var statusEl = document.getElementById("storyteller-poll-status");
+                var pollUrl = "{% url 'storyteller_poll' %}";
+                var interval = {{ storyteller_pending.interval|default:5 }} * 1000;
+                var timer = setInterval(function () {
+                  fetch(pollUrl, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                      if (data.status === "connected") {
+                        clearInterval(timer);
+                        if (statusEl) { statusEl.textContent = "Connected! Reloading…"; }
+                        window.location.reload();
+                      } else if (data.status === "expired") {
+                        clearInterval(timer);
+                        if (statusEl) { statusEl.textContent = "Login timed out. Please try again."; }
+                        window.location.reload();
+                      } else if (data.status === "error") {
+                        clearInterval(timer);
+                        if (statusEl) { statusEl.textContent = data.message || "Login failed."; }
+                      } else if (data.status === "idle") {
+                        clearInterval(timer);
+                        window.location.reload();
+                      }
+                    })
+                    .catch(function () { /* keep polling */ });
+                }, interval);
+              })();
+            </script>
+          {% else %}
+            <p class="text-sm text-gray-400 mb-3">Track the books you're currently reading from Storyteller.</p>
+            <form method="post" action="{% url 'storyteller_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Server URL</label>
+                <input type="url" name="server_url" required
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:outline-none focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="https://storyteller.example.com">
+              </div>
+              <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect Storyteller
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
         {# Pocket Casts #}
         <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
              x-show="sourceSupports(['podcasts'])"
