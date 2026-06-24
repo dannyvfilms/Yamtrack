@@ -20,6 +20,7 @@ from django.db.models import (
 )
 
 from app import config
+from app.metadata_utils import ANIME_SUPPLEMENT_GENRE, genre_list_has_name
 from app.models import (
     TV,
     Episode,
@@ -56,6 +57,11 @@ def get_user_media(user, start_date, end_date):
             )
 
     _tv_ids = None  # saved for grouped-anime pass after the main loop
+    _genre_anime_tv_ids = set()
+    _split_tv_anime = (
+        not getattr(user, "anime_enabled", True)
+        and getattr(user, "stats_split_tv_anime", False)
+    )
 
     for model in media_models:
         media_type = model.__name__.lower()
@@ -72,7 +78,21 @@ def get_user_media(user, start_date, end_date):
                 status__in=[Status.IN_PROGRESS.value, Status.COMPLETED.value, Status.DROPPED.value, Status.PAUSED.value],
             ).exclude(
                 item__library_media_type=MediaTypes.ANIME.value,
-            ).prefetch_related(
+            )
+            if _split_tv_anime:
+                _genre_anime_tv_ids = {
+                    tv_id
+                    for tv_id, genres, library_media_type in queryset.values_list(
+                        "id",
+                        "item__genres",
+                        "item__library_media_type",
+                    )
+                    if library_media_type != MediaTypes.ANIME.value
+                    and genre_list_has_name(genres, ANIME_SUPPLEMENT_GENRE)
+                }
+                if _genre_anime_tv_ids:
+                    queryset = queryset.exclude(id__in=_genre_anime_tv_ids)
+            queryset = queryset.prefetch_related(
                 Prefetch(
                     "seasons",
                     queryset=Season.objects.filter(
@@ -194,6 +214,53 @@ def get_user_media(user, start_date, end_date):
                 user_media[anime_key] = _grouped_anime_qs
                 media_count[anime_key] = _grouped_anime_count
             media_count["total"] += _grouped_anime_count
+
+    # Pull TV shows tagged with Anime genre (via TVDB) into the anime bucket
+    if _split_tv_anime and _genre_anime_tv_ids and base_episodes is not None:
+        _genre_anime_qs = (
+            TV.objects.filter(
+                id__in=_genre_anime_tv_ids,
+                status__in=[
+                    Status.IN_PROGRESS.value,
+                    Status.COMPLETED.value,
+                    Status.DROPPED.value,
+                    Status.PAUSED.value,
+                ],
+            )
+            .select_related("item")
+            .prefetch_related(
+                Prefetch(
+                    "seasons",
+                    queryset=Season.objects.filter(
+                        status__in=[
+                            Status.IN_PROGRESS.value,
+                            Status.COMPLETED.value,
+                            Status.DROPPED.value,
+                            Status.PAUSED.value,
+                        ],
+                    )
+                    .select_related("item")
+                    .prefetch_related(
+                        Prefetch(
+                            "episodes",
+                            queryset=base_episodes.filter(
+                                related_season__related_tv__in=_tv_ids,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+        _genre_anime_count = _genre_anime_qs.count()
+        if _genre_anime_count > 0:
+            anime_key = MediaTypes.ANIME.value
+            if anime_key in user_media:
+                user_media[anime_key] = _CombinedMediaBucket(user_media[anime_key], _genre_anime_qs)
+                media_count[anime_key] = media_count.get(anime_key, 0) + _genre_anime_count
+            else:
+                user_media[anime_key] = _genre_anime_qs
+                media_count[anime_key] = _genre_anime_count
+            media_count["total"] += _genre_anime_count
 
     logger.info(
         "%s - Retrieved media %s",

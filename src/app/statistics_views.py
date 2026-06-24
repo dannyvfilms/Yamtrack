@@ -16,6 +16,7 @@ from django.views.decorators.http import require_GET, require_POST
 from app import config, statistics_cache
 from app import statistics as stats
 from app.models import MediaTypes
+from app.providers import tvdb
 from app.templatetags import app_tags
 from users.models import (
     ActivityHistoryViewChoices,
@@ -448,6 +449,7 @@ def statistics(request):
 
         context = {
             "user": request.user,
+            "tvdb_enabled": tvdb.enabled(),
             "start_date": start_date,
             "end_date": end_date,
             "start_date_str": start_date_str_for_url,
@@ -571,6 +573,7 @@ def statistics(request):
 
         context = {
             "user": request.user,
+            "tvdb_enabled": tvdb.enabled(),
             "start_date": parse_date(start_date_str) if start_date_str != "all" else None,
             "end_date": parse_date(end_date_str) if end_date_str != "all" else None,
             "start_date_str": start_date_str,
@@ -749,6 +752,14 @@ def update_statistics_preferences(request):
         if request.user.rating_scale != rating_scale:
             request.user.rating_scale = rating_scale
             fields_to_update.append("rating_scale")
+            invalidate_cache = True
+
+    stats_split_tv_anime = request.POST.get("stats_split_tv_anime")
+    if stats_split_tv_anime in ("true", "false"):
+        new_val = stats_split_tv_anime == "true"
+        if request.user.stats_split_tv_anime != new_val:
+            request.user.stats_split_tv_anime = new_val
+            fields_to_update.append("stats_split_tv_anime")
             invalidate_cache = True
 
     if fields_to_update:

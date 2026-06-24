@@ -1841,88 +1841,6 @@
         </div>
       {% endif %}
 
-      <!-- Top Anime Section -->
-      {% if top_played.anime %}
-        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
-          <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
-            <span class="text-sm uppercase tracking-widest text-gray-400">Anime</span>
-            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div>
-                <h2 class="text-2xl font-semibold text-white">Most Played</h2>
-                <span class="text-sm text-gray-500" x-text="selectedRange"></span>
-              </div>
-              <a href="{% url 'medialist' 'anime' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-                See all your top anime →
-              </a>
-            </div>
-          </div>
-          <div class="media-grid">
-            {% for item in top_played.anime %}
-              <div class="{% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative">
-                <div class="relative">
-                  <img alt="{{ item.media.item }}"
-                       class="lazyload w-full aspect-[2/3] bg-[#3e454d] {% if item.media.item.image != IMG_NONE %}object-cover{% endif %}"
-                       data-src="{{ item.media.item.image }}"
-                       src="{{ IMG_NONE }}">
-                  
-                  {% if item.media.status %}
-                    <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                         data-mobile-hide-on-mobile="true">
-                      {% if item.media.status == Status.COMPLETED.value %}
-                        <svg xmlns="http://www.w3.org/2000/svg"
-                             width="24"
-                             height="24"
-                             viewBox="0 0 24 24"
-                             fill="none"
-                             stroke="currentColor"
-                             stroke-width="2"
-                             stroke-linecap="round"
-                             stroke-linejoin="round"
-                             class="w-4 h-4 {{ MediaTypes.ANIME.value|media_color }} mr-1.5">
-                          <path d="M21.801 10A10 10 0 1 1 17 3.335" />
-                          <path d="m9 11 3 3L22 4" />
-                        </svg>
-                      {% endif %}
-                      {% if item.media.end_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.end_date|user_date_format:user }}</span>
-                      {% elif item.media.start_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.start_date|user_date_format:user }}</span>
-                      {% endif %}
-                    </div>
-                  {% endif %}
-                  
-                  {% if item.media.score is not None %}
-                    <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-                      <svg xmlns="http://www.w3.org/2000/svg"
-                           width="24"
-                           height="24"
-                           viewBox="0 0 24 24"
-                           fill="none"
-                           stroke="currentColor"
-                           stroke-width="2"
-                           stroke-linecap="round"
-                           stroke-linejoin="round"
-                           class="w-4 h-4 text-yellow-400 mr-1">
-                        <path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-                      </svg>
-                      <span class="text-sm text-white">{{ item.media.score|score_display:user }}</span>
-                    </div>
-                  {% endif %}
-                </div>
-                
-                <div class="p-3">
-                  <a href="{{ item.media.item|media_url }}"
-                     class="text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1"
-                     title="{{ item.media.item }}">{{ item.media.item }}</a>
-                  <p class="text-xs text-gray-400 mt-1">{{ item.episode_count }} episodes</p>
-                  <p class="text-xs text-indigo-400 mt-1">{{ item.formatted_duration }}</p>
-                </div>
-              </div>
-            {% endfor %}
-          </div>
-        </div>
-      {% endif %}
-
       <!-- Empty State for Top Played -->
       {% if not top_played.movie and not top_played.tv and not top_played.boardgame and not top_played.anime %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mb-4 sm:mb-6">
@@ -2003,6 +1921,10 @@
     durationFormat: '{{ user.duration_format|default:'hours_minutes' }}',
     weekStartDay: '{{ user.week_start_day|default:'monday' }}',
     ratingScale: '{{ user.rating_scale|default:'10' }}',
+    {% if not user.anime_enabled and tvdb_enabled %}
+    statsAnimeGenre: '{{ user.stats_split_tv_anime|yesno:"true,false" }}',
+    statsAnimeGenreOpen: false,
+    {% endif %}
     activityHistoryViewOpen: false,
     durationFormatOpen: false,
     weekStartDayOpen: false,
@@ -2019,6 +1941,11 @@
     ratingScaleLabel() {
       return this.ratingScale === '5' ? '1-5 stars' : '1-10 stars';
     },
+    {% if not user.anime_enabled and tvdb_enabled %}
+    statsAnimeGenreLabel() {
+      return this.statsAnimeGenre === 'true' ? 'Display as Anime' : 'Display in TV Shows';
+    },
+    {% endif %}
     async save() {
       this.saving = true;
       const form = new FormData();
@@ -2026,6 +1953,9 @@
       form.append('duration_format', this.durationFormat);
       form.append('week_start_day', this.weekStartDay);
       form.append('rating_scale', this.ratingScale);
+      {% if not user.anime_enabled and tvdb_enabled %}
+      form.append('stats_split_tv_anime', this.statsAnimeGenre);
+      {% endif %}
       await fetch('{% url 'update_statistics_preferences' %}', {
         method: 'POST',
         headers: { 'X-CSRFToken': '{{ csrf_token }}' },
@@ -2049,7 +1979,7 @@
          class="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
       <div class="w-full sm:w-[420px] relative z-60"
            @click.outside="open = false">
-        <div class="bg-[#2a2f35] rounded-t-2xl sm:rounded-xl p-6 overflow-y-auto modal-max-height">
+        <div class="bg-[#2a2f35] rounded-t-2xl sm:rounded-xl p-6 overflow-visible modal-max-height">
           {# Header #}
           <div class="flex items-center justify-between mb-5">
             <h2 class="text-lg font-semibold text-white">Statistics Preferences</h2>
@@ -2195,6 +2125,42 @@
                 </div>
               </div>
             </div>
+
+            {% if not user.anime_enabled and tvdb_enabled %}
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">Anime Statistics</label>
+              <p class="text-xs text-gray-400 mb-2">Choose how TV shows tagged as Anime via TVDB appear.</p>
+              <div class="relative" @click.outside="statsAnimeGenreOpen = false">
+                <button type="button"
+                        @click="statsAnimeGenreOpen = !statsAnimeGenreOpen"
+                        class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                  <span x-text="statsAnimeGenreLabel()"></span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <div x-show="statsAnimeGenreOpen"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95"
+                     class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                  <button type="button"
+                          @click="statsAnimeGenre = 'false'; statsAnimeGenreOpen = false"
+                          :class="statsAnimeGenre === 'false' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Display in TV Shows
+                  </button>
+                  <button type="button"
+                          @click="statsAnimeGenre = 'true'; statsAnimeGenreOpen = false"
+                          :class="statsAnimeGenre === 'true' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Display as Anime
+                  </button>
+                </div>
+              </div>
+            </div>
+            {% endif %}
           </div>
 
           {# Action buttons #}

@@ -667,6 +667,10 @@ class User(AbstractUser):
         choices=AnimeLibraryModeChoices.choices,
         help_text="Where grouped anime entries should surface in the UI.",
     )
+    stats_split_tv_anime = models.BooleanField(
+        default=False,
+        help_text="When anime is disabled in sidebar, show TVDB-tagged anime as a separate Anime bucket in Statistics.",
+    )
 
     # Calendar preferences
     calendar_layout = models.CharField(

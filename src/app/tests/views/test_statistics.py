@@ -12,7 +12,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
-from app import history_cache, statistics_cache
+from app import history_cache, statistics as stats, statistics_cache
 from app.models import (
     Album,
     Anime,
@@ -234,6 +234,30 @@ class StatisticsViewTests(TestCase):
         self.assertIn("status_distribution", response.context)
         self.assertIn("status_pie_chart_data", response.context)
         self.assertIn("daily_hours_by_media_type", response.context)
+
+    @patch("app.statistics_views.tvdb.enabled", return_value=True)
+    def test_statistics_view_shows_anime_genre_preference_when_supported(self, _mock_tvdb_enabled):
+        """Stats FAB should expose the TVDB anime split option only when the gate is satisfied."""
+        self.user.anime_enabled = False
+        self.user.save(update_fields=["anime_enabled"])
+
+        response = self.client.get(reverse("statistics"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["tvdb_enabled"])
+        self.assertContains(response, "Anime Genre (via TVDB)")
+
+    @patch("app.statistics_views.tvdb.enabled", return_value=False)
+    def test_statistics_view_hides_anime_genre_preference_without_tvdb(self, _mock_tvdb_enabled):
+        """Stats FAB should hide the TVDB anime split option when TVDB is unavailable."""
+        self.user.anime_enabled = False
+        self.user.save(update_fields=["anime_enabled"])
+
+        response = self.client.get(reverse("statistics"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["tvdb_enabled"])
+        self.assertNotContains(response, "Anime Genre (via TVDB)")
 
     def test_statistics_view_uses_canonical_music_detail_links(self):
         """Music statistics cards should link through shared artist/album details routes."""
@@ -2970,3 +2994,84 @@ class StatisticsViewTests(TestCase):
 
         self.assertEqual(day_stats["backfill"]["missing_credits"], 1)
         self.assertEqual(day_stats["backfill"]["scheduled_credits"], 0)
+
+    @patch("app.statistics_cache.schedule_all_ranges_refresh")
+    @patch("app.statistics_cache.invalidate_statistics_cache")
+    def test_update_statistics_preferences_saves_tv_anime_split_and_invalidates_cache(
+        self,
+        mock_invalidate_cache,
+        mock_schedule_refresh,
+    ):
+        """Changing the TV/anime split preference should persist and invalidate statistics cache."""
+        self.assertFalse(self.user.stats_split_tv_anime)
+
+        response = self.client.post(
+            reverse("update_statistics_preferences"),
+            {"stats_split_tv_anime": "true"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.stats_split_tv_anime)
+        mock_invalidate_cache.assert_called_once_with(self.user.id)
+        mock_schedule_refresh.assert_called_once_with(
+            self.user.id,
+            debounce_seconds=0,
+        )
+
+    def test_get_user_media_splits_tvdb_tagged_tv_into_anime_bucket(self):
+        """TV items tagged as Anime via TVDB should move from TV stats into Anime when enabled."""
+        self.user.anime_enabled = False
+        self.user.stats_split_tv_anime = True
+        self.user.save(update_fields=["anime_enabled", "stats_split_tv_anime"])
+
+        watched_at = timezone.now()
+        tv_item = Item.objects.create(
+            media_id="tvdb-anime-tv-1",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Genre Anime Show",
+            image="http://example.com/genre-anime.jpg",
+            genres=["Anime", "Action"],
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="tvdb-anime-tv-1-s1",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Genre Anime Show Season 1",
+            image="http://example.com/genre-anime-s1.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="tvdb-anime-tv-1-s1e1",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Genre Anime Show Episode 1",
+            image="http://example.com/genre-anime-s1e1.jpg",
+            season_number=1,
+            episode_number=1,
+            runtime_minutes=24,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=watched_at,
+        )
+
+        user_media, media_count = stats.get_user_media(self.user, None, None)
+
+        self.assertEqual(media_count["tv"], 0)
+        self.assertEqual(media_count["anime"], 1)
+        self.assertFalse(user_media["tv"].exists())
+        self.assertTrue(user_media["anime"].filter(pk=tv.pk).exists())
