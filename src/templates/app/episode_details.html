@@ -71,8 +71,8 @@
     </div>
 
     <div class="flex flex-col sm:contents">
-      {# Score chips row — mirrors media_details.html order-2/order-1 chip row #}
-      {% if episode_metadata.score_count or not public_view and episode and episode.history and current_instance %}
+      {# Score chips row — mirrors media_details.html order-2/order-1 chip row. Render whenever a TMDB score exists OR the viewer is logged in with an episode, so the always-present rating-chip slot is in the DOM on first load (before any watch) and episode_save can OOB-swap it in place. #}
+      {% if episode_metadata.score_count or not public_view and episode %}
         <div class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2">
           {# TMDB provider score chip #}
           {% if episode_metadata.score_count %}
@@ -90,62 +90,9 @@
               <span class="text-[12px] text-gray-300 sm:text-sm">{{ episode_metadata.score_count|intcomma }} vote{{ episode_metadata.score_count|pluralize }}</span>
             </div>
           {% endif %}
-          {# User episode rating chip — only when user has watched this episode #}
-          {% if not public_view and episode and episode.history and current_instance %}
-            {% with ep_score=episode.history.0.score %}
-            <div x-data="{
-              showRatingPopup: false,
-              rating: {% if ep_score is not None %}{{ ep_score|score_display:user }}{% else %}null{% endif %},
-              ratingScaleMax: {{ user|rating_scale_max }},
-              hoverRating: null,
-              isHovering: false,
-              formatRating(v) { if (v === null || v === undefined || v === '') return ''; return this.ratingScaleMax === 5 ? String(v) + '/5' : String(v); }
-            }"
-                 class="relative shrink-0 sm:w-auto">
-              <button type="button"
-                      @click="showRatingPopup = !showRatingPopup"
-                      class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
-                <span class="sr-only">Your score</span>
-                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8">
-                  {% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 sm:h-4 sm:w-4" %}
-                </span>
-                <span class="inline-flex items-center gap-1 sm:gap-2">
-                  <span class="text-[12px] font-semibold text-white sm:text-sm {% if ep_score is None %}hidden{% endif %}"
-                        :class="rating ? '' : 'hidden'"
-                        x-text="formatRating(rating)">{% if ep_score is not None %}{{ ep_score|score_display:user }}{% endif %}</span>
-                  <span class="text-[12px] text-gray-500 sm:text-sm {% if ep_score is None %}hidden{% endif %}"
-                        :class="rating ? '' : 'hidden'">|</span>
-                  <span class="text-[12px] font-medium text-gray-200 sm:text-sm"
-                        x-text="rating ? 'Edit rating' : 'Add rating'">{% if ep_score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
-                </span>
-              </button>
-              <div x-show="showRatingPopup"
-                   @click.outside="showRatingPopup = false; isHovering = false"
-                   class="absolute left-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-10"
-                   @mouseenter="isHovering = true"
-                   @mouseleave="isHovering = false; hoverRating = null">
-                <div class="flex justify-between mb-1">
-                  {% with rating_range=user|rating_scale_max|get_range %}
-                    {% for rating_value in rating_range %}
-                      <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
-                              @mouseenter="hoverRating = {{ rating_value }}"
-                              hx-post="{% url 'update_episode_score' current_instance.id episode_number %}"
-                              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                              hx-vals='{"score": {{ rating_value }}, "toggle": true}'
-                              hx-trigger="click"
-                              hx-swap="none"
-                              class="focus:outline-none flex flex-col items-center cursor-pointer">
-                        <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
-                          {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
-                        </div>
-                        <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
-                      </button>
-                    {% endfor %}
-                  {% endwith %}
-                </div>
-              </div>
-            </div>
-            {% endwith %}
+          {# User episode rating chip — always-present slot so it can be OOB-swapped into place on first watch without a page refresh. #}
+          {% if not public_view and episode %}
+            {% include "app/components/detail_episode_rating_chip.html" with episode=episode current_instance=current_instance episode_number=episode_number user=user csrf_token=csrf_token source=source media_id=media_id season_number=season_number public_view=public_view %}
           {% endif %}
         </div>
       {% endif %}
@@ -154,19 +101,9 @@
       {% if not public_view and episode and episode.actions_enabled %}
         <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
           <div class="mt-4 mb-5 flex flex-wrap gap-2">
-            {# Hero track button — same size/shape as detail_track_action large button #}
+            {# Hero track button — OOB-addressable so episode_save can flip it in place #}
             <div x-data="{ trackOpen: false }" class="w-full sm:w-auto sm:shrink-0">
-              <button type="button"
-                      @click="trackOpen = true"
-                      class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if episode.history %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}">
-                {% if episode.history %}
-                  {% include "app/icons/eye.svg" with classes="w-5 h-5 shrink-0" %}
-                  <span class="font-medium">Watched</span>
-                {% else %}
-                  {% include "app/icons/eye-closed.svg" with classes="w-5 h-5 shrink-0" %}
-                  <span class="font-medium">Mark Watched</span>
-                {% endif %}
-              </button>
+              {% include "app/components/detail_episode_hero_track_button.html" with episode=episode source=source media_id=media_id season_number=season_number episode_number=episode_number %}
               {% include "app/components/fill_track_episode.html" with request=request media=episode episode=episode episode_title=episode_title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
             </div>
 
