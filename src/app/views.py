@@ -213,6 +213,7 @@ from app.statistics_views import (
     refresh_statistics,
     statistics,
     update_statistics_compare_mode,
+    update_statistics_preferences,
     update_top_talent_sort,
 )
 

@@ -147,6 +147,11 @@ urlpatterns = [
     path("statistics", views.statistics, name="statistics"),
     path("statistics/refresh", views.refresh_statistics, name="refresh_statistics"),
     path(
+        "statistics/preferences",
+        views.update_statistics_preferences,
+        name="update_statistics_preferences",
+    ),
+    path(
         "statistics/compare-mode",
         views.update_statistics_compare_mode,
         name="update_statistics_compare_mode",

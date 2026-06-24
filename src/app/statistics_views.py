@@ -18,9 +18,13 @@ from app import statistics as stats
 from app.models import MediaTypes
 from app.templatetags import app_tags
 from users.models import (
+    ActivityHistoryViewChoices,
     DateFormatChoices,
+    DurationFormatChoices,
+    RatingScaleChoices,
     StatisticsCompareChoices,
     TopTalentSortChoices,
+    WeekStartDayChoices,
 )
 
 DATE_FORMAT_DJANGO_MAP = {
@@ -712,6 +716,51 @@ def update_top_talent_sort(request):
             "grid_html": grid_html,
         },
     )
+
+
+@require_POST
+def update_statistics_preferences(request):
+    """Save statistics-specific display preferences from the stats page modal."""
+    fields_to_update = []
+    invalidate_cache = False
+
+    activity_history_view = request.POST.get("activity_history_view")
+    if activity_history_view and activity_history_view in ActivityHistoryViewChoices.values:
+        if request.user.activity_history_view != activity_history_view:
+            request.user.activity_history_view = activity_history_view
+            fields_to_update.append("activity_history_view")
+
+    duration_format = request.POST.get("duration_format")
+    if duration_format and duration_format in DurationFormatChoices.values:
+        if request.user.duration_format != duration_format:
+            request.user.duration_format = duration_format
+            fields_to_update.append("duration_format")
+            invalidate_cache = True
+
+    week_start_day = request.POST.get("week_start_day")
+    if week_start_day and week_start_day in WeekStartDayChoices.values:
+        if request.user.week_start_day != week_start_day:
+            request.user.week_start_day = week_start_day
+            fields_to_update.append("week_start_day")
+            invalidate_cache = True
+
+    rating_scale = request.POST.get("rating_scale")
+    if rating_scale and rating_scale in RatingScaleChoices.values:
+        if request.user.rating_scale != rating_scale:
+            request.user.rating_scale = rating_scale
+            fields_to_update.append("rating_scale")
+            invalidate_cache = True
+
+    if fields_to_update:
+        request.user.save(update_fields=fields_to_update)
+        if invalidate_cache:
+            statistics_cache.invalidate_statistics_cache(request.user.id)
+            statistics_cache.schedule_all_ranges_refresh(
+                request.user.id,
+                debounce_seconds=0,
+            )
+
+    return JsonResponse({"status": "ok"})
 
 
 @require_POST

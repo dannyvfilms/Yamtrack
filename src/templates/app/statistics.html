@@ -1994,6 +1994,228 @@
 
     </div>
   </div>
+
+  {# Statistics preferences FAB #}
+  <div x-data="{
+    open: false,
+    saving: false,
+    activityHistoryView: '{{ user.activity_history_view|default:'heatmap' }}',
+    durationFormat: '{{ user.duration_format|default:'hours_minutes' }}',
+    weekStartDay: '{{ user.week_start_day|default:'monday' }}',
+    ratingScale: '{{ user.rating_scale|default:'10' }}',
+    activityHistoryViewOpen: false,
+    durationFormatOpen: false,
+    weekStartDayOpen: false,
+    ratingScaleOpen: false,
+    activityHistoryViewLabel() {
+      return this.activityHistoryView === 'heatmap' ? 'Activity Heatmap' : 'Stacked Bar Chart';
+    },
+    durationFormatLabel() {
+      return this.durationFormat === 'hours_minutes' ? 'Hours and minutes (500h 30min)' : 'Days and hours (20d 20h 30min)';
+    },
+    weekStartDayLabel() {
+      return this.weekStartDay === 'monday' ? 'Monday' : 'Sunday';
+    },
+    ratingScaleLabel() {
+      return this.ratingScale === '5' ? '1-5 stars' : '1-10 stars';
+    },
+    async save() {
+      this.saving = true;
+      const form = new FormData();
+      form.append('activity_history_view', this.activityHistoryView);
+      form.append('duration_format', this.durationFormat);
+      form.append('week_start_day', this.weekStartDay);
+      form.append('rating_scale', this.ratingScale);
+      await fetch('{% url 'update_statistics_preferences' %}', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+        body: form,
+      });
+      window.location.reload();
+    }
+  }">
+    {# FAB button #}
+    <button @click="open = true"
+            class="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg flex items-center justify-center cursor-pointer transition-colors"
+            title="Statistics preferences"
+            aria-label="Statistics preferences">
+      {% include "app/icons/vertical-sliders.svg" with classes="w-5 h-5" %}
+    </button>
+
+    {# Modal overlay #}
+    <div x-show="open"
+         x-cloak
+         @keydown.escape.window="open = false"
+         class="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50">
+      <div class="w-full sm:w-[420px] relative z-60"
+           @click.outside="open = false">
+        <div class="bg-[#2a2f35] rounded-t-2xl sm:rounded-xl p-6 overflow-y-auto modal-max-height">
+          {# Header #}
+          <div class="flex items-center justify-between mb-5">
+            <h2 class="text-lg font-semibold text-white">Statistics Preferences</h2>
+            <button @click="open = false"
+                    class="text-gray-400 hover:text-white transition-colors cursor-pointer">
+              {% include "app/icons/x.svg" with classes="w-5 h-5" %}
+            </button>
+          </div>
+
+          <div class="space-y-4">
+            {# Activity History View #}
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">Activity History View</label>
+              <div class="relative" @click.outside="activityHistoryViewOpen = false">
+                <button type="button"
+                        @click="activityHistoryViewOpen = !activityHistoryViewOpen"
+                        class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                  <span x-text="activityHistoryViewLabel()"></span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <div x-show="activityHistoryViewOpen"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95"
+                     class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                  <button type="button"
+                          @click="activityHistoryView = 'heatmap'; activityHistoryViewOpen = false"
+                          :class="activityHistoryView === 'heatmap' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Activity Heatmap
+                  </button>
+                  <button type="button"
+                          @click="activityHistoryView = 'stacked'; activityHistoryViewOpen = false"
+                          :class="activityHistoryView === 'stacked' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Stacked Bar Chart
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {# Duration Format #}
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">Duration Format</label>
+              <div class="relative" @click.outside="durationFormatOpen = false">
+                <button type="button"
+                        @click="durationFormatOpen = !durationFormatOpen"
+                        class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                  <span x-text="durationFormatLabel()"></span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <div x-show="durationFormatOpen"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95"
+                     class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                  <button type="button"
+                          @click="durationFormat = 'hours_minutes'; durationFormatOpen = false"
+                          :class="durationFormat === 'hours_minutes' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Hours and minutes (500h 30min)
+                  </button>
+                  <button type="button"
+                          @click="durationFormat = 'long_units'; durationFormatOpen = false"
+                          :class="durationFormat === 'long_units' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Days and hours (20d 20h 30min)
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {# Week Start Day #}
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">Week Start Day</label>
+              <div class="relative" @click.outside="weekStartDayOpen = false">
+                <button type="button"
+                        @click="weekStartDayOpen = !weekStartDayOpen"
+                        class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                  <span x-text="weekStartDayLabel()"></span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <div x-show="weekStartDayOpen"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95"
+                     class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                  <button type="button"
+                          @click="weekStartDay = 'monday'; weekStartDayOpen = false"
+                          :class="weekStartDay === 'monday' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Monday
+                  </button>
+                  <button type="button"
+                          @click="weekStartDay = 'sunday'; weekStartDayOpen = false"
+                          :class="weekStartDay === 'sunday' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    Sunday
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {# Rating Scale #}
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-1">Rating Scale</label>
+              <div class="relative" @click.outside="ratingScaleOpen = false">
+                <button type="button"
+                        @click="ratingScaleOpen = !ratingScaleOpen"
+                        class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                  <span x-text="ratingScaleLabel()"></span>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-gray-400"><path d="m6 9 6 6 6-6"></path></svg>
+                </button>
+                <div x-show="ratingScaleOpen"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95"
+                     class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                  <button type="button"
+                          @click="ratingScale = '10'; ratingScaleOpen = false"
+                          :class="ratingScale === '10' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    1-10 stars
+                  </button>
+                  <button type="button"
+                          @click="ratingScale = '5'; ratingScaleOpen = false"
+                          :class="ratingScale === '5' ? 'text-white bg-[#39404b]' : 'text-gray-300 hover:bg-[#39404b] hover:text-white'"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors">
+                    1-5 stars
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {# Action buttons #}
+          <div class="flex gap-3 mt-6">
+            <button type="button"
+                    @click="open = false"
+                    class="flex-1 px-4 py-2 bg-[#39404b] text-gray-200 rounded-md text-sm font-medium hover:bg-[#434b57] transition-colors cursor-pointer">
+              Cancel
+            </button>
+            <button type="button"
+                    @click="save()"
+                    :disabled="saving"
+                    class="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-medium hover:bg-indigo-500 transition-colors cursor-pointer disabled:opacity-50">
+              <span x-show="!saving">Save</span>
+              <span x-show="saving" x-cloak>Saving…</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 {% endblock content %}
 
 {% block js %}
