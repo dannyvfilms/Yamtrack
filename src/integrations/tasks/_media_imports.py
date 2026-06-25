@@ -287,7 +287,7 @@ def import_storyteller(user_id, mode="new"):
 @shared_task(name="Import from Storyteller (Recurring)")
 def import_storyteller_recurring(user_id):
     """Recurring import task for Storyteller."""
-    return import_storyteller.delay(user_id=user_id, mode="new")
+    return import_media(storyteller.importer, None, user_id, "new")
 
 
 @shared_task(name="Import from Pocket Casts")

@@ -663,6 +663,7 @@
               <form method="post" action="{% url 'storyteller_disconnect' %}">
                 {% csrf_token %}
                 <button type="submit"
+                        title="{{ storyteller_account.server_url }}"
                         class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
                   Connected
                 </button>
@@ -673,13 +674,12 @@
           </div>
 
           {% if storyteller_account and storyteller_account.is_connected %}
-            <p class="text-sm text-gray-400">Sync the books you're reading from Storyteller every 2 hours.</p>
-            <div class="text-sm text-gray-400 space-y-1">
-              <div class="truncate">{{ storyteller_account.server_url }}</div>
-              {% if storyteller_account.last_sync_at %}
+            <p class="text-sm text-gray-400">Sync your books from Storyteller every 2 hours.</p>
+            {% if storyteller_account.last_sync_at %}
+              <div class="text-sm text-gray-400 space-y-1">
                 <div>Last sync: {{ storyteller_account.last_sync_at|user_datetime_format:user }}</div>
-              {% endif %}
-            </div>
+              </div>
+            {% endif %}
             {% if storyteller_account.last_error_message %}
               <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
                 <strong>Error:</strong> {{ storyteller_account.last_error_message }}
@@ -701,16 +701,19 @@
             </div>
           {% elif storyteller_pending %}
             <p class="text-sm text-gray-400">Approve this login on your Storyteller server to finish connecting.</p>
-            <div class="text-sm text-gray-300 space-y-2 bg-[#2a2f35] rounded-md p-3 border border-gray-600">
+            <div class="space-y-3 bg-[#2a2f35] rounded-md p-3 border border-gray-600">
               {% if storyteller_pending.user_code %}
-                <div>Enter code: <span class="font-mono text-lg text-white tracking-widest">{{ storyteller_pending.user_code }}</span></div>
+                <div class="space-y-1">
+                  <label class="block text-sm text-gray-400">Enter this code</label>
+                  <div class="text-center font-mono text-lg text-white tracking-widest bg-[#39404b] border border-gray-600 rounded px-3 py-2">{{ storyteller_pending.user_code }}</div>
+                </div>
               {% endif %}
               {% if storyteller_pending.verification_uri_complete %}
                 <a href="{{ storyteller_pending.verification_uri_complete }}" target="_blank" rel="noopener"
-                   class="inline-block text-indigo-300 hover:text-indigo-200 underline break-all">Open approval page</a>
+                   class="inline-flex items-center justify-center w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">Open approval page</a>
               {% elif storyteller_pending.verification_uri %}
                 <a href="{{ storyteller_pending.verification_uri }}" target="_blank" rel="noopener"
-                   class="inline-block text-indigo-300 hover:text-indigo-200 underline break-all">{{ storyteller_pending.verification_uri }}</a>
+                   class="inline-flex items-center justify-center w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">Open approval page</a>
               {% endif %}
               <div class="text-xs text-gray-400" id="storyteller-poll-status">Waiting for approval…</div>
             </div>
