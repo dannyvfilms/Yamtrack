@@ -150,15 +150,17 @@ def person_detail(request, source, person_id, name):
                 },
             )
 
-    seen_media = set()
-    deduped_filmography = []
+    seen_media: dict[tuple, dict] = {}
     for entry in filmography:
         media_key = (entry.get("media_type"), str(entry.get("media_id")))
         if media_key in seen_media:
-            continue
-        seen_media.add(media_key)
-        deduped_filmography.append(entry)
-    filmography = deduped_filmography
+            dept = entry.get("department", "")
+            if dept and dept not in seen_media[media_key]["all_departments"]:
+                seen_media[media_key]["all_departments"].append(dept)
+        else:
+            entry["all_departments"] = [entry["department"]] if entry.get("department") else []
+            seen_media[media_key] = entry
+    filmography = list(seen_media.values())
 
     tracked_item_map = {}
     if filmography:
@@ -394,7 +396,11 @@ def person_detail(request, source, person_id, name):
     )
 
     # Collect filter options from the full unfiltered filmography.
-    all_departments = sorted({e["department"] for e in filmography if e.get("department")})
+    all_departments = sorted({
+        dept
+        for e in filmography
+        for dept in e.get("all_departments", ([e["department"]] if e.get("department") else []))
+    })
     all_filmography_years = sorted(
         {e["year"] for e in filmography if e.get("year")}, reverse=True
     )
@@ -425,7 +431,10 @@ def person_detail(request, source, person_id, name):
         """Filters that work on all filmography entries (year + department)."""
         result = entries
         if filter_department:
-            result = [e for e in result if e.get("department") == filter_department]
+            result = [
+                e for e in result
+                if filter_department in e.get("all_departments", [e.get("department")])
+            ]
         if filter_year:
             result = [e for e in result if str(e.get("year") or "") == filter_year]
         return result
