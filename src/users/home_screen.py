@@ -37,6 +37,7 @@ from users.models import (
     HomeSortChoices,
     ListDetailSortChoices,
     MediaSortChoices,
+    MediaStatusChoices,
 )
 
 RECENTLY_UNRATED_DAYS = 7
@@ -49,6 +50,30 @@ SQUARE_HOME_MEDIA_TYPES = {
 WIDE_SQUARE_HOME_MEDIA_TYPES = {
     MediaTypes.MUSIC.value,
 }
+# Music has a single Home section/header, but each row under it can independently
+# target tracks, albums, or artists (mirrors the media-list subview toggle).
+# A row's choice is stored in filters["subview"]; rows of different types mix freely.
+MUSIC_SUBVIEW_TRACKS = "tracks"
+MUSIC_SUBVIEW_ALBUMS = "albums"
+MUSIC_SUBVIEW_ARTISTS = "artists"
+MUSIC_SUBVIEW_DEFAULT = MUSIC_SUBVIEW_TRACKS
+# Ordered for the settings filter menu (media type sits at the top of the list).
+MUSIC_SUBVIEW_VALUES = (
+    MUSIC_SUBVIEW_ARTISTS,
+    MUSIC_SUBVIEW_ALBUMS,
+    MUSIC_SUBVIEW_TRACKS,
+)
+MUSIC_SUBVIEW_LABELS = {
+    MUSIC_SUBVIEW_ARTISTS: "Artists",
+    MUSIC_SUBVIEW_ALBUMS: "Albums",
+    MUSIC_SUBVIEW_TRACKS: "Tracks",
+}
+
+
+def _canonical_music_subview(value, default: str = MUSIC_SUBVIEW_DEFAULT) -> str:
+    """Normalize a music subview value to a known choice."""
+    raw_value = str(value or "").strip().lower()
+    return raw_value if raw_value in MUSIC_SUBVIEW_VALUES else default
 AUTHOR_MEDIA_TYPES = {
     MediaTypes.BOOK.value,
     MediaTypes.MANGA.value,
@@ -94,7 +119,7 @@ HOME_ONLY_SORTS = {
 HOME_SCREEN_FILTER_KEYS = tuple(
     dict.fromkeys(
         key
-        for key in (*smart_rules.SMART_FILTER_KEYS, "progress")
+        for key in (*smart_rules.SMART_FILTER_KEYS, "progress", "subview")
         if key != "search"
     ),
 )
@@ -248,6 +273,7 @@ SUPPORTED_FILTERS_BY_MEDIA_TYPE = {
         "tag_exclude",
     },
     MediaTypes.MUSIC.value: {
+        "subview",
         "status",
         "rating",
         "collection",
@@ -677,6 +703,14 @@ def build_filter_field_data(
 
     field_definitions = [
         {
+            "key": "subview",
+            "label": "Media Type",
+            "options": [
+                {"value": value, "label": MUSIC_SUBVIEW_LABELS[value]}
+                for value in MUSIC_SUBVIEW_VALUES
+            ],
+        },
+        {
             "key": "status",
             "label": "Status",
             "options": [
@@ -884,6 +918,15 @@ def describe_library_query(filters: dict, user, media_type: str) -> str:
     else:
         parts = ["Library"]
 
+    if media_type == MediaTypes.MUSIC.value:
+        subview_label = MUSIC_SUBVIEW_LABELS[
+            _canonical_music_subview(normalized.get("subview"))
+        ]
+        if parts[0] == "Library":
+            parts[0] = subview_label
+        else:
+            parts.insert(1, subview_label)
+
     for key in (
         "progress",
         "rating",
@@ -1048,6 +1091,8 @@ def toggle_home_row_direction(user, row_id: int) -> HomeScreenRow:
 
 def _normalized_filter_payload(filters: dict | None, media_type: str) -> dict:
     raw_filters = dict(filters or {})
+    # subview is a music-only dimension, not a smart-rule filter. handling separately
+    raw_subview = raw_filters.pop("subview", None)
     if "status" in raw_filters:
         raw_filters["status"] = _canonical_status_filter(
             raw_filters.get("status"),
@@ -1071,10 +1116,14 @@ def _normalized_filter_payload(filters: dict | None, media_type: str) -> dict:
         raw_filters.get("progress", normalized.get("progress")),
         HOME_QUERY_DEFAULT_FILTERS["progress"],
     )
-    return {
+    payload = {
         key: normalized.get(key, HOME_QUERY_DEFAULT_FILTERS.get(key, ""))
         for key in HOME_SCREEN_FILTER_KEYS
+        if key != "subview"
     }
+    if media_type == MediaTypes.MUSIC.value:
+        payload["subview"] = _canonical_music_subview(raw_subview)
+    return payload
 
 
 def _row_payload_to_model(user, media_type: str, row_payload: dict, position: int) -> HomeScreenRow:
@@ -1183,6 +1232,9 @@ def validate_library_row_filters(raw_filters: dict | None, media_type: str) -> d
     raw_source = str(raw_filters.get("source", normalized["source"]) or "").strip().lower()
     if raw_source and raw_source not in Sources.values:
         raise HomeScreenValidationError(f"Unsupported source filter for {media_type}.")
+    raw_subview = str(raw_filters.get("subview", "") or "").strip().lower()
+    if raw_subview and raw_subview not in MUSIC_SUBVIEW_VALUES:
+        raise HomeScreenValidationError(f"Unsupported media type for {media_type}.")
     return normalized
 
 
@@ -1260,6 +1312,131 @@ def _annotate_home_card_images(media_items):
         BasicMedia.objects._fix_missing_season_images(season_items)
 
 
+def _music_shell_item(media_id: str, title: str, image: str | None) -> Item:
+    """Get or refresh the lightweight Item used to render a music Home card.
+
+    Album/artist tracking isn't backed by a media_type='music' Item, so we keep a
+    stable manual-source shell Item per album/artist purely for card display.
+    """
+    item, _ = Item.objects.get_or_create(
+        media_id=media_id,
+        source=Sources.MANUAL.value,
+        media_type=MediaTypes.MUSIC.value,
+        defaults={"title": title, "image": image or settings.IMG_NONE},
+    )
+    desired_image = image or settings.IMG_NONE
+    if item.title != title or item.image != desired_image:
+        item.title = title
+        item.image = desired_image
+        item.save(update_fields=["title", "image"])
+    return item
+
+
+class _MusicTrackerAdapter:
+    """Media-like wrapper around an Album/Artist tracker for Home card rendering."""
+
+    def __init__(self, item: Item, tracker: object):
+        self.item = item
+        self.id = tracker.id
+        self.status = tracker.status
+        self.aggregated_status = tracker.status
+        self.score = getattr(tracker, "score", None)
+        self.next_event = None
+        self.start_date = getattr(tracker, "start_date", None)
+        self.end_date = getattr(tracker, "end_date", None)
+        self.created_at = getattr(tracker, "created_at", None)
+        self.last_played_at = (
+            getattr(tracker, "end_date", None) or getattr(tracker, "created_at", None)
+        )
+        self.title = item.title
+
+
+class _AlbumHomeAdapter(_MusicTrackerAdapter):
+    def __init__(self, item: Item, tracker: object, album: object):
+        super().__init__(item, tracker)
+        self.album = album
+        self.home_music_card = True
+        artist = getattr(album, "artist", None)
+        self.card_subtitle_text = getattr(artist, "name", "") or ""
+        self.card_subtitle_date = getattr(tracker, "created_at", None)
+
+
+class _ArtistHomeAdapter(_MusicTrackerAdapter):
+    def __init__(self, item: Item, tracker: object, artist: object):
+        super().__init__(item, tracker)
+        self.artist = artist
+        self.home_music_card = True
+        self.card_subtitle_text = ""
+        self.card_subtitle_date = getattr(tracker, "created_at", None)
+
+
+def _apply_music_tracker_rating_filter(trackers, rating_filter: str):
+    if rating_filter == "rated":
+        return trackers.filter(score__isnull=False)
+    if rating_filter == "not_rated":
+        return trackers.filter(score__isnull=True)
+    return trackers
+
+
+def _build_album_home_entries(user, filters: dict, sort_by: str, direction: str) -> list[HomeRowEntry]:
+    """Build Home entries from the user's tracked albums (AlbumTracker)."""
+    from app.models import AlbumTracker  # noqa: PLC0415
+
+    status_filter = filters.get("status", "all")
+    trackers = AlbumTracker.objects.filter(user=user).select_related(
+        "album", "album__artist",
+    )
+    if status_filter and status_filter != "all":
+        trackers = trackers.filter(status=status_filter)
+    trackers = _apply_music_tracker_rating_filter(trackers, filters.get("rating", "all"))
+
+    entries = []
+    for tracker in trackers:
+        album = tracker.album
+        if not album:
+            continue
+        item = _music_shell_item(f"album_{album.id}", album.title, album.image)
+        entries.append(
+            HomeRowEntry(
+                item=item,
+                media=_AlbumHomeAdapter(item, tracker, album),
+                show_progress_controls=False,
+            ),
+        )
+    return sort_home_entries(entries, sort_by, direction)
+
+
+def _build_artist_home_entries(user, filters: dict, sort_by: str, direction: str) -> list[HomeRowEntry]:
+    """Build Home entries from the user's tracked artists (ArtistTracker)."""
+    from app.models import ArtistTracker  # noqa: PLC0415
+
+    status_filter = filters.get("status", "all")
+    trackers = (
+        ArtistTracker.objects.filter(user=user)
+        .exclude(artist__name__isnull=True)
+        .exclude(artist__name__exact="")
+        .select_related("artist")
+    )
+    if status_filter and status_filter != "all":
+        trackers = trackers.filter(status=status_filter)
+    trackers = _apply_music_tracker_rating_filter(trackers, filters.get("rating", "all"))
+
+    entries = []
+    for tracker in trackers:
+        artist = tracker.artist
+        if not artist:
+            continue
+        item = _music_shell_item(f"artist_{artist.id}", artist.name, getattr(artist, "image", None))
+        entries.append(
+            HomeRowEntry(
+                item=item,
+                media=_ArtistHomeAdapter(item, tracker, artist),
+                show_progress_controls=False,
+            ),
+        )
+    return sort_home_entries(entries, sort_by, direction)
+
+
 def _build_recent_music_album_entries(media_items: list[object]) -> list[HomeRowEntry]:
     albums_by_id = {}
     album_play_counts = defaultdict(int)
@@ -1291,21 +1468,7 @@ def _build_recent_music_album_entries(media_items: list[object]) -> list[HomeRow
             self.next_event = None
             self.score = None
             self.title = album.title
-            album_media_id = f"album_{album.id}"
-            self.item, _ = Item.objects.get_or_create(
-                media_id=album_media_id,
-                source=Sources.MANUAL.value,
-                media_type=MediaTypes.MUSIC.value,
-                defaults={
-                    "title": album.title,
-                    "image": album.image or settings.IMG_NONE,
-                },
-            )
-            desired_image = album.image or settings.IMG_NONE
-            if self.item.title != album.title or self.item.image != desired_image:
-                self.item.title = album.title
-                self.item.image = desired_image
-                self.item.save(update_fields=["title", "image"])
+            self.item = _music_shell_item(f"album_{album.id}", album.title, album.image)
             self.primary_track = primary_track
 
     entries = [
@@ -1702,6 +1865,17 @@ def sort_home_entries(entries: list[HomeRowEntry], sort_by: str, direction: str)
 
 def _library_query_entries(user, row: HomeScreenRow) -> list[HomeRowEntry]:
     normalized_filters = _normalized_filter_payload(row.filters or {}, row.media_type)
+    if row.media_type == MediaTypes.MUSIC.value:
+        subview = _canonical_music_subview(normalized_filters.get("subview"))
+        if subview == MUSIC_SUBVIEW_ALBUMS:
+            return _build_album_home_entries(
+                user, normalized_filters, row.sort_by, row.direction,
+            )
+        if subview == MUSIC_SUBVIEW_ARTISTS:
+            return _build_artist_home_entries(
+                user, normalized_filters, row.sort_by, row.direction,
+            )
+        # MUSIC_SUBVIEW_TRACKS falls through to the standard Music/Item query below.
     status_filter = normalized_filters.get("status", "all")
     rule_payload = {
         "media_types": [row.media_type],
@@ -1867,11 +2041,16 @@ def home_row_destination_url(row: HomeScreenRow, user) -> str:
 
     if row.row_type == HomeScreenRowTypeChoices.RECENTLY_UNRATED:
         params["rating"] = "not_rated"
+        params["status"] = MediaStatusChoices.ALL.value
     else:
-        for key, raw_value in _normalized_filter_payload(
-            row.filters or {},
-            row.media_type,
-        ).items():
+        normalized = _normalized_filter_payload(row.filters or {}, row.media_type)
+        status_value = normalized.get("status") or "all"
+        params["status"] = (
+            MediaStatusChoices.ALL.value if status_value == "all" else status_value
+        )
+        for key, raw_value in normalized.items():
+            if key == "status":
+                continue
             value = raw_value
             if isinstance(value, (list, tuple)):
                 value = value[0] if len(value) == 1 else None
