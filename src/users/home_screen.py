@@ -37,6 +37,7 @@ from users.models import (
     HomeSortChoices,
     ListDetailSortChoices,
     MediaSortChoices,
+    MediaStatusChoices,
 )
 
 RECENTLY_UNRATED_DAYS = 7
@@ -1467,21 +1468,7 @@ def _build_recent_music_album_entries(media_items: list[object]) -> list[HomeRow
             self.next_event = None
             self.score = None
             self.title = album.title
-            album_media_id = f"album_{album.id}"
-            self.item, _ = Item.objects.get_or_create(
-                media_id=album_media_id,
-                source=Sources.MANUAL.value,
-                media_type=MediaTypes.MUSIC.value,
-                defaults={
-                    "title": album.title,
-                    "image": album.image or settings.IMG_NONE,
-                },
-            )
-            desired_image = album.image or settings.IMG_NONE
-            if self.item.title != album.title or self.item.image != desired_image:
-                self.item.title = album.title
-                self.item.image = desired_image
-                self.item.save(update_fields=["title", "image"])
+            self.item = _music_shell_item(f"album_{album.id}", album.title, album.image)
             self.primary_track = primary_track
 
     entries = [
@@ -2054,11 +2041,16 @@ def home_row_destination_url(row: HomeScreenRow, user) -> str:
 
     if row.row_type == HomeScreenRowTypeChoices.RECENTLY_UNRATED:
         params["rating"] = "not_rated"
+        params["status"] = MediaStatusChoices.ALL.value
     else:
-        for key, raw_value in _normalized_filter_payload(
-            row.filters or {},
-            row.media_type,
-        ).items():
+        normalized = _normalized_filter_payload(row.filters or {}, row.media_type)
+        status_value = normalized.get("status") or "all"
+        params["status"] = (
+            MediaStatusChoices.ALL.value if status_value == "all" else status_value
+        )
+        for key, raw_value in normalized.items():
+            if key == "status":
+                continue
             value = raw_value
             if isinstance(value, (list, tuple)):
                 value = value[0] if len(value) == 1 else None

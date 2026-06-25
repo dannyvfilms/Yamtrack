@@ -6,7 +6,11 @@ from django.test import TestCase
 from app.models import MediaTypes, Status
 from app.models.music import Album, AlbumTracker, Artist, ArtistTracker
 from users import home_screen
-from users.models import HomeScreenRow, HomeScreenRowTypeChoices
+from users.models import (
+    HomeScreenRow,
+    HomeScreenRowTypeChoices,
+    MediaStatusChoices,
+)
 
 
 class MusicSubviewHomeTests(TestCase):
@@ -119,6 +123,25 @@ class MusicSubviewHomeTests(TestCase):
         self.client.force_login(self.user)
         response = self.client.get("/settings/home-screen")
         self.assertEqual(response.status_code, 200)
+
+    def test_destination_url_pins_status_all_for_all_status_row(self):
+        row = self._add_music_row("tracks", MediaStatusChoices.ALL.value)
+        url = home_screen.home_row_destination_url(row, self.user)
+        self.assertIn(f"status={MediaStatusChoices.ALL.value}", url)
+        self.assertIn("subview=tracks", url)
+
+    def test_destination_url_passes_status_and_subview_for_albums(self):
+        row = self._add_music_row("albums", Status.PLANNING.value)
+        url = home_screen.home_row_destination_url(row, self.user)
+        self.assertIn("status=Planning", url)
+        self.assertIn("subview=albums", url)
+
+    def test_albums_upcoming_sort_does_not_crash(self):
+        row = self._add_music_row("albums", Status.PLANNING.value)
+        row.sort_by = "upcoming"
+        row.direction = "asc"
+        entries = home_screen._library_query_entries(self.user, row)
+        self.assertTrue(any(e.item.title == "A Night at the Opera" for e in entries))
 
     def test_row_title_includes_subview_label(self):
         title = home_screen.describe_library_query(
