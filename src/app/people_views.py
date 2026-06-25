@@ -419,6 +419,7 @@ def person_detail(request, source, person_id, name):
         MediaSortChoices.TITLE.value,
         MediaSortChoices.CRITIC_RATING.value,
         MediaSortChoices.POPULARITY.value,
+        "votes",
     }
     sort_by = request.GET.get("sort", MediaSortChoices.RELEASE_DATE.value)
     if sort_by not in _PERSON_VALID_SORTS:
@@ -495,6 +496,15 @@ def person_detail(request, source, person_id, name):
             return _sort_with_nulls_last(entries, lambda e: e.get("vote_average"), rev)
         if sort_by == MediaSortChoices.POPULARITY.value:
             return _sort_with_nulls_last(entries, lambda e: e.get("popularity"), rev)
+        if sort_by == "votes":
+            def _vote_count_key(e):
+                vc = e.get("vote_count")
+                if vc is None:
+                    item = e.get("tracked_item")
+                    if item is not None:
+                        vc = item.provider_rating_count
+                return vc
+            return _sort_with_nulls_last(entries, _vote_count_key, rev)
         # release_date: entries arrive from provider already sorted newest-first;
         # asc reverses to oldest-first (chronological).
         if sort_dir == "asc":
@@ -540,6 +550,7 @@ def person_detail(request, source, person_id, name):
             (MediaSortChoices.TITLE.value, MediaSortChoices.TITLE.label),
             (MediaSortChoices.CRITIC_RATING.value, MediaSortChoices.CRITIC_RATING.label),
             (MediaSortChoices.POPULARITY.value, MediaSortChoices.POPULARITY.label),
+            ("votes", "Votes"),
         ]
     )
 

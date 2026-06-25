@@ -1710,6 +1710,7 @@ def _person_filmography_entries(combined_credits):
                 "role": media.get("character") or "",
                 "department": "Acting",
                 "vote_average": media.get("vote_average"),
+                "vote_count": media.get("vote_count"),
                 "popularity": media.get("popularity"),
             },
         )
@@ -1735,6 +1736,7 @@ def _person_filmography_entries(combined_credits):
                 "role": media.get("job") or "",
                 "department": media.get("department") or "",
                 "vote_average": media.get("vote_average"),
+                "vote_count": media.get("vote_count"),
                 "popularity": media.get("popularity"),
             },
         )
