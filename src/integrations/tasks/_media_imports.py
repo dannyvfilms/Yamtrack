@@ -26,6 +26,7 @@ from integrations.imports import (
     simkl,
     sonarr,
     steam,
+    storyteller,
     trakt,
     yamtrack,
 )
@@ -275,6 +276,19 @@ def import_audiobookshelf(user_id, mode="new"):
 def import_audiobookshelf_recurring(user_id):
     """Recurring import task for Audiobookshelf."""
     return import_media(audiobookshelf.importer, None, user_id, "new")
+
+
+@shared_task(name="Import from Storyteller")
+def import_storyteller(user_id, mode="new"):
+    """Celery task for importing book reading progress from Storyteller."""
+    return import_media(storyteller.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Storyteller (Recurring)")
+def import_storyteller_recurring(user_id):
+    """Recurring import task for Storyteller."""
+    return import_media(storyteller.importer, None, user_id, "new")
+
 
 @shared_task(name="Import from Pocket Casts")
 def import_pocketcasts(user_id, mode="new"):

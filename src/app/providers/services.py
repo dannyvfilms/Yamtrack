@@ -93,6 +93,56 @@ def _audiobookshelf_book(media_id):
     }
 
 
+def _storyteller_book(media_id):
+    """Return local metadata for a Storyteller book item.
+
+    Storyteller items that couldn't be matched to a book provider use a
+    synthetic media_id, so resolve them from the local Item instead of an
+    external API (which would 404).
+    """
+    from app.models import Item  # noqa: PLC0415
+
+    item = Item.objects.filter(
+        media_id=media_id,
+        source=Sources.STORYTELLER.value,
+        media_type=MediaTypes.BOOK.value,
+    ).first()
+
+    title = item.title if item else ""
+    image = item.image if item and item.image else settings.IMG_NONE
+    number_of_pages = item.number_of_pages if item else None
+    authors = item.authors if item else []
+    isbn = item.isbn if item else []
+    genres = item.genres if item else []
+    publishers = item.publishers if item else ""
+    publish_date = (
+        item.release_datetime.date().isoformat()
+        if item and item.release_datetime
+        else None
+    )
+    format_name = item.format if item and item.format else "ebook"
+
+    return {
+        "media_id": str(media_id),
+        "source": Sources.STORYTELLER.value,
+        "media_type": MediaTypes.BOOK.value,
+        "title": title,
+        "image": image,
+        "max_progress": number_of_pages,
+        "synopsis": "",
+        "genres": genres,
+        "related": {},
+        "details": {
+            "author": authors,
+            "isbn": isbn,
+            "publisher": publishers,
+            "publish_date": publish_date,
+            "format": format_name,
+            "number_of_pages": number_of_pages,
+        },
+    }
+
+
 def get_redis_pool():
     """Return a Redis connection pool."""
     if settings.TESTING:
@@ -510,6 +560,8 @@ def get_media_metadata(
             if source == Sources.HARDCOVER.value
             else _audiobookshelf_book(media_id)
             if source == Sources.AUDIOBOOKSHELF.value
+            else _storyteller_book(media_id)
+            if source == Sources.STORYTELLER.value
             else openlibrary.book(media_id)
         ),
         MediaTypes.COMIC.value: lambda: comicvine.comic(media_id),

@@ -502,6 +502,46 @@ class CollectionSourceState(models.Model):
         ]
 
 
+class StorytellerAccount(models.Model):
+    """Store Storyteller connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="storyteller_account",
+    )
+    server_url = models.URLField(help_text="Storyteller server URL")
+    auth_token = models.TextField(
+        blank=True,
+        default="",
+        help_text="Encrypted Storyteller access token",
+    )
+    finished_threshold = models.FloatField(
+        default=0.95,
+        help_text="Reading progress fraction (0-1) at which a book is marked read",
+    )
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    connection_broken = models.BooleanField(default=False)
+    last_error_message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Storyteller account"
+        verbose_name_plural = "Storyteller accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"StorytellerAccount({self.user.username})"
+
+    @property
+    def is_connected(self):
+        """Return True when the account appears connected."""
+        return bool(self.server_url and self.auth_token) and not self.connection_broken
+
+
 class TraktAccount(models.Model):
     """Store Trakt API client credentials for a user."""
 
