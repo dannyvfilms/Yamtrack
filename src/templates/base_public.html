@@ -142,31 +142,16 @@
           const body = card.querySelector('.media-card-body');
           if (!title || !body) return;
 
-          // Measure expanded state: temporarily expand title to 3 lines and show year
-          title.style.webkitLineClamp = '3';
           let yearHeight = 0;
           if (year) {
             year.style.display = 'block';
             year.style.opacity = '1';
             yearHeight = year.offsetHeight;
-          }
-
-          // Force reflow to get accurate measurements
-          const expandedTitleHeight = title.scrollHeight;
-          const initialTitleHeight = title.offsetHeight;
-
-          // Reset
-          title.style.webkitLineClamp = '';
-          if (year) {
             year.style.display = '';
             year.style.opacity = '';
           }
 
-          // Calculate extra height: additional title lines + year
-          const extraTitleHeight = Math.max(0, expandedTitleHeight - initialTitleHeight);
-          const extraHeight = extraTitleHeight + yearHeight;
-
-          card.style.setProperty('--year-height', extraHeight + 'px');
+          card.style.setProperty('--year-height', yearHeight + 'px');
         });
       }
 
