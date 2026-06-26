@@ -809,6 +809,25 @@ class Season(Media):
                 item__source=self.item.source,
                 user=self.user,
             )
+        except TV.MultipleObjectsReturned:
+            tv = (
+                TV.objects.filter(
+                    item__media_id=self.item.media_id,
+                    item__media_type=MediaTypes.TV.value,
+                    item__season_number=None,
+                    item__source=self.item.source,
+                    user=self.user,
+                )
+                .order_by("id")
+                .first()
+            )
+            logger.warning(
+                "Multiple TV records for media_id=%s source=%s user=%s — using oldest",
+                self.item.media_id,
+                self.item.source,
+                self.user_id,
+            )
+            return tv
         except TV.DoesNotExist:
             fallback_title = self.item.series_name or self.item.title
             try:

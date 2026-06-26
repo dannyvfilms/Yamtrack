@@ -462,15 +462,15 @@ def episode_save(request):
         logger.error("Form validation failed: %s", form.errors)
         return HttpResponseBadRequest("Invalid form data")
 
-    try:
-        related_season = Season.objects.get(
-            item__media_id=media_id,
-            item__source=source,
-            item__season_number=season_number,
-            item__episode_number=None,
-            user=request.user,
-        )
-    except Season.DoesNotExist:
+    _season_qs = Season.objects.filter(
+        item__media_id=media_id,
+        item__source=source,
+        item__season_number=season_number,
+        item__episode_number=None,
+        user=request.user,
+    )
+    related_season = _season_qs.order_by("id").first()
+    if related_season is None:
         tv_with_seasons_metadata = services.get_media_metadata(
             "tv_with_seasons",
             media_id,
@@ -482,17 +482,22 @@ def episode_save(request):
         # Use season poster if available, otherwise fallback to TV show poster
         season_image = season_metadata.get("image") or tv_with_seasons_metadata.get("image")
 
-        item, _ = Item.objects.get_or_create(
+        item = Item.objects.filter(
             media_id=media_id,
             source=source,
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
-            defaults={
+        ).first()
+        if item is None:
+            item = Item.objects.create(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.SEASON.value,
+                season_number=season_number,
+                library_media_type=library_media_type or MediaTypes.SEASON.value,
                 **Item.title_fields_from_metadata(tv_with_seasons_metadata),
-                "library_media_type": library_media_type,
-                "image": season_image,
-            },
-        )
+                image=season_image,
+            )
         if library_media_type and item.library_media_type != library_media_type:
             item.library_media_type = library_media_type
             item.save(update_fields=["library_media_type"])
@@ -505,6 +510,13 @@ def episode_save(request):
         )
 
         logger.info("%s did not exist, it was created successfully.", related_season)
+    elif _season_qs.count() > 1:
+        logger.warning(
+            "Multiple Season records for media_id=%s season=%s user=%s — using oldest",
+            media_id,
+            season_number,
+            request.user,
+        )
 
     if library_media_type and related_season.item.library_media_type != library_media_type:
         related_season.item.library_media_type = library_media_type
@@ -591,15 +603,15 @@ def episode_drop(request):
         fallback_media_type=MediaTypes.TV.value,
     )
 
-    try:
-        related_season = Season.objects.get(
-            item__media_id=media_id,
-            item__source=source,
-            item__season_number=season_number,
-            item__episode_number=None,
-            user=request.user,
-        )
-    except Season.DoesNotExist:
+    _season_qs = Season.objects.filter(
+        item__media_id=media_id,
+        item__source=source,
+        item__season_number=season_number,
+        item__episode_number=None,
+        user=request.user,
+    )
+    related_season = _season_qs.order_by("id").first()
+    if related_season is None:
         tv_with_seasons_metadata = services.get_media_metadata(
             "tv_with_seasons",
             media_id,
@@ -609,17 +621,22 @@ def episode_drop(request):
         season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
         season_image = season_metadata.get("image") or tv_with_seasons_metadata.get("image")
 
-        item, _ = Item.objects.get_or_create(
+        item = Item.objects.filter(
             media_id=media_id,
             source=source,
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
-            defaults={
+        ).first()
+        if item is None:
+            item = Item.objects.create(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.SEASON.value,
+                season_number=season_number,
+                library_media_type=library_media_type or MediaTypes.SEASON.value,
                 **Item.title_fields_from_metadata(tv_with_seasons_metadata),
-                "library_media_type": library_media_type,
-                "image": season_image,
-            },
-        )
+                image=season_image,
+            )
         if library_media_type and item.library_media_type != library_media_type:
             item.library_media_type = library_media_type
             item.save(update_fields=["library_media_type"])
@@ -631,6 +648,13 @@ def episode_drop(request):
             notes="",
         )
         logger.info("%s did not exist, it was created successfully.", related_season)
+    elif _season_qs.count() > 1:
+        logger.warning(
+            "Multiple Season records for media_id=%s season=%s user=%s — using oldest",
+            media_id,
+            season_number,
+            request.user,
+        )
 
     if library_media_type and related_season.item.library_media_type != library_media_type:
         related_season.item.library_media_type = library_media_type
