@@ -124,7 +124,7 @@
        x-transition:leave-end="opacity-0 transform -translate-y-1">
   {% endif %}
   <div id="media-grid-row-{{ row.row_id }}"
-       class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden"
+       class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2 home-row-scrollbar-hidden{% if 'square' in row.grid_class|default:'' %} items-start{% endif %}"
        data-home-row="true"
        data-loaded-count="{{ row.loaded_count }}"
        data-loading="false"

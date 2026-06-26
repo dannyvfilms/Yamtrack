@@ -284,7 +284,7 @@ class HomeViewTests(TestCase):
 
         podcast_row = self._get_first_row(response, MediaTypes.PODCAST.value)
         self.assertEqual(podcast_row["card_width_class"], "w-44")
-        self.assertContains(response, 'class="w-44 shrink-0"', html=False)
+        self.assertContains(response, 'class="home-row-card w-44 shrink-0 self-start aspect-square overflow-hidden"', html=False)
         self.assertNotContains(response, 'class="w-52 shrink-0"', html=False)
 
     def test_home_view_hides_disabled_sidebar_media_types_even_when_rows_exist(self):

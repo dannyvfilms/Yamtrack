@@ -47,9 +47,6 @@ SQUARE_HOME_MEDIA_TYPES = {
     MediaTypes.MUSIC.value,
     MediaTypes.PODCAST.value,
 }
-WIDE_SQUARE_HOME_MEDIA_TYPES = {
-    MediaTypes.MUSIC.value,
-}
 # Music has a single Home section/header, but each row under it can independently
 # target tracks, albums, or artists (mirrors the media-list subview toggle).
 # A row's choice is stored in filters["subview"]; rows of different types mix freely.
@@ -1332,6 +1329,54 @@ def _music_shell_item(media_id: str, title: str, image: str | None) -> Item:
     return item
 
 
+def _music_shell_items_bulk(specs: list[tuple[str, str, str | None]]) -> dict[str, Item]:
+    """Batch version of _music_shell_item — fetches/creates all shell items in 1-3 queries."""
+    if not specs:
+        return {}
+    specs_map = {s[0]: s for s in specs}
+    media_ids = list(specs_map)
+    existing: dict[str, Item] = {
+        item.media_id: item
+        for item in Item.objects.filter(
+            media_id__in=media_ids,
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MUSIC.value,
+        )
+    }
+    missing_ids = [mid for mid in media_ids if mid not in existing]
+    if missing_ids:
+        Item.objects.bulk_create(
+            [
+                Item(
+                    media_id=mid,
+                    source=Sources.MANUAL.value,
+                    media_type=MediaTypes.MUSIC.value,
+                    title=specs_map[mid][1],
+                    image=specs_map[mid][2] or settings.IMG_NONE,
+                )
+                for mid in missing_ids
+            ],
+            ignore_conflicts=True,
+        )
+        for item in Item.objects.filter(
+            media_id__in=missing_ids,
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MUSIC.value,
+        ):
+            existing[item.media_id] = item
+    to_update = []
+    for media_id, item in existing.items():
+        _, title, image = specs_map[media_id]
+        desired_image = image or settings.IMG_NONE
+        if item.title != title or item.image != desired_image:
+            item.title = title
+            item.image = desired_image
+            to_update.append(item)
+    if to_update:
+        Item.objects.bulk_update(to_update, ["title", "image"])
+    return existing
+
+
 class _MusicTrackerAdapter:
     """Media-like wrapper around an Album/Artist tracker for Home card rendering."""
 
@@ -1388,14 +1433,23 @@ def _build_album_home_entries(user, filters: dict, sort_by: str, direction: str)
     )
     if status_filter and status_filter != "all":
         trackers = trackers.filter(status=status_filter)
-    trackers = _apply_music_tracker_rating_filter(trackers, filters.get("rating", "all"))
+    trackers = list(_apply_music_tracker_rating_filter(trackers, filters.get("rating", "all")))
+
+    specs = [
+        (f"album_{t.album.id}", t.album.title, t.album.image)
+        for t in trackers
+        if t.album
+    ]
+    items = _music_shell_items_bulk(specs)
 
     entries = []
     for tracker in trackers:
         album = tracker.album
         if not album:
             continue
-        item = _music_shell_item(f"album_{album.id}", album.title, album.image)
+        item = items.get(f"album_{album.id}")
+        if not item:
+            continue
         entries.append(
             HomeRowEntry(
                 item=item,
@@ -1419,14 +1473,23 @@ def _build_artist_home_entries(user, filters: dict, sort_by: str, direction: str
     )
     if status_filter and status_filter != "all":
         trackers = trackers.filter(status=status_filter)
-    trackers = _apply_music_tracker_rating_filter(trackers, filters.get("rating", "all"))
+    trackers = list(_apply_music_tracker_rating_filter(trackers, filters.get("rating", "all")))
+
+    specs = [
+        (f"artist_{t.artist.id}", t.artist.name, getattr(t.artist, "image", None))
+        for t in trackers
+        if t.artist
+    ]
+    items = _music_shell_items_bulk(specs)
 
     entries = []
     for tracker in trackers:
         artist = tracker.artist
         if not artist:
             continue
-        item = _music_shell_item(f"artist_{artist.id}", artist.name, getattr(artist, "image", None))
+        item = items.get(f"artist_{artist.id}")
+        if not item:
+            continue
         entries.append(
             HomeRowEntry(
                 item=item,
@@ -2111,11 +2174,7 @@ def build_home_page_groups(
                     "total": len(entries),
                     "loaded_count": loaded_count,
                     "show_played_chip": row.row_type == HomeScreenRowTypeChoices.RECENTLY_UNRATED,
-                    "card_width_class": (
-                        "w-52"
-                        if media_type in WIDE_SQUARE_HOME_MEDIA_TYPES
-                        else "w-44"
-                    ),
+                    "card_width_class": "w-44",
                     "grid_class": "media-grid media-grid-square"
                     if media_type in SQUARE_HOME_MEDIA_TYPES
                     else "media-grid",
