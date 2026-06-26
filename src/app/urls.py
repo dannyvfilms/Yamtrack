@@ -194,6 +194,11 @@ urlpatterns = [
         name="prefetch_artist_covers",
     ),
     path(
+        "home/row/<int:row_id>/artwork/",
+        views.home_row_artwork_refresh,
+        name="home_row_artwork_refresh",
+    ),
+    path(
         "music/artist/<int:artist_id>/update-score/",
         views.update_artist_score,
         name="update_artist_score",

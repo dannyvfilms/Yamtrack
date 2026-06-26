@@ -2161,6 +2161,10 @@ def build_home_page_groups(
             prefill_display_release_years(section_entries)
             loaded_count = min(len(entries), batch_start + len(section_entries))
             title_main, title_detail = home_row_header_title_parts(row, user)
+            poll_for_covers = media_type in SQUARE_HOME_MEDIA_TYPES and any(
+                not e.item.image or e.item.image == settings.IMG_NONE
+                for e in section_entries
+            )
             row_sections.append(
                 {
                     "row_id": row.id,
@@ -2178,6 +2182,7 @@ def build_home_page_groups(
                     "grid_class": "media-grid media-grid-square"
                     if media_type in SQUARE_HOME_MEDIA_TYPES
                     else "media-grid",
+                    "poll_for_covers": poll_for_covers,
                 },
             )
         if row_sections:

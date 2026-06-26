@@ -435,6 +435,63 @@ def home(request):
         return render(request, "app/home.html", context)
 
 
+@require_GET
+@login_required
+def home_row_artwork_refresh(request, row_id: int):
+    """HTMX polling endpoint: trigger cover fetch and re-render a music home row.
+
+    Queues prefetch_album_covers_batch for any artists/albums missing artwork,
+    then re-renders the row. Polling attributes are omitted once all covers are
+    present, which stops the client-side poll automatically.
+    """
+    from django.db.models import Q
+
+    from app.models import AlbumTracker, ArtistTracker
+    from app.tasks import prefetch_album_covers_batch
+
+    home_groups = build_home_page_groups(request.user, items_limit=14, load_row_id=row_id)
+    row = next(
+        (r for group in home_groups for r in group["rows"] if r["row_id"] == row_id),
+        None,
+    )
+    if row is None:
+        return HttpResponse("")
+
+    if row.get("poll_for_covers"):
+        artist_ids: set[int] = set()
+        artist_ids.update(
+            ArtistTracker.objects.filter(user=request.user)
+            .filter(Q(artist__image="") | Q(artist__image=settings.IMG_NONE))
+            .values_list("artist_id", flat=True)
+            .distinct()
+        )
+        artist_ids.update(
+            AlbumTracker.objects.filter(user=request.user)
+            .filter(Q(album__image="") | Q(album__image=settings.IMG_NONE))
+            .exclude(album__artist__isnull=True)
+            .values_list("album__artist_id", flat=True)
+            .distinct()
+        )
+        for artist_id in artist_ids:
+            cache_key = f"music:cover-prefetch:{artist_id}"
+            if cache.add(cache_key, True, 60 * 10):
+                try:
+                    prefetch_album_covers_batch.delay([artist_id], limit_per_artist=5)
+                except Exception:  # pragma: no cover - defensive
+                    cache.delete(cache_key)
+
+    return render(
+        request,
+        "app/components/_scrollable_row.html",
+        {
+            "row": row,
+            "user": request.user,
+            "MediaTypes": MediaTypes,
+            "IMG_NONE": settings.IMG_NONE,
+        },
+    )
+
+
 def trakt_series_graph_fragment(request, source, media_id):
     """HTMX polling fragment for the Trakt episode ratings series graph.
 

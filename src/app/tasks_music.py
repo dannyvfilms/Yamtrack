@@ -1025,15 +1025,20 @@ def enrich_albums_task(user_id: int):
 def prefetch_album_covers_batch(artist_ids: list[int], limit_per_artist: int | None = 10):
     """Prefetch album covers for a batch of artists (run after enrichment)."""
     from app.models import Artist
-    from app.services.music import prefetch_album_covers
+    from app.services.music import get_artist_hero_image, prefetch_album_covers
 
     updated = 0
     for artist_id in artist_ids:
-        artist = Artist.objects.filter(id=artist_id, musicbrainz_id__isnull=False).first()
+        artist = Artist.objects.filter(id=artist_id).first()
         if not artist:
             continue
         try:
             updated += prefetch_album_covers(artist, limit=limit_per_artist)
+            if not artist.image or artist.image == settings.IMG_NONE:
+                hero = get_artist_hero_image(artist)
+                if hero and hero != settings.IMG_NONE:
+                    artist.image = hero
+                    artist.save(update_fields=["image"])
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Cover batch prefetch failed for artist %s: %s", artist_id, exception_summary(exc))
     return {"artists": len(artist_ids), "covers_updated": updated}

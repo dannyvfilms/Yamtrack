@@ -23,7 +23,15 @@
 <div x-data="{ open: localStorage.getItem('{{ collapse_key }}') !== '{{ collapse_default|default:'false' }}' }"
      x-init="$watch('open', v => localStorage.setItem('{{ collapse_key }}', v))">
 {% endif %}
+{% if row.poll_for_covers %}
+<div id="home-music-row-artwork-{{ row.row_id }}"
+     hx-get="{% url 'home_row_artwork_refresh' row.row_id %}"
+     hx-trigger="load delay:1s, every 5s"
+     hx-target="this"
+     hx-swap="outerHTML">
+{% else %}
 <div>
+{% endif %}
   {% if not hide_heading %}
   <div class="mb-2 flex items-start justify-between gap-3">
     <div class="min-w-0 flex-1">
@@ -144,6 +152,9 @@
   </div>
   {% if collapse_key %}
   </div>
+  {% endif %}
+  {% if row.poll_for_covers %}
+    <p class="text-xs text-gray-500 mt-1">Refreshing artwork...</p>
   {% endif %}
 </div>
 {% if collapse_key %}
