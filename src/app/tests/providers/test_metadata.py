@@ -2378,3 +2378,48 @@ class CastOrderRegressionTests(TestCase):
         result = _normalize_credit_rows(rows)
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["sort_order"], 0)
+
+
+class OpenLibraryPublishDateTests(TestCase):
+    """Cover the free-form publish_date formats OpenLibrary returns."""
+
+    def test_abbreviated_month_comma(self):
+        result = openlibrary.get_publish_date({"publish_date": "Sep 27, 2016"})
+        self.assertEqual(result, "2016-09-27")
+
+    def test_full_month_comma(self):
+        result = openlibrary.get_publish_date({"publish_date": "January 19, 2001"})
+        self.assertEqual(result, "2001-01-19")
+
+    def test_day_full_month(self):
+        result = openlibrary.get_publish_date({"publish_date": "18 March 2025"})
+        self.assertEqual(result, "2025-03-18")
+
+    def test_day_abbreviated_month(self):
+        result = openlibrary.get_publish_date({"publish_date": "27 Sep 2016"})
+        self.assertEqual(result, "2016-09-27")
+
+    def test_month_and_year_only(self):
+        self.assertEqual(
+            openlibrary.get_publish_date({"publish_date": "March 2025"}),
+            "2025-03-01",
+        )
+        self.assertEqual(
+            openlibrary.get_publish_date({"publish_date": "Mar 2025"}),
+            "2025-03-01",
+        )
+
+    def test_year_only(self):
+        result = openlibrary.get_publish_date({"publish_date": "2016"})
+        self.assertEqual(result, "2016-01-01")
+
+    def test_copyright_prefix_stripped(self):
+        result = openlibrary.get_publish_date({"publish_date": "cop. Sep 27, 2016"})
+        self.assertEqual(result, "2016-09-27")
+
+    def test_unparseable_returns_original(self):
+        result = openlibrary.get_publish_date({"publish_date": "sometime in spring"})
+        self.assertEqual(result, "sometime in spring")
+
+    def test_missing_publish_date_returns_none(self):
+        self.assertIsNone(openlibrary.get_publish_date({}))

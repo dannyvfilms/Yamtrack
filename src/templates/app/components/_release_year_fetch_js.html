@@ -35,7 +35,13 @@
           });
         } else {
           document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
-            el.remove();
+            const progressText = el.dataset.progressText;
+            if (progressText) {
+              el.textContent = progressText;
+              el.classList.remove('release-year-placeholder');
+            } else {
+              el.remove();
+            }
           });
         }
         if (typeof initMediaCardHover === 'function') {
