@@ -1,0 +1,91 @@
+name: Issue title quality gate
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  check-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check issue title
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title.trim();
+            const labels = issue.labels.map(l => l.name);
+            const LABEL = "needs-title-fix";
+
+            // Strip known prefixes before evaluating
+            const normalized = title
+              .replace(/^\[(bug|feature request|enhancement|question)\]\s*/i, "")
+              .trim();
+
+            const words = normalized.split(/\s+/).filter(Boolean);
+
+            const BLACKLIST = /^(bug|bugs?|broken|error|issue|issues|problem|help|not working|crash|fix|request|feature)$/i;
+
+            const tooShort =
+              normalized.length < 20 ||
+              words.length < 4 ||
+              BLACKLIST.test(normalized);
+
+            if (!tooShort) {
+              // Title is fine — remove the label if it was previously flagged
+              if (labels.includes(LABEL)) {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  name: LABEL,
+                });
+              }
+              return;
+            }
+
+            // Already commented? Don't spam — check existing comments
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+            });
+            const alreadyCommented = comments.data.some(
+              c => c.user.login === "github-actions[bot]" &&
+                   c.body.includes("needs-title-fix")
+            );
+
+            if (!alreadyCommented) {
+              const body = [
+                "Thanks for filing this! Before it can be triaged, the title needs to describe the actual problem.",
+                "",
+                "**Please edit the title** to be specific. Examples:",
+                "",
+                "- `[BUG] Metadata refresh fails silently for TVDB episodes`",
+                "- `[BUG] Watchlist import skips TMDB shows added before 2024`",
+                "- `[Feature Request] Add Storygraph import for reading history`",
+                "",
+                "Titles like `bug`, `missing watchlist`, or `metadata refresh bug` are too vague to scan or prioritize later.",
+                "",
+                "<!-- needs-title-fix -->",
+              ].join("\n");
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body,
+              });
+            }
+
+            if (!labels.includes(LABEL)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: [LABEL],
+              });
+            }
