@@ -1168,21 +1168,39 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         if media_type == MediaTypes.BOOK.value:
             number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
 
-        item, _ = Item.objects.update_or_create(
+        item_qs = Item.objects.filter(
             media_id=media_id,
             source=source,
             media_type=tracking_media_type,
             season_number=season_number,
-            defaults={
-                **Item.title_fields_from_metadata(metadata),
-                "library_media_type": (
-                    metadata.get("library_media_type")
-                    or media_type
-                ),
-                "image": metadata["image"],
-                "number_of_pages": number_of_pages,
-            },
         )
+        if item_qs.count() > 1:
+            logger.warning(
+                "Multiple Item rows for media_id=%s source=%s media_type=%s season=%s — using oldest",
+                media_id,
+                source,
+                tracking_media_type,
+                season_number,
+            )
+        item = item_qs.order_by("id").first()
+        library_media_type_value = metadata.get("library_media_type") or media_type
+        item_fields = {
+            **Item.title_fields_from_metadata(metadata),
+            "library_media_type": library_media_type_value,
+            "image": metadata["image"],
+            "number_of_pages": number_of_pages,
+        }
+        if item is None:
+            item = Item.objects.create(
+                media_id=media_id,
+                source=source,
+                media_type=tracking_media_type,
+                season_number=season_number,
+                **item_fields,
+            )
+        else:
+            Item.objects.filter(pk=item.pk).update(**item_fields)
+            item.refresh_from_db()
 
         # Update number_of_pages if it wasn't set but we have it now
         if media_type == MediaTypes.BOOK.value and not item.number_of_pages and number_of_pages:
