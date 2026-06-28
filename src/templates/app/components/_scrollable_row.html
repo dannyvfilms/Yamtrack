@@ -26,7 +26,8 @@
 {% if row.poll_for_covers %}
 <div id="home-music-row-artwork-{{ row.row_id }}"
      hx-get="{% url 'home_row_artwork_refresh' row.row_id %}"
-     hx-trigger="load delay:1s, every 5s"
+     hx-trigger="load delay:1s, every 30s"
+     hx-sync="this:abort"
      hx-target="this"
      hx-swap="outerHTML">
 {% else %}

@@ -2132,13 +2132,14 @@ def build_home_page_groups(
     load_row_offset: int = 0,
     *,
     append_only: bool = False,
+    only_row_id: int | None = None,
 ) -> list[dict]:
     """Build grouped home sections from persisted Home rows."""
     rows = ensure_home_screen_rows(user)
     enabled_media_types = get_home_configurable_media_types(user)
     rows_by_media_type: dict[str, list[HomeScreenRow]] = defaultdict(list)
     for row in rows:
-        if row.enabled:
+        if row.enabled and (only_row_id is None or row.id == only_row_id):
             rows_by_media_type[row.media_type].append(row)
 
     groups = []

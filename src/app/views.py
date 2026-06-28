@@ -449,7 +449,9 @@ def home_row_artwork_refresh(request, row_id: int):
     from app.models import AlbumTracker, ArtistTracker
     from app.tasks import prefetch_album_covers_batch
 
-    home_groups = build_home_page_groups(request.user, items_limit=14, load_row_id=row_id)
+    home_groups = build_home_page_groups(
+        request.user, items_limit=14, load_row_id=row_id, only_row_id=row_id
+    )
     row = next(
         (r for group in home_groups for r in group["rows"] if r["row_id"] == row_id),
         None,
