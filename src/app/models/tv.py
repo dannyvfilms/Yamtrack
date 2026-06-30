@@ -230,7 +230,11 @@ class TV(Media):
                 media_id=self.item.media_id,
                 source=self.item.source,
                 media_type=MediaTypes.SEASON.value,
-                library_media_type=self.item.library_media_type,
+                library_media_type=(
+                    MediaTypes.ANIME.value
+                    if self.item.library_media_type == MediaTypes.ANIME.value
+                    else MediaTypes.SEASON.value
+                ),
                 season_number=season_number,
                 defaults={
                     **Item.title_fields_from_metadata(
@@ -333,7 +337,11 @@ class TV(Media):
                         media_id=self.item.media_id,
                         source=self.item.source,
                         media_type=MediaTypes.SEASON.value,
-                        library_media_type=self.item.library_media_type,
+                        library_media_type=(
+                            MediaTypes.ANIME.value
+                            if self.item.library_media_type == MediaTypes.ANIME.value
+                            else MediaTypes.SEASON.value
+                        ),
                         season_number=season_data["season_number"],
                         defaults={
                             **Item.title_fields_from_metadata(
