@@ -18,6 +18,78 @@ from app.services.grouped_anime import GroupedAnimeMatch
 from integrations.webhooks.generic_scrobble import GenericScrobbleProcessor
 
 
+class ResolveAnimeLiveIdentityTests(TestCase):
+    """The live Now Playing card follows the same anidb->MAL cour decision."""
+
+    def setUp(self):
+        """A MAL-provider anime user and the processor under test."""
+        self.processor = GenericScrobbleProcessor()
+        self.user = get_user_model().objects.create_user(username="live-anime")
+        self.user.anime_enabled = True
+        self.user.anime_metadata_source_default = Sources.MAL.value
+        self.user.save()
+        self._ids = {
+            "tmdb_id": "603",
+            "imdb_id": None,
+            "tvdb_id": "9350138",
+            "anidb_id": "3651",
+        }
+
+    def _resolve(self, **overrides):
+        with (
+            patch(
+                "integrations.webhooks.anime_mappings.fetch_mapping_data",
+                return_value={"anidb:3651:R": {"mal:849": {"1-": "1-"}}},
+            ),
+            patch(
+                "app.providers.mal.anime",
+                return_value={
+                    "title": "Suzumiya Haruhi no Yuutsu",
+                    "image": "https://example.com/haruhi.jpg",
+                    "max_progress": 14,
+                },
+            ),
+        ):
+            return self.processor.resolve_anime_live_identity(
+                self.user,
+                overrides.get("ids", self._ids),
+                overrides.get("season_number", 1),
+                overrides.get("episode_number", 1),
+            )
+
+    def test_flat_mal_user_gets_the_mapped_cour(self):
+        """The card is pinned to the MAL entry, not the payload's tmdb show."""
+        identity = self._resolve()
+        self.assertEqual(identity["source"], Sources.MAL.value)
+        self.assertEqual(identity["media_id"], "849")
+        self.assertEqual(identity["episode_number"], 1)
+        self.assertIsNone(identity["season_number"])
+        self.assertEqual(identity["series_title"], "Suzumiya Haruhi no Yuutsu")
+        self.assertEqual(identity["image"], "https://example.com/haruhi.jpg")
+
+    def test_no_anidb_id_leaves_default_resolution(self):
+        """Without an anidb id the default tmdb resolution is untouched."""
+        self.assertIsNone(
+            self._resolve(ids={**self._ids, "anidb_id": None}),
+        )
+
+    def test_grouped_provider_defers_to_the_normal_decision(self):
+        """A TMDB Anime Provider keeps the grouped path; no MAL override."""
+        self.user.anime_metadata_source_default = Sources.TMDB.value
+        self.user.save(update_fields=["anime_metadata_source_default"])
+        self.assertIsNone(self._resolve())
+
+    def test_episode_past_the_cour_end_is_not_pinned(self):
+        """An episode the MAL entry would refuse falls back to default routing."""
+        self.assertIsNone(self._resolve(episode_number=99))
+
+    def test_anime_disabled_user_is_ignored(self):
+        """The override only applies when the anime library is enabled."""
+        self.user.anime_enabled = False
+        self.user.save(update_fields=["anime_enabled"])
+        self.assertIsNone(self._resolve())
+
+
 class GenericScrobbleHeuristicTests(TestCase):
     """Unit tests for GenericScrobbleProcessor's hook methods."""
 

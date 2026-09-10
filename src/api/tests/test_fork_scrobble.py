@@ -121,6 +121,48 @@ class ScrobbleLivePlaybackTests(FloppyApiTestCase):
             Movie.objects.filter(user=self.user1, item__media_id="603").exists(),
         )
 
+    @patch("app.providers.mal.anime")
+    @patch("integrations.webhooks.anime_mappings.fetch_mapping_data")
+    @patch("api.fork_views_scrobble.live_playback.apply_playback_event")
+    def test_anidb_episode_pins_the_card_to_the_mal_cour(
+        self,
+        mock_apply_event,
+        mock_mapping,
+        mock_mal,
+    ):
+        """An anidb id on a flat-MAL user resolves the Now Playing card cour."""
+        self.user1.anime_enabled = True
+        self.user1.anime_metadata_source_default = "mal"
+        self.user1.save()
+        mock_mapping.return_value = {"anidb:3651:R": {"mal:849": {"1-": "1-"}}}
+        mock_mal.return_value = {
+            "title": "Suzumiya Haruhi no Yuutsu",
+            "image": "https://example.com/haruhi.jpg",
+            "max_progress": 14,
+        }
+
+        response = self.call_api(
+            "post",
+            "api_scrobble",
+            payload={
+                "action": "start",
+                "media_type": "episode",
+                "ids": {"tvdb": "9350138", "anidb": "3651"},
+                "series_title": "Suzumiya Haruhi no Yuutsu",
+                "season_number": 1,
+                "episode_number": 1,
+            },
+            headers=self.auth_headers,
+        )
+
+        self.assertEqual(response.status_code, HTTP.OK)
+        _, kwargs = mock_apply_event.call_args
+        self.assertEqual(kwargs["source"], "mal")
+        self.assertEqual(kwargs["media_id"], "849")
+        self.assertEqual(kwargs["episode_number"], 1)
+        self.assertEqual(kwargs["series_title"], "Suzumiya Haruhi no Yuutsu")
+        self.assertEqual(kwargs["image"], "https://example.com/haruhi.jpg")
+
     @patch("api.fork_views_scrobble.live_playback.apply_playback_event")
     def test_live_playback_failure_does_not_fail_request(self, mock_apply_event):
         """A best-effort live-card failure never surfaces as a request error."""

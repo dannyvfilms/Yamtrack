@@ -11,7 +11,7 @@ from rest_framework.response import Response
 
 import app.providers.tmdb
 from app import live_playback
-from app.models import MediaTypes
+from app.models import MediaTypes, Sources
 from integrations.delivery import get_or_record_receipt
 from integrations.models import IntegrationToken
 from integrations.webhooks.generic_scrobble import GenericScrobbleProcessor, is_played
@@ -363,21 +363,49 @@ class ScrobbleView(drf_views.APIView):
     def _update_live_playback(self, user, action, media_type, ids, data):
         """Update the Now Playing card; failures are logged, never raised."""
         try:
+            source = Sources.TMDB.value
             media_id = _resolve_live_playback_media_id(media_type, ids)
+            season_number = data.get("season_number")
+            episode_number = data.get("episode_number")
+            series_title = data.get("series_title")
+            image = None
+
+            if media_type == MediaTypes.EPISODE.value and ids.get("anidb"):
+                identity = GenericScrobbleProcessor().resolve_anime_live_identity(
+                    user,
+                    {
+                        "tmdb_id": ids.get("tmdb"),
+                        "imdb_id": ids.get("imdb"),
+                        "tvdb_id": ids.get("tvdb"),
+                        "anidb_id": ids.get("anidb"),
+                    },
+                    season_number,
+                    episode_number,
+                )
+                if identity:
+                    source = identity["source"]
+                    media_id = identity["media_id"]
+                    season_number = identity["season_number"]
+                    episode_number = identity["episode_number"]
+                    series_title = identity.get("series_title") or series_title
+                    image = identity.get("image")
+
             live_playback.apply_playback_event(
                 user_id=user.id,
                 event_type=_EVENT_TYPE_MAP[action],
                 playback_media_type=media_type,
                 media_id=media_id,
+                source=source,
                 title=data.get("title"),
-                series_title=data.get("series_title"),
+                series_title=series_title,
                 episode_title=data.get("title")
                 if media_type == MediaTypes.EPISODE.value
                 else None,
-                season_number=data.get("season_number"),
-                episode_number=data.get("episode_number"),
+                season_number=season_number,
+                episode_number=episode_number,
                 view_offset_seconds=data.get("position_seconds"),
                 duration_seconds=data.get("duration_seconds"),
+                image=image,
             )
         except Exception:
             logger.warning("Scrobble live-playback update failed", exc_info=True)

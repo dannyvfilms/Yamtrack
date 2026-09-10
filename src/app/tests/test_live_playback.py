@@ -162,6 +162,20 @@ class ApplyPlaybackEventImageTests(TestCase):
         self.assertIsNotNone(state)
         self.assertNotIn("image", state)
 
+    @patch("app.live_playback._resolve_landscape_image")
+    def test_caller_supplied_image_skips_resolution(self, mock_resolve):
+        """A MAL cour card carries artwork the episode resolver cannot look up."""
+        self._apply_play(
+            source=Sources.MAL.value,
+            media_id="849",
+            image="https://example.com/haruhi.jpg",
+        )
+
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertEqual(state["image"], "https://example.com/haruhi.jpg")
+        self.assertEqual(state["image_source"], "primary")
+        mock_resolve.assert_not_called()
+
 
 class FetchEpisodeStillCacheTests(TestCase):
     """Episode still lookups are cached, including failures."""
@@ -283,6 +297,52 @@ class RequestPathPurityTests(TestCase):
         live_playback.build_home_playback_card(self.user)
 
         mock_fill.assert_called_once_with(self.user.id)
+
+
+class MalCourCardTests(TestCase):
+    """A MAL-sourced episode card renders as a flat anime cour."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username="malcard")
+        self.user.anime_enabled = True
+        self.user.save()
+
+    def tearDown(self):
+        live_playback.clear_user_playback_state(self.user.id)
+        cache.clear()
+        super().tearDown()
+
+    def _seed(self):
+        now_ts = live_playback._now_ts()
+        live_playback.set_user_playback_state(
+            self.user.id,
+            {
+                "event_type": "media.play",
+                "media_type": MediaTypes.EPISODE.value,
+                "media_id": "849",
+                "source": Sources.MAL.value,
+                "series_title": "Suzumiya Haruhi no Yuutsu",
+                "season_number": None,
+                "episode_number": 3,
+                "image": "https://example.com/haruhi.jpg",
+                "image_source": "primary",
+                "view_offset_seconds": 60,
+                "duration_seconds": 1400,
+                "started_at_ts": now_ts,
+                "status": live_playback.PLAYBACK_STATUS_PLAYING,
+                "updated_at_ts": now_ts,
+                "expires_at_ts": now_ts + 3600,
+                "pause_expires_at_ts": None,
+                "scrobble_expires_at_ts": None,
+            },
+        )
+
+    def test_card_links_to_the_anime_details_page(self):
+        self._seed()
+        card = live_playback.build_home_playback_card(self.user)
+        self.assertIn(f"/{Sources.MAL.value}/{MediaTypes.ANIME.value}/849/", card["details_url"])
+        self.assertEqual(card["image"], "https://example.com/haruhi.jpg")
+        self.assertEqual(card["episode_code"], "E03")
 
 
 class ResolveStateImageTaskTests(TestCase):

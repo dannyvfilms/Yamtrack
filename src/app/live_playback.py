@@ -287,6 +287,7 @@ def apply_playback_event(
     duration_seconds: int | None = None,
     store_progress: bool = False,
     provider_completed: bool | None = None,
+    image: str | None = None,
 ) -> None:
     """Update live playback cache state from a webhook event.
 
@@ -459,6 +460,12 @@ def apply_playback_event(
         state["image_resolved_at_ts"] = existing_state.get(
             "image_resolved_at_ts",
         )
+    elif image:
+        # The caller already resolved artwork (e.g. a MAL cour that the
+        # source-agnostic episode resolver below cannot look up).
+        state["image"] = image
+        state["image_source"] = "primary"
+        state["image_resolved_at_ts"] = now_ts
     else:
         # Runs in the webhook Celery worker, so provider calls are
         # allowed here; the request path only ever reads the result.
@@ -721,6 +728,9 @@ def _resolve_card_subtitle(state, title):
     episode_code = None
     if season_number is not None and episode_number is not None:
         episode_code = f"S{season_number:02d}E{episode_number:02d}"
+    elif episode_number is not None:
+        # Flat MAL anime cours have no season; show the cour-relative number.
+        episode_code = f"E{episode_number:02d}"
     episode_title = (state.get("episode_title") or "").strip()
     if episode_code and episode_title and episode_title != title:
         return episode_code, f"{episode_code} • {episode_title}"
@@ -965,7 +975,11 @@ def build_home_playback_card(user) -> dict | None:
     ):
         _ep_media_id = state.get("media_id")
         _ep_source = state.get("source") or Sources.TMDB.value
-        if _ep_media_id:
+        if _ep_source == Sources.MAL.value:
+            # A MAL-sourced episode card is a flat anime cour by construction
+            # (see GenericScrobbleProcessor.resolve_anime_live_identity).
+            library_media_type = MediaTypes.ANIME.value
+        elif _ep_media_id:
             tv_item = (
                 Item.objects.filter(
                     media_id=_ep_media_id,
