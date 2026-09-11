@@ -6,7 +6,7 @@ from urllib.parse import parse_qsl, unquote
 
 from django.db.models import F, Max
 
-from app.models import TV, MediaTypes, Movie, Sources, Status
+from app.models import TV, MediaTypes, Movie, Season, Sources, Status
 from lists.models import CustomList, CustomListItem
 
 PAGE_SIZE = 100
@@ -283,13 +283,7 @@ def local_imdb_id(item):
 
 
 def catalog_readiness(user):
-    """Return per-catalog publishable/unresolved counts for the settings page.
-
-    project_catalog() already counts the items it has to drop for want of an
-    IMDb ID, but only logs it. Surfacing the same number tells users whether a
-    thin catalog is a Floppy problem they need to wait out or a list they need
-    to fill (issue #1066).
-    """
+    """Return per-catalog publishable/unresolved counts for the settings page."""
     readiness = []
     for spec in CATALOG_SPECS:
         if spec.statuses:
@@ -356,8 +350,44 @@ def list_source_items(user, spec):
         .select_related("item")
         .order_by("-date_added", "-id")
     )
+
+    seen_item_ids = set()
     for membership in memberships.iterator():
+        seen_item_ids.add(membership.item.pk)
         yield membership.item
+
+    if source_list.is_smart and spec.media_type == MediaTypes.TV.value:
+        for parent_item in smart_season_parent_items(user, source_list):
+            if parent_item.pk in seen_item_ids:
+                continue
+            seen_item_ids.add(parent_item.pk)
+            yield parent_item
+
+
+def smart_season_parent_items(user, source_list):
+    """Yield parent TV items for smart-list seasons, newest season release first."""
+    seen_item_ids = set()
+    seasons = (
+        Season.objects.filter(
+            user=user,
+            item__customlistitem__custom_list=source_list,
+            item__media_type=MediaTypes.SEASON.value,
+        )
+        .select_related("item", "related_tv__item")
+        .order_by(
+            F("item__release_datetime").desc(nulls_last=True),
+            "related_tv__item__title",
+            "related_tv__item_id",
+            "-item__customlistitem__id",
+        )
+    )
+    for season in seasons.iterator():
+        parent_item = season.related_tv.item
+        parent_item_id = parent_item.pk
+        if parent_item_id in seen_item_ids:
+            continue
+        seen_item_ids.add(parent_item_id)
+        yield parent_item
 
 
 def last_watched_queryset(model, media_type, user, statuses):
