@@ -226,6 +226,7 @@ class UiLanguageChoices(models.TextChoices):
     EN = "en", "English"
     DE = "de", "Deutsch"
     ES = "es", "Español"
+    FR = "fr", "Français"
 
 
 class LogoStyleChoices(models.TextChoices):
